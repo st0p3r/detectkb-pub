@@ -1,0 +1,14 @@
+node_modules/
+.env
+dist/
+build/
+*.log
+.DS_Store
+backups/
+backend/node_modules/
+frontend/node_modules/
+backend/dist/
+frontend/dist/
+backend/generated/
+.claude/
+

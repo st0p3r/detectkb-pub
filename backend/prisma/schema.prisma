@@ -1,0 +1,218 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  username      String         @unique @db.VarChar(120)
+  email         String         @unique @db.VarChar(255)
+  passwordHash  String         @db.VarChar(255)
+  firstName     String?        @db.VarChar(100)
+  lastName      String?        @db.VarChar(100)
+  isActive      Boolean        @default(true)
+  userRoles     UserRole[]
+  auditLogs     AuditLog[]
+  generatedDocs GeneratedDoc[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Role {
+  id           Int              @id @default(autoincrement())
+  name         String           @unique @db.VarChar(50)
+  description  String?          @db.Text
+  isSystemRole Boolean          @default(true)
+  userRoles    UserRole[]
+  permissions  RolePermission[]
+  createdAt    DateTime         @default(now())
+}
+
+model Permission {
+  id          Int              @id @default(autoincrement())
+  name        String           @unique @db.VarChar(100)
+  description String?          @db.Text
+  category    String?          @db.VarChar(50)
+  roles       RolePermission[]
+  createdAt   DateTime         @default(now())
+}
+
+model UserRole {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  roleId     Int
+  assignedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+}
+
+model RolePermission {
+  id           Int        @id @default(autoincrement())
+  roleId       Int
+  permissionId Int
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model AuditLog {
+  id           Int      @id @default(autoincrement())
+  userId       Int?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String   @db.VarChar(100)
+  resourceType String   @db.VarChar(50)
+  resourceId   Int?
+  oldValue     Json?
+  newValue     Json?
+  ipAddress    String?  @db.VarChar(45)
+  timestamp    DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([userId])
+}
+
+model GeneratedDoc {
+  id             Int      @id @default(autoincrement())
+  title          String   @db.VarChar(255)
+  format         String   @db.VarChar(10)
+  filePath       String   @db.VarChar(500)
+  fileSize       Int?
+  contentSources Json?
+  isPublic       Boolean  @default(false)
+  generatedById  Int?
+  generatedBy    User?    @relation(fields: [generatedById], references: [id], onDelete: SetNull)
+  generatedAt    DateTime @default(now())
+}
+
+model Page {
+  id          Int          @id @default(autoincrement())
+  title       String       @db.VarChar(255)
+  slug        String       @unique @db.VarChar(255)
+  contentMd   String       @db.LongText
+  type        String       @default("NOTE") @db.VarChar(80)
+  categoryId  Int?
+  category    Category?    @relation(fields: [categoryId], references: [id])
+  tags        TagsOnPages[]
+  outLinks    PageLink[]   @relation("source")
+  inLinks     PageLink[]   @relation("target")
+  revisions   Revision[]
+  rule        DetectionRule?
+  splCommand  SplCommand?
+  isPinned    Boolean      @default(false)
+  createdById Int?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model PageTypeDefinition {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(80)
+  label     String   @db.VarChar(80)
+  color     String   @default("#6366f1") @db.VarChar(7)
+  isBuiltIn Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model PageLink {
+  id       Int  @id @default(autoincrement())
+  sourceId Int
+  targetId Int
+  source   Page @relation("source", fields: [sourceId], references: [id], onDelete: Cascade)
+  target   Page @relation("target", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, targetId])
+}
+
+model Category {
+  id       Int        @id @default(autoincrement())
+  name     String     @unique @db.VarChar(120)
+  color    String?    @db.VarChar(20)
+  parentId Int?
+  parent   Category?  @relation("tree", fields: [parentId], references: [id])
+  children Category[] @relation("tree")
+  pages    Page[]
+}
+
+model Tag {
+  id          Int           @id @default(autoincrement())
+  name        String        @unique @db.VarChar(80)
+  color       String        @default("#3B82F6") @db.VarChar(7)
+  description String?       @db.VarChar(500)
+  category    String?       @db.VarChar(50)
+  pages       TagsOnPages[]
+}
+
+model TagsOnPages {
+  pageId Int
+  tagId  Int
+  page   Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, tagId])
+}
+
+model Revision {
+  id        Int      @id @default(autoincrement())
+  pageId    Int
+  page      Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  contentMd String   @db.LongText
+  title     String   @db.VarChar(255)
+  createdAt DateTime @default(now())
+}
+
+model DetectionRule {
+  id              Int      @id @default(autoincrement())
+  pageId          Int      @unique
+  page            Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  status          String   @db.VarChar(40)
+  severity        String   @db.VarChar(20)
+  splQuery        String   @db.LongText
+  mitreTactics    String?  @db.Text
+  mitreTechniques String?  @db.Text
+  dataSource      String?  @db.VarChar(255)
+  falsePositives  String?  @db.Text
+  references      String?  @db.Text
+  testNotes       String?  @db.LongText
+}
+
+model SplCommand {
+  id          Int     @id @default(autoincrement())
+  pageId      Int     @unique
+  page        Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  command     String  @db.VarChar(120)
+  group       String  @db.VarChar(80)
+  syntax      String  @db.Text
+  description String  @db.Text
+  examples    String  @db.LongText
+  pitfalls    String? @db.Text
+  isFavorite  Boolean @default(false)
+}
+
+model BackupLog {
+  id        Int      @id @default(autoincrement())
+  fileName  String   @db.VarChar(255)
+  sizeBytes Int
+  type      String   @db.VarChar(20)
+  createdAt DateTime @default(now())
+}
+
+model SysmonEvent {
+  id             Int      @id @default(autoincrement())
+  eventId        Int      @unique
+  name           String   @db.VarChar(120)
+  category       String   @db.VarChar(80)
+  description    String   @db.Text
+  keyFields      String?  @db.LongText
+  detectionTips  String?  @db.LongText
+  attackPatterns String?  @db.Text
+  detectionValue String   @default("medium") @db.VarChar(20)
+  isBuiltIn      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+}
