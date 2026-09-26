@@ -316,9 +316,17 @@ function TechniqueDetail({ cell, coverage, onClose }: {
             <span className="font-mono text-muted-foreground mr-2">{technique.id}</span>
             {technique.name}
           </h2>
-          <a href={attackUrl(technique.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-            View on attack.mitre.org <ExternalLink className="w-3 h-3" />
-          </a>
+          <div className="flex flex-wrap gap-3">
+            <a href={attackUrl(technique.id)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              View on attack.mitre.org <ExternalLink className="w-3 h-3" />
+            </a>
+            <Link to={`/graph?view=chain&technique=${technique.id}`} className="text-xs text-primary hover:underline">
+              Detection chain
+            </Link>
+            <Link to={`/graph?view=explore&focus=technique:${technique.id}`} className="text-xs text-primary hover:underline">
+              Explore in graph
+            </Link>
+          </div>
         </div>
         <button onClick={onClose} aria-label="Close details" className="p-1 rounded hover:bg-accent">
           <X className="w-4 h-4" />

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download } from 'lucide-react';
+import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network } from 'lucide-react';
 import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, QUERY_LANGUAGE_LABELS, SOURCE_FORMAT_LABELS, type Page } from '@/lib/api';
 import { useQuery } from '@tanstack/react-query';
 import { SigmaPanel } from '@/features/sigma/SigmaPanel';
@@ -585,6 +585,15 @@ export function PageViewPage() {
           >
             <Download className="w-3.5 h-3.5" />
             {exportingPdf ? 'Exporting…' : 'PDF'}
+          </button>
+          <button
+            onClick={() => navigate(`/graph?view=explore&focus=page:${page.id}`)}
+            aria-label="Show in knowledge graph"
+            title="Show in knowledge graph"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+          >
+            <Network className="w-3.5 h-3.5" />
+            Graph
           </button>
           {page.type === 'RULE' && page.rule && (
             <button

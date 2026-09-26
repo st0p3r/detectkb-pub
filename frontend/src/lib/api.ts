@@ -746,14 +746,72 @@ export interface GraphNode {
   group: string;
   slug?: string;
   url?: string;
+  degree: number;
 }
 
-export interface GraphData {
-  nodes: GraphNode[];
-  edges: { source: string; target: string; kind: string }[];
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: string;
 }
 
-export async function getGraph() {
-  const { data } = await api.get('/api/graph');
-  return data as GraphData;
+/** Placeholder for neighbours not loaded yet ("+659 more"). */
+export interface GraphMoreNode {
+  id: string;
+  label: string;
+  group: 'more';
+  center: string;
+  targetGroup: string;
+  remaining: number;
+  offset: number;
+  degree: number;
+}
+
+export type GraphLayer = 'pages' | 'rules' | 'technique' | 'sysmon' | 'tools' | 'tag' | 'category';
+
+export async function getGraph(layers: GraphLayer[]) {
+  const { data } = await api.get('/api/graph', { params: { layers: layers.join(',') } });
+  return data as { nodes: GraphNode[]; edges: GraphEdge[] };
+}
+
+export async function searchGraph(q: string) {
+  const { data } = await api.get('/api/graph/search', { params: { q } });
+  return data as GraphNode[];
+}
+
+export async function getGraphHubs() {
+  const { data } = await api.get('/api/graph/hubs');
+  return data as GraphNode[];
+}
+
+export async function getGraphNeighbours(id: string, page?: { group: string; offset: number; limit?: number }) {
+  const { data } = await api.get('/api/graph/node', { params: { id, ...page } });
+  return data as { center: GraphNode; nodes: GraphNode[]; more: GraphMoreNode[]; edges: GraphEdge[] };
+}
+
+export interface ChainRule {
+  pageId: number;
+  title: string;
+  slug: string;
+  status: string;
+  severity: string;
+  sourceFormat: RuleSourceFormat | null;
+  dataSource: string | null;
+  techniques: string[];
+  sysmon: number[];
+  tools: { kind: ReferenceKind; key: string; name: string }[];
+}
+
+export interface DetectionChain {
+  technique: { id: string; name: string };
+  tactics: AttackTactic[];
+  techniques: { id: string; name: string; ruleCount: number }[];
+  rules: ChainRule[];
+  sysmon: { eventId: number; name: string; ruleCount: number }[];
+  dataSources: { pageId: number; title: string; slug: string; sysmon: number[] }[];
+}
+
+export async function getDetectionChain(technique: string, status?: string) {
+  const { data } = await api.get('/api/graph/chain', { params: { technique, status: status || undefined } });
+  return data as DetectionChain;
 }
