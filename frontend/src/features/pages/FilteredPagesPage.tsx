@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Eye, Pencil, Trash2, type LucideIcon } from 'lucide-react';
-import { listPages, deletePage, type Page, type PageType } from '@/lib/api';
-import { TypeBadge } from '@/components/ui/TypeBadge';
+import { listPages, deletePage, type PageListItem, type PageType } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
@@ -33,11 +32,11 @@ function SkeletonRows() {
 
 export function FilteredPagesPage({ type, title, icon: Icon, emptyMessage, newLabel }: FilteredPagesPageProps) {
   const navigate = useNavigate();
-  const [pages, setPages] = useState<Page[]>([]);
+  const [pages, setPages] = useState<PageListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [confirmPage, setConfirmPage] = useState<Page | null>(null);
+  const [confirmPage, setConfirmPage] = useState<PageListItem | null>(null);
 
   useEffect(() => {
     setLoading(true);

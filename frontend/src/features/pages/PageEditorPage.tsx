@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MDEditor from '@uiw/react-md-editor';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getPage,
   createPage,
   updatePage,
-  listPages,
+  searchPageTitles,
   listCategories,
   upsertSplCommand,
   updateSplCommand,
@@ -16,9 +17,12 @@ import {
   type SplCommandData,
   type DetectionRuleData,
   type Category,
+  setPageSysmonLinks,
+  apiErrorMessage,
 } from '@/lib/api';
 import { SplCommandForm } from '@/features/spl/SplCommandForm';
 import { RuleForm } from '@/features/rules/RuleForm';
+import { SysmonEventPicker } from '@/features/sysmon/SysmonEventPicker';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { usePageTypes } from '@/context/PageTypesContext';
 
@@ -70,17 +74,19 @@ export function PageEditorPage() {
   // Detection Rule extra fields
   const [ruleData, setRuleData] = useState<Partial<DetectionRuleData>>(DEFAULT_RULE_DATA);
 
+  // Sysmon events (manual selection; auto links come from the server)
+  const [manualSysmon, setManualSysmon] = useState<number[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // A new page created by a save whose later steps failed: retry by updating it
+  const createdPageRef = useRef<Page | null>(null);
+
   // All page titles for autocomplete
-  const [allPageTitles, setAllPageTitles] = useState<{ title: string; slug: string }[]>([]);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(CLOSED_AUTOCOMPLETE);
   const [activeIndex, setActiveIndex] = useState(0);
 
   const editorWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    listPages().then((pages) =>
-      setAllPageTitles(pages.map((p) => ({ title: p.title, slug: p.slug })))
-    );
     listCategories().then(setCategories).catch(() => {});
   }, []);
 
@@ -96,6 +102,9 @@ export function PageEditorPage() {
         setIsPinned(p.isPinned);
         setCategoryId(p.category?.id ?? null);
         setContentMd(p.contentMd);
+        setManualSysmon(
+          (p.sysmonEvents ?? []).filter((l) => l.source === 'manual').map((l) => l.sysmonEvent.eventId)
+        );
         if (p.splCommand) {
           setSplData({
             id: p.splCommand.id,
@@ -122,6 +131,11 @@ export function PageEditorPage() {
             falsePositives: p.rule.falsePositives ?? '',
             references: p.rule.references ?? '',
             testNotes: p.rule.testNotes ?? '',
+            sigmaYaml: p.rule.sigmaYaml ?? '',
+            nativeQuery: p.rule.nativeQuery ?? '',
+            nativeLanguage: p.rule.nativeLanguage ?? '',
+            sourceFormat: p.rule.sourceFormat ?? null,
+            sourceId: p.rule.sourceId ?? null,
           });
         }
       })
@@ -131,6 +145,7 @@ export function PageEditorPage() {
   async function handleSave() {
     if (!title.trim()) return;
     setSaving(true);
+    setSaveError(null);
     try {
       const tagNames = tags
         .split(',')
@@ -140,10 +155,12 @@ export function PageEditorPage() {
       const payload = { title: title.trim(), type, isPinned, categoryId, contentMd, tagNames };
 
       let savedPage: Page;
-      if (isEdit && page) {
-        savedPage = await updatePage(page.id, payload);
+      const existingPage = isEdit && page ? page : createdPageRef.current;
+      if (existingPage) {
+        savedPage = await updatePage(existingPage.id, payload);
       } else {
         savedPage = await createPage(payload);
+        createdPageRef.current = savedPage;
       }
 
       // Save SPL Command data if type is SPL_COMMAND
@@ -179,6 +196,9 @@ export function PageEditorPage() {
           falsePositives: ruleData.falsePositives || undefined,
           references: ruleData.references || undefined,
           testNotes: ruleData.testNotes || undefined,
+          sigmaYaml: ruleData.sigmaYaml ?? null,
+          nativeQuery: ruleData.nativeQuery ?? null,
+          nativeLanguage: ruleData.nativeLanguage ?? null,
         };
         if (ruleData.id) {
           await updateRule(ruleData.id, rulePayload);
@@ -187,7 +207,14 @@ export function PageEditorPage() {
         }
       }
 
+      const hadSysmonLinks = (page?.sysmonEvents ?? []).some((l) => l.source === 'manual');
+      if ((type === 'RULE' || type === 'DATA_SOURCE') && (manualSysmon.length || hadSysmonLinks)) {
+        await setPageSysmonLinks(savedPage.id, manualSysmon);
+      }
+
       navigate(`/pages/${savedPage.slug}`);
+    } catch (err) {
+      setSaveError(apiErrorMessage(err, 'Could not save the page'));
     } finally {
       setSaving(false);
     }
@@ -223,14 +250,21 @@ export function PageEditorPage() {
     []
   );
 
+  // [[ autocomplete: titles are looked up on the server as you type
+  const { data: titleMatches = [] } = useQuery({
+    queryKey: ['page-titles', autocomplete.query],
+    queryFn: () => searchPageTitles(autocomplete.query),
+    enabled: autocomplete.open,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+  const filteredSuggestions = autocomplete.open ? titleMatches.filter((p) => p.slug !== slug) : [];
+
   // Intercept arrow keys and Enter when autocomplete is open
-  const handleEditorKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDivElement>) => {
+  function handleEditorKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
       if (!autocomplete.open) return;
 
-      const filtered = allPageTitles.filter((p) =>
-        p.title.toLowerCase().includes(autocomplete.query.toLowerCase())
-      );
+      const filtered = filteredSuggestions;
 
       if (filtered.length === 0) return;
 
@@ -244,9 +278,7 @@ export function PageEditorPage() {
         e.preventDefault();
         insertSuggestion(filtered[activeIndex].title);
       }
-    },
-    [autocomplete, allPageTitles, activeIndex]
-  );
+  }
 
   function insertSuggestion(pageTitle: string) {
     const textarea = editorWrapRef.current?.querySelector('textarea');
@@ -275,12 +307,6 @@ export function PageEditorPage() {
       }
     }, 0);
   }
-
-  const filteredSuggestions = autocomplete.open
-    ? allPageTitles
-        .filter((p) => p.title.toLowerCase().includes(autocomplete.query.toLowerCase()))
-        .slice(0, 10)
-    : [];
 
   if (loading) {
     return (
@@ -317,6 +343,12 @@ export function PageEditorPage() {
           </button>
         </div>
       </div>
+
+      {saveError && (
+        <div role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {saveError}
+        </div>
+      )}
 
       <div className="space-y-4">
         <div>
@@ -450,6 +482,14 @@ export function PageEditorPage() {
         {/* Detection Rule Form */}
         {type === 'RULE' && (
           <RuleForm value={ruleData} onChange={setRuleData} />
+        )}
+
+        {(type === 'RULE' || type === 'DATA_SOURCE') && (
+          <SysmonEventPicker
+            selected={manualSysmon}
+            onChange={setManualSysmon}
+            autoLinks={page?.sysmonEvents ?? []}
+          />
         )}
       </div>
     </div>

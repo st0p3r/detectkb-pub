@@ -1,0 +1,18 @@
+title: Suspicious Named Pipe
+id: 5f2e3c4a-0000-4000-8000-000000000001
+status: stable
+logsource:
+  product: windows
+  category: pipe_created
+detection:
+  selection:
+    PipeName|startswith: '\msagent_'
+  condition: selection
+tags:
+  - attack.execution
+  - attack.t1559
+level: critical
+---
+title: Missing detection
+logsource:
+  product: windows

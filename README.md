@@ -5,73 +5,178 @@ A self-hosted web application for learning, documenting, and organizing detectio
 ## Features
 - Wiki-style pages with [[backlinks]] and Markdown editing
 - Structured detection rules with MITRE ATT&CK mapping and SPL queries
+- **Rule import** from Sigma, Splunk ESCU (`security_content`), Elastic `detection-rules` (TOML) and
+  Microsoft Sentinel analytics YAML — single files or a whole cloned repository folder
+- **Sigma**: import `.yml` rules (single or multi-document), export one or all rules, and convert
+  Sigma to SPL (Splunk), KQL (Defender XDR / Sentinel ASIM), EQL and Lucene (Elastic) via pySigma
+- **ATT&CK coverage heatmap** of your rules (ATT&CK Enterprise v19) with per-technique drill-down and
+  export as an [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) layer
+- **Sysmon ↔ rules ↔ data sources**: each Sysmon event lists the rules and data sources that depend
+  on it (e.g. "which rules need Event ID 10?"), inferred from the SPL / Sigma logsource or set manually
+- **Attacker tools**: LOLBAS, GTFOBins and LOLDrivers references, each linked to the rules that
+  mention the binary, driver file or driver hash
+- **Knowledge graph** of pages, wiki links, ATT&CK techniques, Sysmon events and attacker tools
+- Role-based access (admin / editor / viewer) enforced by the API
 - SPL command cheat-sheet library with searchable cards
 - Global search (Cmd+K) across all content
 - Tag and category organization
 - JSON backup and restore
 - Dark mode, keyboard shortcuts, collapsible sidebar
 
-## Quick Start (Development)
+## Installation (recommended)
 
-### Prerequisites
-- Docker + Docker Compose
-- Node.js 20+
+The installer sets up Docker if needed, generates `.env` with random secrets,
+builds the images, starts the stack and waits until it is healthy.
 
-### Setup
-1. Clone and configure:
-   ```bash
-   cp backend/.env.example .env
-   # Edit .env with your settings
-   ```
-
-2. Start MySQL:
-   ```bash
-   docker-compose up mysql -d
-   ```
-
-3. Install and migrate:
-   ```bash
-   cd backend && npm install && npx prisma migrate dev && cd ..
-   cd frontend && npm install && cd ..
-   ```
-
-4. Start development servers:
-   ```bash
-   # Terminal 1:
-   cd backend && npm run dev
-   # Terminal 2:
-   cd frontend && npm run dev
-   ```
-
-5. Open http://localhost:5173
-
-### Full Docker Stack
 ```bash
-docker-compose up
+git clone https://github.com/st0p3r/detectkb-pub.git && cd detectkb-pub
+./install.sh                 # production stack on port 80
+./install.sh --port 8080 -y  # custom port, no prompts
 ```
+
+Or on a fresh Linux server (clones into `/opt/detectkb`):
+```bash
+curl -fsSL https://raw.githubusercontent.com/st0p3r/detectkb-pub/master/install.sh | sudo bash
+```
+
+The generated admin password is printed at the end (and stored in `.env`).
+
+| Command | Description |
+|---|---|
+| `./install.sh` | Install / start (re-running is safe; existing `.env` is kept) |
+| `./install.sh update` | Dump the DB to `backups/`, `git pull`, rebuild, restart |
+| `./install.sh status` | Container status and backend health |
+| `./install.sh uninstall` | Remove containers, keep data (`--purge` also deletes the DB volume) |
+| `./install.sh --dev` | Development stack with hot reload |
+
+Run `./install.sh --help` for all options (`--bind`, `--admin-user`, `--admin-password`, ...).
+
+## Manual Docker setup
+
+```bash
+cp .env.example .env         # then edit the secrets
+docker compose up -d --build # http://localhost
+```
+
+- `docker-compose.yml` — production stack: MySQL, compiled API, nginx-served frontend.
+  Only the web port (`HTTP_PORT`, default 80) is published; `/api` is proxied to the backend.
+- `docker-compose.dev.yml` — development override: API runs with ts-node-dev and the
+  frontend with Vite (http://localhost:5173), both with the source mounted.
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+  ```
+  (`./install.sh --dev` sets `COMPOSE_FILE` in `.env` so plain `docker compose` uses both files.)
+
+## Local development without Docker
+
+Requires Node.js 20+, a MySQL 8 server and (for Sigma conversion) Python 3.11+.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql   # optional: MySQL on :3306
+cp backend/.env.example backend/.env
+cd backend && npm install && npx prisma db push && npm run dev     # API on :3001
+cd frontend && npm install && npm run dev                          # UI on :5173
+cd sigma && python -m venv .venv && .venv/bin/pip install -r requirements.txt \
+  && .venv/bin/uvicorn app:app --port 8000                         # Sigma service on :8000
+```
+
+The Sigma service is optional: without it Sigma import/export still works, only query
+conversion is unavailable.
+
+To refresh the bundled ATT&CK dataset after a new MITRE release:
+```bash
+cd backend && node scripts/update-attack-data.js
+```
+
+The database schema is managed with `prisma db push` (there are no migration files).
 
 ## Environment Variables
 
+Docker settings live in the root `.env` (see `.env.example`); `backend/.env` is only used
+when running the backend directly on the host.
+
 | Variable | Default | Description |
 |---|---|---|
-| DATABASE_URL | mysql://detectkb:detectkb@localhost:3306/detectkb | MySQL connection string |
-| JWT_SECRET | detectkb-dev-secret-change-in-production | JWT signing secret |
-| ADMIN_USERNAME | admin | Login username |
-| ADMIN_PASSWORD | detectkb | Login password |
-| BACKUP_DIR | ../backups | Backup file directory |
+| HTTP_PORT | 80 | Host port for the web UI |
+| HTTP_BIND | 0.0.0.0 | Bind address for the web UI (use 127.0.0.1 behind another reverse proxy) |
+| MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD | — | MySQL credentials (URL-safe characters only) |
+| MYSQL_DATABASE / MYSQL_USER | detectkb | MySQL database and user |
+| NODE_ENV | production | `production` refuses destructive schema changes on start |
+| JWT_SECRET | insecure dev default | JWT signing secret — **always set in production** |
+| ADMIN_USERNAME / ADMIN_PASSWORD / ADMIN_EMAIL | admin / detectkb | Initial admin, created only when the database has no users |
+| DATABASE_URL | — | Backend-only (host dev); built automatically in Docker |
+| BACKUP_DIR | ../backups (`/backups` in Docker) | Backup and generated-document directory |
+| CORS_ORIGIN | * | Allowed CORS origin for the API |
+| SIGMA_SERVICE_URL | http://localhost:8000 (`http://sigma:8000` in Docker) | pySigma conversion service |
+| REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers on first start |
 | PORT | 3001 | Backend port |
 
-## Default Login
-- Username: `admin`
-- Password: `detectkb`
+## Importing rules
 
-**Change these in production via environment variables.**
+**Detection Rules → Import rules** accepts files or a whole folder. Useful sources:
+
+| Source | Clone | Folder to import |
+|---|---|---|
+| SigmaHQ | `git clone --depth 1 https://github.com/SigmaHQ/sigma` | `rules/windows/…` |
+| Splunk ESCU | `git clone --depth 1 https://github.com/splunk/security_content` | `detections/endpoint` |
+| Elastic | `git clone --depth 1 https://github.com/elastic/detection-rules` | `rules/windows` |
+| Sentinel | `git clone --depth 1 https://github.com/Azure/Azure-Sentinel` | `Solutions/<solution>/Analytic Rules` |
+
+Imported rules start as **Draft** (a vendor's "production" only means it works on *their* data
+model) and keep their original source. Re-importing skips rules with the same source id unless
+"update" is ticked.
+
+## Attacker tool references
+
+LOLBAS and GTFOBins are GPL-3.0 and LOLDrivers is Apache-2.0, so their data is **not bundled**:
+the backend downloads it from the official APIs on first start (`lolbas.json`, `api.json`,
+`drivers.json`). On a server without internet access, download those files elsewhere and use
+**Attacker Tools → Upload file**; **Update from source** refreshes them.
+
+## How correctness is checked
+
+`npm test` in `backend/` (also run by CI in `.github/workflows/ci.yml`) verifies, among others:
+
+- the bundled ATT&CK data is internally consistent, and retired technique IDs (e.g. `T1562.001`)
+  map to their official replacements;
+- the built-in Sysmon reference only cites techniques that exist in the current ATT&CK release;
+- the Sigma category → Sysmon event mapping equals the table in the official Sigma taxonomy;
+- the importers, the Sysmon inference and the attacker-tool matching behave as expected on
+  representative samples (including known false-positive cases).
+
+To check the importers against full upstream repositories (nothing is written to the database):
+```bash
+cd backend && npm run validate:corpus -- ../security_content/detections ../detection-rules/rules ../sigma/rules
+```
+
+What this **cannot** tell you is whether a rule works on *your* logs: index/sourcetype names,
+field mappings (CIM, ECS, ASIM), macros such as ESCU's `` `sysmon` ``, and Sysmon configuration
+differ per environment. Test each rule against real or emulated activity (e.g. Atomic Red Team,
+Splunk `attack_data`, which ESCU rules link to) before promoting it from Draft.
+
+## Users & permissions
+
+Every API endpoint except login and health requires a logged-in user; roles are re-checked on
+each request, so role changes and deactivations apply immediately.
+
+| Role | Can |
+|---|---|
+| viewer | Read pages, rules, tags, docs; convert Sigma; view coverage |
+| editor | Everything a viewer can, plus create/edit/delete content, import Sigma, create backups |
+| admin | Everything, plus users, audit log, custom page types, restore/delete backups |
+
+The default `admin` / `detectkb` password (and any password set by an admin) must be changed at
+first login. After 10 failed logins for the same user from one IP, login is blocked for 15 minutes.
 
 ## Backup & Restore
 - Click "Backup Now" in the Backups section to export a JSON snapshot
-- Daily automatic backup runs at startup + every 24 hours
+- An automatic JSON backup runs every 24 hours while the backend is up
+- Backups are stored in `./backups` on the host and require login to list or download
 - To restore: upload a JSON backup file in the Backups section
-- Manual MySQL dump: `docker exec detectkb-mysql mysqldump -u detectkb -pdetectkb detectkb > backup.sql`
+- Manual MySQL dump (also done automatically by `./install.sh update`):
+  ```bash
+  docker exec detectkb-mysql sh -c 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" detectkb' > backup.sql
+  ```
 
 ## Keyboard Shortcuts
 | Key | Action |
@@ -81,15 +186,6 @@ docker-compose up
 | e | Edit current page |
 | ? | Show shortcuts |
 | Escape | Close modal |
-
-## Production Deployment
-
-Build and run with the production nginx frontend:
-```bash
-docker-compose --profile prod up --build
-```
-
-This serves the React app via nginx on port 80, with `/api` proxied to the backend.
 
 ## Tech Stack
 - Frontend: React 18 + TypeScript + Vite + Tailwind CSS

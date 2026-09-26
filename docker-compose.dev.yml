@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DetectKB — development override
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# - backend runs ts-node-dev with ./backend mounted (hot reload)
+# - frontend runs the Vite dev server on :5173 with ./frontend mounted
+# - MySQL (:3306) and the API (:3001) are published on localhost for tooling
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  mysql:
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
+
+  backend:
+    environment:
+      NODE_ENV: development
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
+  frontend:
+    build:
+      dockerfile: Dockerfile
+    environment:
+      VITE_PROXY_TARGET: http://backend:3001
+    ports: !override
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules

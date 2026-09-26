@@ -1,7 +1,41 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
+import { parseSingleSigmaRule } from '../lib/sigma';
+import { syncAutoSysmonLinks } from '../lib/sysmon-links';
+import {
+  RULE_LIST_SELECT,
+  RULE_SEVERITIES,
+  RULE_STATUSES,
+  enumSlices,
+  parseRuleListQuery,
+  ruleOrderBy,
+  ruleWhere,
+} from '../lib/rule-list';
 
 const router = Router();
+
+/**
+ * Validates optional Sigma YAML from a request body. Returns the fields to
+ * store, `{}` when sigmaYaml was not sent, or an error message.
+ */
+async function sigmaFields(
+  sigmaYaml: unknown,
+  pageId: number
+): Promise<{ sigmaYaml?: string | null; sigmaId?: string } | string> {
+  if (sigmaYaml === undefined) return {};
+  if (sigmaYaml === null || String(sigmaYaml).trim() === '') return { sigmaYaml: null };
+  let doc;
+  try {
+    doc = parseSingleSigmaRule(String(sigmaYaml));
+  } catch (err) {
+    return (err as Error).message;
+  }
+  if (!doc.id) return { sigmaYaml: String(sigmaYaml) };
+  const sigmaId = String(doc.id);
+  const clash = await prisma.detectionRule.findFirst({ where: { sigmaId }, include: { page: true } });
+  if (clash && clash.pageId !== pageId) return `Sigma id ${sigmaId} is already used by "${clash.page.title}"`;
+  return { sigmaYaml: String(sigmaYaml), sigmaId };
+}
 
 const RULE_PAGE_SELECT = {
   id: true,
@@ -12,23 +46,138 @@ const RULE_PAGE_SELECT = {
   tags: { include: { tag: true } },
 };
 
-// GET /api/rules — list all rules with page info, supports filters
+// GET /api/rules — the rule list. With ?page= it is paged, filtered, searched
+// and sorted server-side and returns { items, total, page, pageSize,
+// statusCounts }; without it, every matching rule (list columns only).
 router.get('/', async (req, res) => {
-  const { status, severity, technique, dataSource } = req.query;
+  const f = parseRuleListQuery(req.query);
+  const where = ruleWhere(f);
 
-  const where: Record<string, unknown> = {};
-  if (status) where.status = String(status);
-  if (severity) where.severity = String(severity);
-  if (technique) where.mitreTechniques = { contains: String(technique) };
-  if (dataSource) where.dataSource = { contains: String(dataSource) };
+  if (req.query.page === undefined) {
+    res.json(await prisma.detectionRule.findMany({ where, select: RULE_LIST_SELECT, orderBy: ruleOrderBy('updatedAt', 'desc') }));
+    return;
+  }
 
-  const rules = await prisma.detectionRule.findMany({
-    where,
-    include: { page: { select: RULE_PAGE_SELECT } },
-    orderBy: { page: { updatedAt: 'desc' } },
+  const [total, byStatus] = await Promise.all([
+    prisma.detectionRule.count({ where }),
+    prisma.detectionRule.groupBy({ by: ['status'], where: ruleWhere(f, 'status'), _count: { _all: true } }),
+  ]);
+  const pageCount = Math.max(1, Math.ceil(total / f.pageSize));
+  const page = Math.min(f.page, pageCount);
+  const skip = (page - 1) * f.pageSize;
+
+  let items;
+  if (f.sort === 'status' || f.sort === 'severity') {
+    const field = f.sort;
+    const order = field === 'status' ? RULE_STATUSES : RULE_SEVERITIES;
+    const counts = new Map(
+      (
+        await prisma.detectionRule.groupBy({ by: [field], where, _count: { _all: true } })
+      ).map((g) => [g[field], g._count._all])
+    );
+    const slices = enumSlices(f.dir === 'asc' ? order : [...order].reverse(), counts, skip, f.pageSize);
+    const parts = await Promise.all(
+      slices.map((s) =>
+        prisma.detectionRule.findMany({
+          where: { AND: [where, { [field]: s.value }] },
+          select: RULE_LIST_SELECT,
+          orderBy: ruleOrderBy('updatedAt', 'desc'),
+          skip: s.skip,
+          take: s.take,
+        })
+      )
+    );
+    items = parts.flat();
+  } else {
+    items = await prisma.detectionRule.findMany({
+      where,
+      select: RULE_LIST_SELECT,
+      orderBy: ruleOrderBy(f.sort, f.dir),
+      skip,
+      take: f.pageSize,
+    });
+  }
+
+  res.json({
+    items,
+    total,
+    page,
+    pageSize: f.pageSize,
+    statusCounts: Object.fromEntries(byStatus.map((g) => [g.status, g._count._all])),
   });
+});
 
-  res.json(rules);
+// GET /api/rules/ids?<list filters> — ids of every matching rule ("select all")
+router.get('/ids', async (req, res) => {
+  const rules = await prisma.detectionRule.findMany({ where: ruleWhere(parseRuleListQuery(req.query)), select: { id: true }, orderBy: { id: 'asc' } });
+  res.json(rules.map((r) => r.id));
+});
+
+/** Rules a bulk action targets: explicit ids, or every rule matching a list filter. */
+async function bulkTargets(body: Record<string, unknown>) {
+  if (Array.isArray(body.ids)) {
+    const ids = body.ids.map(Number).filter(Number.isInteger);
+    return ids.length ? prisma.detectionRule.findMany({ where: { id: { in: ids } }, select: { id: true, pageId: true } }) : [];
+  }
+  if (body.filter && typeof body.filter === 'object') {
+    return prisma.detectionRule.findMany({
+      where: ruleWhere(parseRuleListQuery(body.filter as Record<string, unknown>)),
+      select: { id: true, pageId: true },
+    });
+  }
+  return null;
+}
+
+const BULK_ACTIONS = ['status', 'severity', 'addTag', 'removeTag'] as const;
+
+// PUT /api/rules/bulk { ids | filter, action: status|severity|addTag|removeTag, value }
+router.put('/bulk', async (req, res) => {
+  const { action } = req.body ?? {};
+  const value = typeof req.body?.value === 'string' ? req.body.value.trim() : '';
+  if (!BULK_ACTIONS.includes(action)) return res.status(400).json({ error: `action must be one of ${BULK_ACTIONS.join(', ')}` });
+  if (action === 'status' && !RULE_STATUSES.includes(value)) return res.status(400).json({ error: 'Invalid status' });
+  if (action === 'severity' && !RULE_SEVERITIES.includes(value)) return res.status(400).json({ error: 'Invalid severity' });
+  if ((action === 'addTag' || action === 'removeTag') && (!value || value.length > 80))
+    return res.status(400).json({ error: 'Tag name must be 1–80 characters' });
+
+  const targets = await bulkTargets(req.body);
+  if (!targets) return res.status(400).json({ error: 'Send ids or filter' });
+  const ids = targets.map((t) => t.id);
+  const pageIds = targets.map((t) => t.pageId);
+
+  let changed = 0;
+  if (action === 'status' || action === 'severity') {
+    changed = (await prisma.detectionRule.updateMany({ where: { id: { in: ids }, [action]: { not: value } }, data: { [action]: value } })).count;
+  } else if (action === 'addTag') {
+    const tag = await prisma.tag.upsert({ where: { name: value }, create: { name: value }, update: {} });
+    changed = (
+      await prisma.tagsOnPages.createMany({ data: pageIds.map((pageId) => ({ pageId, tagId: tag.id })), skipDuplicates: true })
+    ).count;
+  } else {
+    const tag = await prisma.tag.findUnique({ where: { name: value } });
+    if (tag) {
+      changed = (await prisma.tagsOnPages.deleteMany({ where: { tagId: tag.id, pageId: { in: pageIds } } })).count;
+      await prisma.tag.deleteMany({ where: { id: tag.id, pages: { none: {} } } });
+    }
+  }
+
+  await prisma.auditLog.create({
+    data: { userId: req.user?.userId ?? null, action: 'RULE_BULK_UPDATE', resourceType: 'rule', newValue: { action, value, rules: ids.length, changed } },
+  });
+  res.json({ matched: ids.length, changed });
+});
+
+// DELETE /api/rules/bulk { ids | filter } — deletes the rules' pages
+router.delete('/bulk', async (req, res) => {
+  const targets = await bulkTargets(req.body ?? {});
+  if (!targets) return res.status(400).json({ error: 'Send ids or filter' });
+  const pageIds = targets.map((t) => t.pageId);
+  const { count } = await prisma.page.deleteMany({ where: { id: { in: pageIds } } });
+  await prisma.tag.deleteMany({ where: { pages: { none: {} } } });
+  await prisma.auditLog.create({
+    data: { userId: req.user?.userId ?? null, action: 'RULE_BULK_DELETE', resourceType: 'rule', newValue: { deleted: count } },
+  });
+  res.json({ deleted: count });
 });
 
 // GET /api/rules/:pageId — get single rule by pageId
@@ -58,9 +207,14 @@ router.post('/', async (req, res) => {
     falsePositives,
     references,
     testNotes,
+    sigmaYaml,
+    nativeQuery,
+    nativeLanguage,
   } = req.body;
 
   if (!pageId) return res.status(400).json({ error: 'pageId is required' });
+  const sigma = await sigmaFields(sigmaYaml, Number(pageId));
+  if (typeof sigma === 'string') return res.status(400).json({ error: sigma });
 
   const ruleData = {
     status,
@@ -72,6 +226,9 @@ router.post('/', async (req, res) => {
     falsePositives: falsePositives ?? null,
     references: references ?? null,
     testNotes: testNotes ?? null,
+    ...(nativeQuery !== undefined && { nativeQuery: nativeQuery || null }),
+    ...(nativeLanguage !== undefined && { nativeLanguage: nativeLanguage || null }),
+    ...sigma,
   };
 
   const rule = await prisma.detectionRule.upsert({
@@ -80,6 +237,7 @@ router.post('/', async (req, res) => {
     update: ruleData,
     include: { page: { select: RULE_PAGE_SELECT } },
   });
+  await syncAutoSysmonLinks(rule.pageId);
 
   res.status(201).json(rule);
 });
@@ -102,7 +260,13 @@ router.put('/:id', async (req, res) => {
     falsePositives,
     references,
     testNotes,
+    sigmaYaml,
+    nativeQuery,
+    nativeLanguage,
   } = req.body;
+
+  const sigma = await sigmaFields(sigmaYaml, existing.pageId);
+  if (typeof sigma === 'string') return res.status(400).json({ error: sigma });
 
   const rule = await prisma.detectionRule.update({
     where: { id },
@@ -116,9 +280,13 @@ router.put('/:id', async (req, res) => {
       ...(falsePositives !== undefined && { falsePositives }),
       ...(references !== undefined && { references }),
       ...(testNotes !== undefined && { testNotes }),
+      ...(nativeQuery !== undefined && { nativeQuery: nativeQuery || null }),
+      ...(nativeLanguage !== undefined && { nativeLanguage: nativeLanguage || null }),
+      ...sigma,
     },
     include: { page: { select: RULE_PAGE_SELECT } },
   });
+  await syncAutoSysmonLinks(rule.pageId);
 
   res.json(rule);
 });
@@ -132,6 +300,7 @@ router.delete('/:id', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Rule not found' });
 
   await prisma.detectionRule.delete({ where: { id } });
+  await syncAutoSysmonLinks(existing.pageId);
   res.status(204).send();
 });
 

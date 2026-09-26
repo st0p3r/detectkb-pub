@@ -1,24 +1,38 @@
 import { prisma } from './prisma';
 
+/** Titles of the [[wiki links]] in markdown, trimmed and de-duplicated. */
+export function wikiLinkTitles(contentMd: string): string[] {
+  const titles = new Set<string>();
+  for (const m of contentMd.matchAll(/\[\[([^\]]+)\]\]/g)) titles.add(m[1].trim());
+  return Array.from(titles);
+}
+
+/**
+ * Where each [[wiki link]] in the markdown points: lower-cased title → slug.
+ * Links to missing pages are left out (shown as broken).
+ */
+export async function resolveWikiLinks(contentMd: string): Promise<Record<string, string>> {
+  const titles = wikiLinkTitles(contentMd);
+  if (!titles.length) return {};
+  // MySQL's default collation matches titles case-insensitively
+  const pages = await prisma.page.findMany({ where: { title: { in: titles } }, select: { title: true, slug: true } });
+  return Object.fromEntries(pages.map((p) => [p.title.toLowerCase(), p.slug]));
+}
+
 export async function syncPageLinks(sourceId: number, contentMd: string) {
-  const regex = /\[\[([^\]]+)\]\]/g;
-  const titles: string[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = regex.exec(contentMd)) !== null) {
-    titles.push(m[1].trim());
-  }
+  const titles = wikiLinkTitles(contentMd);
 
   // Delete old outLinks
   await prisma.pageLink.deleteMany({ where: { sourceId } });
 
   if (titles.length === 0) return;
 
-  // Resolve titles to IDs (case-insensitive, exclude self)
-  // MySQL does not support mode:'insensitive' on `in` filters in Prisma,
-  // so we use OR with individual contains filters.
+  // Resolve titles to IDs, excluding self. Prisma's `mode: 'insensitive'` only
+  // exists for PostgreSQL/MongoDB (on MySQL it throws); MySQL's default
+  // collation already compares case-insensitively.
   const targets = await prisma.page.findMany({
     where: {
-      OR: titles.map((t) => ({ title: { equals: t, mode: 'insensitive' as const } })),
+      title: { in: titles },
       id: { not: sourceId },
     },
     select: { id: true },

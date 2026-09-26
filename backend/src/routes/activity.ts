@@ -1,11 +1,7 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { authMiddleware } from '../middleware/auth';
+import { prisma } from '../lib/prisma';
 
-const prisma = new PrismaClient();
 const router = Router();
-
-router.use(authMiddleware);
 
 // GET /api/activity/stats?days=30
 router.get('/stats', async (req, res) => {

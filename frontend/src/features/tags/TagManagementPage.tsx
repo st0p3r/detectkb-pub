@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Tag, Plus, Pencil, Trash2, X, Check } from 'lucide-react';
+import { Tag, Plus, Pencil, Trash2 } from 'lucide-react';
 import { listTagsAll, createTag, updateTag, deleteTag, type TagDetail } from '@/lib/api';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';

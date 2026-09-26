@@ -2,8 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download } from 'lucide-react';
-import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, type Page } from '@/lib/api';
+import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network } from 'lucide-react';
+import { getPage, deletePage, updatePage, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, type Page } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { RuleQueryTabs } from '@/features/rules/RuleQueryTabs';
+import { useAuth } from '@/features/auth/AuthContext';
+import { useToast } from '@/hooks/useToast';
 import { TypeBadge } from '@/components/ui/TypeBadge';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
@@ -34,16 +38,8 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
-  const [splCopied, setSplCopied] = useState(false);
+function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: string }) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
-
-  function copySpl() {
-    navigator.clipboard.writeText(rule.splQuery ?? '').then(() => {
-      setSplCopied(true);
-      setTimeout(() => setSplCopied(false), 2000);
-    });
-  }
 
   function toggleSection(key: string) {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -65,24 +61,7 @@ function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
         )}
       </div>
 
-      {rule.splQuery && (
-        <div className="px-6 py-4 border-b border-border/60">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">SPL Query</span>
-            <button
-              onClick={copySpl}
-              aria-label={splCopied ? 'Copied' : 'Copy SPL query'}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-            >
-              {splCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              {splCopied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-          <pre className="bg-zinc-900 text-zinc-100 rounded-md px-4 py-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
-            {rule.splQuery}
-          </pre>
-        </div>
-      )}
+      <RuleQueryTabs rule={rule} slug={slug} />
 
       {(tactics.length > 0 || techniques.length > 0) && (
         <div className="px-6 py-4 border-b border-border/60 space-y-2">
@@ -159,6 +138,51 @@ function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
           <p className="text-sm text-foreground/80 whitespace-pre-wrap">{rule.testNotes}</p>
         </CollapsibleSection>
       )}
+
+    </div>
+  );
+}
+
+const REFERENCE_LABELS = { lolbas: 'LOLBAS', gtfobins: 'GTFOBins', loldrivers: 'LOLDrivers' } as const;
+
+/** LOLBAS / GTFOBins / LOLDrivers entries this rule mentions. */
+function ReferencesBar({ pageId }: { pageId: number }) {
+  const { data: refs = [] } = useQuery({ queryKey: ['page-references', pageId], queryFn: () => getPageReferences(pageId) });
+  if (!refs.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-6 py-3 border-b border-border bg-muted/10">
+      <span className="text-xs font-medium text-muted-foreground mr-1">Attacker tools:</span>
+      {refs.map((r) => (
+        <Link
+          key={`${r.kind}:${r.key}`}
+          to={`/attacker-tools?kind=${r.kind}&key=${encodeURIComponent(r.key)}`}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent"
+        >
+          <span className="text-muted-foreground">{REFERENCE_LABELS[r.kind]}</span> {r.name}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/** Sysmon events a rule / data source depends on, linking to the Sysmon reference. */
+function SysmonLinksBar({ links }: { links: NonNullable<Page['sysmonEvents']> }) {
+  if (!links.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-6 py-3 border-b border-border bg-muted/10">
+      <span className="text-xs font-medium text-muted-foreground mr-1">Sysmon events:</span>
+      {links.map(({ source, sysmonEvent: e }) => (
+        <Link
+          key={e.eventId}
+          to={`/sysmon-events?event=${e.eventId}`}
+          title={source === 'auto' ? 'Detected from the query / Sigma logsource' : 'Linked manually'}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent"
+        >
+          <span className="font-mono font-semibold">{e.eventId}</span>
+          {e.name}
+          {source === 'auto' && <span className="text-muted-foreground">·auto</span>}
+        </Link>
+      ))}
     </div>
   );
 }
@@ -326,10 +350,10 @@ function SplCommandPanel({
   );
 }
 
-function processWikiLinks(md: string, allPages: { title: string; slug: string }[]): string {
+function processWikiLinks(md: string, wikiLinks: Record<string, string>): string {
   return md.replace(/\[\[([^\]]+)\]\]/g, (_, title) => {
-    const page = allPages.find((p) => p.title.toLowerCase() === title.trim().toLowerCase());
-    if (page) return `[${title}](/pages/${page.slug})`;
+    const slug = wikiLinks[title.trim().toLowerCase()];
+    if (slug) return `[${title}](/pages/${slug})`;
     const encodedTitle = encodeURIComponent(title.trim());
     return `<span class="wiki-link-broken" title="Page not found: ${title}">[${title}](/pages/new?title=${encodedTitle})</span>`;
   });
@@ -344,8 +368,21 @@ export function PageViewPage() {
   const [deleting, setDeleting] = useState(false);
   const [pinning, setPinning] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
+
+  async function handleExportSigma() {
+    if (!page) return;
+    try {
+      const isSkeleton = await downloadSigmaRule(page.id, page.slug);
+      if (isSkeleton) {
+        toast('This rule has no Sigma source — exported a skeleton; complete its detection logic', 'info');
+      }
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Sigma export failed'), 'error');
+    }
+  }
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [allPages, setAllPages] = useState<{ title: string; slug: string }[]>([]);
   const [backlinks, setBacklinks] = useState<{ id: number; title: string; slug: string; type: string }[]>([]);
 
   useEffect(() => {
@@ -357,12 +394,6 @@ export function PageViewPage() {
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
   }, [slug]);
-
-  useEffect(() => {
-    listPages().then((pages) =>
-      setAllPages(pages.map((p) => ({ title: p.title, slug: p.slug })))
-    );
-  }, []);
 
   useEffect(() => {
     if (!slug) return;
@@ -440,7 +471,7 @@ export function PageViewPage() {
     ? [{ label: 'Detection Rules', to: '/rules' }, { label: page.title }]
     : [{ label: 'Pages', to: '/pages' }, { label: page.title }];
 
-  const processedContent = processWikiLinks(page.contentMd, allPages);
+  const processedContent = processWikiLinks(page.contentMd, page.wikiLinks ?? {});
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -491,6 +522,28 @@ export function PageViewPage() {
             {exportingPdf ? 'Exporting…' : 'PDF'}
           </button>
           <button
+            onClick={() => navigate(`/graph?view=explore&focus=page:${page.id}`)}
+            aria-label="Show in knowledge graph"
+            title="Show in knowledge graph"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+          >
+            <Network className="w-3.5 h-3.5" />
+            Graph
+          </button>
+          {page.type === 'RULE' && page.rule && (
+            <button
+              onClick={handleExportSigma}
+              aria-label="Export as Sigma"
+              title="Export as Sigma YAML"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Sigma
+            </button>
+          )}
+          {hasPermission('pages:update') && (
+          <>
+          <button
             onClick={() => navigate(`/pages/${page.slug}/edit`)}
             aria-label="Edit page"
             title="Edit page"
@@ -513,6 +566,9 @@ export function PageViewPage() {
             )}
             {page.isPinned ? 'Unpin' : 'Pin'}
           </button>
+          </>
+          )}
+          {hasPermission('pages:delete') && (
           <button
             onClick={() => setShowDeleteConfirm(true)}
             disabled={deleting}
@@ -523,6 +579,7 @@ export function PageViewPage() {
             <Trash2 className="w-3.5 h-3.5" />
             Delete
           </button>
+          )}
         </div>
       </div>
 
@@ -536,8 +593,11 @@ export function PageViewPage() {
 
         {/* Detection Rule structured panel */}
         {page.type === 'RULE' && page.rule && (
-          <RulePanel rule={page.rule} />
+          <RulePanel rule={page.rule} slug={page.slug} />
         )}
+
+        <SysmonLinksBar links={page.sysmonEvents ?? []} />
+        {page.type === 'RULE' && page.rule && <ReferencesBar pageId={page.id} />}
 
         <div className="px-6 py-6">
           {page.contentMd ? (

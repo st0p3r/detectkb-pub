@@ -1,10 +1,19 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { Outlet, useParams, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from '@/features/search/CommandPalette';
 import { ShortcutsHelpModal } from '@/features/search/ShortcutsHelpModal';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+
+function PageLoading() {
+  return (
+    <div className="flex items-center justify-center gap-2 py-24 text-sm text-muted-foreground" role="status">
+      <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+    </div>
+  );
+}
 
 interface LayoutProps {
   darkMode: boolean;
@@ -26,11 +35,14 @@ function LayoutInner({ darkMode, onToggleDark, collapsed }: LayoutProps & { coll
 
   return (
     <>
-      <div className={`flex-1 ${marginLeft} flex flex-col bg-[hsl(var(--background))] transition-all duration-200`}>
+      <div className={`flex-1 min-w-0 ${marginLeft} flex flex-col bg-[hsl(var(--background))] transition-all duration-200`}>
         <TopBar darkMode={darkMode} onToggleDark={onToggleDark} collapsed={collapsed} />
         <main className="flex-1 overflow-y-auto mt-14 p-6">
           <div key={location.pathname} className="animate-fade-in-up">
-            <Outlet />
+            {/* Pages are lazy-loaded chunks (see App.tsx) */}
+            <Suspense fallback={<PageLoading />}>
+              <Outlet />
+            </Suspense>
           </div>
         </main>
       </div>

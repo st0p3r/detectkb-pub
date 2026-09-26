@@ -1,13 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'detectkb-dev-secret-change-in-production';
+import { JWT_SECRET } from '../lib/config';
+import { prisma } from '../lib/prisma';
 
 export interface AuthUser {
   userId?: number;
   username: string;
   roles: string[];
   permissions: string[];
+  mustChangePassword: boolean;
 }
 
 declare global {
@@ -18,26 +19,69 @@ declare global {
   }
 }
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
+// Endpoints a user who must change their password can still reach.
+const PASSWORD_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/auth/verify', '/api/users/me']);
 
-  const token = authHeader.slice(7);
+function verifyToken(token: string): { userId?: number } | null {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
-    req.user = {
-      userId: payload.userId as number | undefined,
-      username: (payload.username as string) || '',
-      roles: (payload.roles as string[]) || [],
-      permissions: (payload.permissions as string[]) || [],
-    };
-    next();
+    return jwt.verify(token, JWT_SECRET) as { userId?: number };
   } catch {
-    res.status(401).json({ error: 'Unauthorized' });
+    return null;
   }
+}
+
+/**
+ * Roles and permissions are loaded from the database on every request (not
+ * trusted from the JWT), so role changes and deactivations apply immediately.
+ */
+async function loadUser(userId: number): Promise<AuthUser | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: {
+      userRoles: {
+        include: { role: { include: { permissions: { include: { permission: true } } } } },
+      },
+    },
+  });
+  if (!user || !user.isActive) return null;
+  return {
+    userId: user.id,
+    username: user.username,
+    roles: user.userRoles.map((ur) => ur.role.name),
+    permissions: Array.from(
+      new Set(user.userRoles.flatMap((ur) => ur.role.permissions.map((rp) => rp.permission.name)))
+    ),
+    mustChangePassword: user.mustChangePassword,
+  };
+}
+
+async function authenticate(req: Request): Promise<AuthUser | null> {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const payload = verifyToken(authHeader.slice(7));
+  if (!payload?.userId) return null;
+  return loadUser(payload.userId);
+}
+
+export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  authenticate(req)
+    .then((user) => {
+      if (!user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      if (user.mustChangePassword && !PASSWORD_CHANGE_ALLOWED.has(req.originalUrl.split('?')[0])) {
+        res.status(403).json({ error: 'You must change your password first', code: 'PASSWORD_CHANGE_REQUIRED' });
+        return;
+      }
+      req.user = user;
+      next();
+    })
+    .catch(next);
+}
+
+export function isAdmin(user: AuthUser): boolean {
+  return user.roles.includes('admin');
 }
 
 export function requireRole(...roles: string[]) {
@@ -46,8 +90,7 @@ export function requireRole(...roles: string[]) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const hasRole = roles.some((r) => req.user!.roles.includes(r));
-    if (!hasRole) {
+    if (!roles.some((r) => req.user!.roles.includes(r))) {
       res.status(403).json({ error: 'Forbidden' });
       return;
     }
@@ -55,36 +98,48 @@ export function requireRole(...roles: string[]) {
   };
 }
 
+/** Passes when the user has any of the given permissions (admins always pass). */
 export function requirePermission(...permissions: string[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const hasAny = permissions.some((p) => req.user!.permissions.includes(p));
-    if (!hasAny) {
-      res.status(403).json({ error: 'Forbidden' });
+    if (!isAdmin(req.user) && !permissions.some((p) => req.user!.permissions.includes(p))) {
+      res.status(403).json({ error: `Forbidden: requires ${permissions.join(' or ')}` });
       return;
     }
     next();
   };
 }
 
+const METHOD_ACTION: Record<string, string> = {
+  GET: 'read',
+  POST: 'create',
+  PUT: 'update',
+  PATCH: 'update',
+  DELETE: 'delete',
+};
+
+/**
+ * Maps the HTTP method to a `<resource>:<action>` permission: POST → create,
+ * PUT/PATCH → update, DELETE → delete. Reads are only checked when
+ * `checkReads` is set (every logged-in user may read shared reference data).
+ * Must run after authMiddleware.
+ */
+export function guard(resource: string, { checkReads = false } = {}) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const action = METHOD_ACTION[req.method];
+    if (!action || (action === 'read' && !checkReads)) return next();
+    requirePermission(`${resource}:${action}`)(req, res, next);
+  };
+}
+
 export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
-  const authHeader = req.headers['authorization'];
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    try {
-      const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
-      req.user = {
-        userId: payload.userId as number | undefined,
-        username: (payload.username as string) || '',
-        roles: (payload.roles as string[]) || [],
-        permissions: (payload.permissions as string[]) || [],
-      };
-    } catch {
-      // ignore
-    }
-  }
-  next();
+  authenticate(req)
+    .then((user) => {
+      if (user) req.user = user;
+      next();
+    })
+    .catch(next);
 }

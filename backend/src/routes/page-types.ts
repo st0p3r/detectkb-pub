@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
-import { authMiddleware } from '../middleware/auth';
+import { prisma } from '../lib/prisma';
+import { requirePermission } from '../middleware/auth';
 
-const prisma = new PrismaClient();
 const router = Router();
 
 // GET /api/page-types — list all page types (public)
@@ -14,7 +13,7 @@ router.get('/', async (_req, res) => {
 });
 
 // POST /api/page-types — create a custom page type (auth required)
-router.post('/', authMiddleware, async (req, res) => {
+router.post('/', requirePermission('settings:manage'), async (req, res) => {
   const { name, label, color = '#6366f1' } = req.body as {
     name?: string;
     label?: string;
@@ -51,7 +50,7 @@ router.post('/', authMiddleware, async (req, res) => {
 });
 
 // DELETE /api/page-types/:name — delete a custom page type (auth required)
-router.delete('/:name', authMiddleware, async (req, res) => {
+router.delete('/:name', requirePermission('settings:manage'), async (req, res) => {
   const name = req.params.name.toUpperCase();
 
   const type = await prisma.pageTypeDefinition.findUnique({ where: { name } });

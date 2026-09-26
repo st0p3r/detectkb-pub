@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { api } from '@/lib/api';
+import { api, apiErrorMessage } from '@/lib/api';
 import { useAuth } from './AuthContext';
 
 export function LoginPage() {
@@ -25,11 +25,17 @@ export function LoginPage() {
         username: string;
         roles: string[];
         permissions: string[];
+        mustChangePassword?: boolean;
       }>('/api/auth/login', { username, password });
-      login(data.token, data.username, data.roles || [], data.permissions || []);
-      navigate('/', { replace: true });
-    } catch {
-      setError('Invalid credentials. Please try again.');
+      login(data.token, data.username, data.roles || [], data.permissions || [], !!data.mustChangePassword);
+      navigate(data.mustChangePassword ? '/change-password' : '/', { replace: true });
+    } catch (err) {
+      const status = (err as { response?: { status?: number } }).response?.status;
+      setError(
+        status === 429
+          ? apiErrorMessage(err, 'Too many failed attempts. Try again later.')
+          : 'Invalid credentials. Please try again.'
+      );
     } finally {
       setLoading(false);
     }
@@ -104,9 +110,6 @@ export function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-muted-foreground mt-4">
-          Default: <span className="font-mono">admin</span> / <span className="font-mono">detectkb</span>
-        </p>
       </div>
     </div>
   );

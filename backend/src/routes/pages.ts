@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { generateUniqueSlug } from '../lib/slug';
-import { syncPageLinks } from '../lib/links';
+import { resolveWikiLinks, syncPageLinks } from '../lib/links';
+import { syncAutoSysmonLinks } from '../lib/sysmon-links';
 
 const router = Router();
 
@@ -10,28 +12,102 @@ const PAGE_INCLUDE = {
   category: true,
   rule: true,
   splCommand: true,
+  sysmonEvents: {
+    select: { source: true, sysmonEvent: { select: { id: true, eventId: true, name: true, category: true } } },
+    orderBy: { sysmonEvent: { eventId: 'asc' as const } },
+  },
 };
 
-router.get('/', async (req, res) => {
-  const { type, categoryId, q } = req.query;
+// What page lists show: no markdown, queries or imported source files (those
+// made the full list tens of MB). GET /api/pages/:slug has everything.
+const PAGE_LIST_SELECT = {
+  id: true,
+  title: true,
+  slug: true,
+  type: true,
+  isPinned: true,
+  categoryId: true,
+  createdAt: true,
+  updatedAt: true,
+  tags: { include: { tag: true } },
+  category: true,
+  rule: { select: { status: true, severity: true } },
+};
 
-  const where: Record<string, unknown> = {};
-  if (type) where.type = type;
-  if (categoryId) where.categoryId = Number(categoryId);
-  if (q) {
-    where.OR = [
-      { title: { contains: String(q) } },
-      { contentMd: { contains: String(q) } },
-    ];
+const PAGE_SORTS = ['title', 'type', 'updatedAt'] as const;
+type PageSort = (typeof PAGE_SORTS)[number];
+
+// GET /api/pages?type=&categoryId=&tag=&q= — every matching page (list columns).
+// With page= it is paged and sorted (sort=title|type|updatedAt, dir=, pageSize=)
+// and returns { items, total, page, pageSize, typeCounts }.
+/**
+ * Filters of the page list: type, excludeType (e.g. RULE), categoryId, tag, q.
+ * `base` leaves the type out, for the type chip counts.
+ */
+function pageFilters(query: Record<string, unknown>) {
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const type = str(query.type);
+  const excludeType = str(query.excludeType);
+  const q = str(query.q);
+  const tag = str(query.tag);
+  const categoryId = Number(query.categoryId) || undefined;
+
+  const base: Prisma.PageWhereInput[] = [];
+  if (categoryId) base.push({ categoryId });
+  if (tag) base.push({ tags: { some: { tag: { name: tag } } } });
+  if (q) base.push({ OR: [{ title: { contains: q } }, { contentMd: { contains: q } }] });
+  const types: Prisma.PageWhereInput[] = [];
+  if (type) types.push({ type });
+  if (excludeType) types.push({ type: { notIn: excludeType.split(',') } });
+  return { base, where: { AND: [...base, ...types] } as Prisma.PageWhereInput };
+}
+
+router.get('/', async (req, res) => {
+  const { base, where } = pageFilters(req.query);
+
+  if (req.query.page === undefined) {
+    res.json(await prisma.page.findMany({ where, select: PAGE_LIST_SELECT, orderBy: { updatedAt: 'desc' } }));
+    return;
   }
 
-  const pages = await prisma.page.findMany({
-    where,
-    include: PAGE_INCLUDE,
-    orderBy: { updatedAt: 'desc' },
-  });
+  const sort: PageSort = PAGE_SORTS.includes(req.query.sort as PageSort) ? (req.query.sort as PageSort) : 'updatedAt';
+  const dir = req.query.dir === 'asc' || req.query.dir === 'desc' ? req.query.dir : sort === 'updatedAt' ? 'desc' : 'asc';
+  const pageSize = Math.min(Math.max(Math.floor(Number(req.query.pageSize)) || 50, 1), 200);
 
-  res.json(pages);
+  const [total, byType] = await Promise.all([
+    prisma.page.count({ where }),
+    prisma.page.groupBy({ by: ['type'], where: { AND: base }, _count: { _all: true } }),
+  ]);
+  const page = Math.min(Math.max(Math.floor(Number(req.query.page)) || 1, 1), Math.max(1, Math.ceil(total / pageSize)));
+  const orderBy: Prisma.PageOrderByWithRelationInput[] = [{ [sort]: dir }, ...(sort === 'updatedAt' ? [] : [{ updatedAt: 'desc' as const }]), { id: 'asc' }];
+  const items = await prisma.page.findMany({ where, select: PAGE_LIST_SELECT, orderBy, skip: (page - 1) * pageSize, take: pageSize });
+
+  res.json({ items, total, page, pageSize, typeCounts: Object.fromEntries(byType.map((g) => [g.type, g._count._all])) });
+});
+
+// GET /api/pages/ids?<list filters> — ids of every matching page ("select all")
+router.get('/ids', async (req, res) => {
+  const pages = await prisma.page.findMany({ where: pageFilters(req.query).where, select: { id: true }, orderBy: { id: 'asc' } });
+  res.json(pages.map((p) => p.id));
+});
+
+// GET /api/pages/titles?q=lsass&limit=10 — titles for [[wiki link]] autocomplete,
+// titles starting with q first
+router.get('/titles', async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
+  const select = { title: true, slug: true, type: true };
+  const prefix = await prisma.page.findMany({ where: { title: { startsWith: q } }, select, orderBy: { title: 'asc' }, take: limit });
+  const rest =
+    q && prefix.length < limit
+      ? await prisma.page.findMany({
+          where: { title: { contains: q }, NOT: { title: { startsWith: q } } },
+          select,
+          orderBy: { title: 'asc' },
+          take: limit - prefix.length,
+        })
+      : [];
+  res.json([...prefix, ...rest]);
 });
 
 router.get('/:slug', async (req, res) => {
@@ -41,7 +117,7 @@ router.get('/:slug', async (req, res) => {
   });
 
   if (!page) return res.status(404).json({ error: 'Page not found' });
-  res.json(page);
+  res.json({ ...page, wikiLinks: await resolveWikiLinks(page.contentMd) });
 });
 
 router.post('/', async (req, res) => {
@@ -67,6 +143,7 @@ router.post('/', async (req, res) => {
   });
 
   await syncPageLinks(page.id, contentMd);
+  await syncAutoSysmonLinks(page.id);
 
   res.status(201).json(page);
 });
@@ -103,6 +180,7 @@ router.put('/:id', async (req, res) => {
   });
 
   await syncPageLinks(id, contentMd ?? existing.contentMd);
+  await syncAutoSysmonLinks(id);
   if (tagNames !== undefined) await pruneOrphanedTags();
 
   res.json(page);

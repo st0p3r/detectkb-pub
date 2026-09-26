@@ -22,6 +22,9 @@ import {
   Users,
   Activity,
   Cpu,
+  Grid3x3,
+  Crosshair,
+  Network,
 } from 'lucide-react';
 import { listCategories, createCategory, deleteCategory, type Category } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -166,8 +169,10 @@ const mainNavItems = [
 const contentNavItems = [
   { to: '/pages', icon: BookOpen, label: 'All Pages' },
   { to: '/rules', icon: Shield, label: 'Detection Rules' },
+  { to: '/attack-coverage', icon: Grid3x3, label: 'ATT&CK Coverage' },
   { to: '/spl-library', icon: Terminal, label: 'SPL Library' },
   { to: '/sysmon-events', icon: Cpu, label: 'Sysmon Events' },
+  { to: '/attacker-tools', icon: Crosshair, label: 'Attacker Tools' },
   { to: '/data-sources', icon: Database, label: 'Data Sources' },
   { to: '/concepts', icon: Lightbulb, label: 'Concepts' },
   { to: '/docs', icon: FileText, label: 'Documentation' },
@@ -175,8 +180,9 @@ const contentNavItems = [
 
 const toolsNavItems = [
   { to: '/search', icon: Search, label: 'Search' },
+  { to: '/graph', icon: Network, label: 'Knowledge Graph' },
   { to: '/broken-links', icon: Link2Off, label: 'Broken Links' },
-  { to: '/backups', icon: HardDrive, label: 'Backups' },
+  { to: '/backups', icon: HardDrive, label: 'Backups', permission: 'backups:create' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -200,12 +206,13 @@ function NavSection({
   items,
   collapsed,
 }: {
-  items: { to: string; icon: React.ElementType; label: string }[];
+  items: { to: string; icon: React.ElementType; label: string; permission?: string }[];
   collapsed: boolean;
 }) {
+  const { hasPermission } = useAuth();
   return (
     <div className="space-y-0.5">
-      {items.map(({ to, icon: Icon, label }) => (
+      {items.filter((item) => !item.permission || hasPermission(item.permission)).map(({ to, icon: Icon, label }) => (
         <NavLink
           key={to}
           to={to}

@@ -1,0 +1,15 @@
+name: Legacy Format Detection
+id: 11111111-2222-3333-4444-555555555555
+status: experimental
+type: Hunting
+description: Older ESCU layout with tags.
+search: '| tstats count from datamodel=Endpoint.Processes'
+how_to_implement: n/a
+known_false_positives: None
+references: []
+tags:
+  analytic_story:
+    - Old Story
+  mitre_attack_id:
+    - T1059.001
+  risk_score: 90
