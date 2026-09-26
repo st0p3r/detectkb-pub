@@ -5,12 +5,17 @@ A self-hosted web application for learning, documenting, and organizing detectio
 ## Features
 - Wiki-style pages with [[backlinks]] and Markdown editing
 - Structured detection rules with MITRE ATT&CK mapping and SPL queries
+- **Rule import** from Sigma, Splunk ESCU (`security_content`), Elastic `detection-rules` (TOML) and
+  Microsoft Sentinel analytics YAML — single files or a whole cloned repository folder
 - **Sigma**: import `.yml` rules (single or multi-document), export one or all rules, and convert
   Sigma to SPL (Splunk), KQL (Defender XDR / Sentinel ASIM), EQL and Lucene (Elastic) via pySigma
 - **ATT&CK coverage heatmap** of your rules (ATT&CK Enterprise v19) with per-technique drill-down and
   export as an [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) layer
 - **Sysmon ↔ rules ↔ data sources**: each Sysmon event lists the rules and data sources that depend
   on it (e.g. "which rules need Event ID 10?"), inferred from the SPL / Sigma logsource or set manually
+- **Attacker tools**: LOLBAS, GTFOBins and LOLDrivers references, each linked to the rules that
+  mention the binary, driver file or driver hash
+- **Knowledge graph** of pages, wiki links, ATT&CK techniques, Sysmon events and attacker tools
 - Role-based access (admin / editor / viewer) enforced by the API
 - SPL command cheat-sheet library with searchable cards
 - Global search (Cmd+K) across all content
@@ -103,7 +108,51 @@ when running the backend directly on the host.
 | BACKUP_DIR | ../backups (`/backups` in Docker) | Backup and generated-document directory |
 | CORS_ORIGIN | * | Allowed CORS origin for the API |
 | SIGMA_SERVICE_URL | http://localhost:8000 (`http://sigma:8000` in Docker) | pySigma conversion service |
+| REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers on first start |
 | PORT | 3001 | Backend port |
+
+## Importing rules
+
+**Detection Rules → Import rules** accepts files or a whole folder. Useful sources:
+
+| Source | Clone | Folder to import |
+|---|---|---|
+| SigmaHQ | `git clone --depth 1 https://github.com/SigmaHQ/sigma` | `rules/windows/…` |
+| Splunk ESCU | `git clone --depth 1 https://github.com/splunk/security_content` | `detections/endpoint` |
+| Elastic | `git clone --depth 1 https://github.com/elastic/detection-rules` | `rules/windows` |
+| Sentinel | `git clone --depth 1 https://github.com/Azure/Azure-Sentinel` | `Solutions/<solution>/Analytic Rules` |
+
+Imported rules start as **Draft** (a vendor's "production" only means it works on *their* data
+model) and keep their original source. Re-importing skips rules with the same source id unless
+"update" is ticked.
+
+## Attacker tool references
+
+LOLBAS and GTFOBins are GPL-3.0 and LOLDrivers is Apache-2.0, so their data is **not bundled**:
+the backend downloads it from the official APIs on first start (`lolbas.json`, `api.json`,
+`drivers.json`). On a server without internet access, download those files elsewhere and use
+**Attacker Tools → Upload file**; **Update from source** refreshes them.
+
+## How correctness is checked
+
+`npm test` in `backend/` (also run by CI in `.github/workflows/ci.yml`) verifies, among others:
+
+- the bundled ATT&CK data is internally consistent, and retired technique IDs (e.g. `T1562.001`)
+  map to their official replacements;
+- the built-in Sysmon reference only cites techniques that exist in the current ATT&CK release;
+- the Sigma category → Sysmon event mapping equals the table in the official Sigma taxonomy;
+- the importers, the Sysmon inference and the attacker-tool matching behave as expected on
+  representative samples (including known false-positive cases).
+
+To check the importers against full upstream repositories (nothing is written to the database):
+```bash
+cd backend && npm run validate:corpus -- ../security_content/detections ../detection-rules/rules ../sigma/rules
+```
+
+What this **cannot** tell you is whether a rule works on *your* logs: index/sourcetype names,
+field mappings (CIM, ECS, ASIM), macros such as ESCU's `` `sysmon` ``, and Sysmon configuration
+differ per environment. Test each rule against real or emulated activity (e.g. Atomic Red Team,
+Splunk `attack_data`, which ESCU rules link to) before promoting it from Draft.
 
 ## Users & permissions
 

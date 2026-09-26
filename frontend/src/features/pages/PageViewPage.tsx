@@ -3,7 +3,8 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download } from 'lucide-react';
-import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, type Page } from '@/lib/api';
+import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, QUERY_LANGUAGE_LABELS, SOURCE_FORMAT_LABELS, type Page } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
 import { SigmaPanel } from '@/features/sigma/SigmaPanel';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
@@ -163,6 +164,30 @@ function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
         </CollapsibleSection>
       )}
 
+      {rule.nativeQuery && (
+        <CollapsibleSection
+          label={`${QUERY_LANGUAGE_LABELS[rule.nativeLanguage ?? ''] ?? rule.nativeLanguage ?? 'Other'} Query`}
+          isOpen={!!openSections['native']}
+          onToggle={() => toggleSection('native')}
+        >
+          <pre className="px-3 py-3 rounded-md bg-zinc-900 text-zinc-100 text-xs font-mono whitespace-pre-wrap break-all">
+            {rule.nativeQuery}
+          </pre>
+        </CollapsibleSection>
+      )}
+
+      {rule.sourceFormat && rule.sourceContent && (
+        <CollapsibleSection
+          label={`Original ${SOURCE_FORMAT_LABELS[rule.sourceFormat]} rule`}
+          isOpen={!!openSections['source']}
+          onToggle={() => toggleSection('source')}
+        >
+          <pre className="px-3 py-3 rounded-md bg-zinc-900 text-zinc-100 text-xs font-mono overflow-x-auto max-h-96">
+            {rule.sourceContent}
+          </pre>
+        </CollapsibleSection>
+      )}
+
       {rule.sigmaYaml && (
         <CollapsibleSection
           label="Sigma Rule & Conversions"
@@ -172,6 +197,28 @@ function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
           <SigmaPanel sigmaYaml={rule.sigmaYaml} />
         </CollapsibleSection>
       )}
+    </div>
+  );
+}
+
+const REFERENCE_LABELS = { lolbas: 'LOLBAS', gtfobins: 'GTFOBins', loldrivers: 'LOLDrivers' } as const;
+
+/** LOLBAS / GTFOBins / LOLDrivers entries this rule mentions. */
+function ReferencesBar({ pageId }: { pageId: number }) {
+  const { data: refs = [] } = useQuery({ queryKey: ['page-references', pageId], queryFn: () => getPageReferences(pageId) });
+  if (!refs.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-6 py-3 border-b border-border bg-muted/10">
+      <span className="text-xs font-medium text-muted-foreground mr-1">Attacker tools:</span>
+      {refs.map((r) => (
+        <Link
+          key={`${r.kind}:${r.key}`}
+          to={`/attacker-tools?kind=${r.kind}&key=${encodeURIComponent(r.key)}`}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent"
+        >
+          <span className="text-muted-foreground">{REFERENCE_LABELS[r.kind]}</span> {r.name}
+        </Link>
+      ))}
     </div>
   );
 }
@@ -606,6 +653,7 @@ export function PageViewPage() {
         )}
 
         <SysmonLinksBar links={page.sysmonEvents ?? []} />
+        {page.type === 'RULE' && page.rule && <ReferencesBar pageId={page.id} />}
 
         <div className="px-6 py-6">
           {page.contentMd ? (

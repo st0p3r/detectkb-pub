@@ -193,6 +193,35 @@ export function AttackCoveragePage() {
             </div>
           )}
 
+          {data.retiredTechniques.length > 0 && (
+            <details className="mb-5 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm">
+              <summary className="cursor-pointer select-none">
+                <AlertTriangle className="inline w-4 h-4 mr-1.5 -mt-0.5 text-sky-500" />
+                {data.retiredTechniques.reduce((n, t) => n + t.rules.length, 0)} rule mappings use ATT&CK IDs that MITRE has
+                retired; they are counted under the replacement technique:{' '}
+                {data.retiredTechniques.map((t, i) => (
+                  <span key={t.id} className="font-mono text-xs">
+                    {i > 0 && ', '}
+                    {t.id}→{t.replacedBy} ×{t.rules.length}
+                  </span>
+                ))}
+              </summary>
+              <ul className="mt-2 space-y-1.5 pl-5 list-disc">
+                {data.retiredTechniques.map((t) => (
+                  <li key={t.id}>
+                    <span className="font-mono">{t.id} → {t.replacedBy}</span>:{' '}
+                    {t.rules.map((r, j) => (
+                      <span key={r.pageId}>
+                        {j > 0 && ', '}
+                        <Link to={`/pages/${r.slug}`} className="underline">{r.title}</Link>
+                      </span>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           {/* Legend */}
           <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-muted-foreground">
             <span>Rules per technique (incl. sub-techniques):</span>

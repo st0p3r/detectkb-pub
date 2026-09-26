@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown } from 'lucide-react';
-import { apiErrorMessage, downloadSigmaRules, listRules, type RuleWithPage } from '@/lib/api';
-import { SigmaImportDialog } from '@/features/sigma/SigmaImportDialog';
+import { SOURCE_FORMAT_LABELS, apiErrorMessage, downloadSigmaRules, listRules, type RuleSourceFormat, type RuleWithPage } from '@/lib/api';
+import { RuleImportDialog } from '@/features/rules/RuleImportDialog';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -46,6 +46,7 @@ export function RulesPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [severityFilter, setSeverityFilter] = useState<string>('all');
+  const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [sortKey, setSortKey] = useState<'title' | 'status' | 'severity' | 'updatedAt'>('updatedAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -90,6 +91,9 @@ export function RulesPage() {
 
     if (statusFilter !== 'all') list = list.filter((r) => r.status === statusFilter);
     if (severityFilter !== 'all') list = list.filter((r) => r.severity === severityFilter);
+    if (sourceFilter !== 'all') {
+      list = list.filter((r) => (sourceFilter === 'manual' ? !r.sourceFormat : r.sourceFormat === sourceFilter));
+    }
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((r) => r.page.title.toLowerCase().includes(q));
@@ -114,7 +118,7 @@ export function RulesPage() {
     });
 
     return list;
-  }, [rules, statusFilter, severityFilter, search, sortKey, sortDir]);
+  }, [rules, statusFilter, severityFilter, sourceFilter, search, sortKey, sortDir]);
 
   function toggleSort(key: typeof sortKey) {
     if (sortKey === key) {
@@ -176,7 +180,7 @@ export function RulesPage() {
                 className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors"
               >
                 <FileUp className="w-4 h-4" />
-                Import Sigma
+                Import rules
               </button>
               <button
                 onClick={() => navigate('/pages/new?type=RULE')}
@@ -190,7 +194,7 @@ export function RulesPage() {
         </div>
       </div>
 
-      <SigmaImportDialog
+      <RuleImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
         onImported={() => setReloadKey((k) => k + 1)}
@@ -255,6 +259,21 @@ export function RulesPage() {
             </option>
           ))}
         </select>
+
+        <select
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+          aria-label="Filter by source"
+          className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          <option value="all">Source: All</option>
+          <option value="manual">Source: Written here</option>
+          {(Object.keys(SOURCE_FORMAT_LABELS) as RuleSourceFormat[]).map((f) => (
+            <option key={f} value={f}>
+              Source: {SOURCE_FORMAT_LABELS[f]}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Table */}
@@ -295,7 +314,7 @@ export function RulesPage() {
         <div className="rounded-lg border border-border bg-card p-10 text-center">
           <p className="text-muted-foreground text-sm">No rules match the current filters.</p>
           <button
-            onClick={() => { setSearch(''); setStatusFilter('all'); setSeverityFilter('all'); }}
+            onClick={() => { setSearch(''); setStatusFilter('all'); setSeverityFilter('all'); setSourceFilter('all'); }}
             className="mt-3 text-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
           >
             Clear filters

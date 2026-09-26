@@ -84,6 +84,8 @@ router.post('/', async (req, res) => {
     references,
     testNotes,
     sigmaYaml,
+    nativeQuery,
+    nativeLanguage,
   } = req.body;
 
   if (!pageId) return res.status(400).json({ error: 'pageId is required' });
@@ -100,6 +102,8 @@ router.post('/', async (req, res) => {
     falsePositives: falsePositives ?? null,
     references: references ?? null,
     testNotes: testNotes ?? null,
+    ...(nativeQuery !== undefined && { nativeQuery: nativeQuery || null }),
+    ...(nativeLanguage !== undefined && { nativeLanguage: nativeLanguage || null }),
     ...sigma,
   };
 
@@ -133,6 +137,8 @@ router.put('/:id', async (req, res) => {
     references,
     testNotes,
     sigmaYaml,
+    nativeQuery,
+    nativeLanguage,
   } = req.body;
 
   const sigma = await sigmaFields(sigmaYaml, existing.pageId);
@@ -150,6 +156,8 @@ router.put('/:id', async (req, res) => {
       ...(falsePositives !== undefined && { falsePositives }),
       ...(references !== undefined && { references }),
       ...(testNotes !== undefined && { testNotes }),
+      ...(nativeQuery !== undefined && { nativeQuery: nativeQuery || null }),
+      ...(nativeLanguage !== undefined && { nativeLanguage: nativeLanguage || null }),
       ...sigma,
     },
     include: { page: { select: RULE_PAGE_SELECT } },

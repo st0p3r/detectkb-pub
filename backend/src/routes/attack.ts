@@ -4,9 +4,9 @@ import {
   ATTACK_VERSION,
   TACTICS,
   TECHNIQUES,
-  TECHNIQUE_BY_ID,
   parentTechniqueId,
   parseTechniqueIds,
+  resolveTechniqueId,
 } from '../lib/attack';
 
 const router = Router();
@@ -41,6 +41,8 @@ async function computeCoverage(req: Request) {
 
   const byTechnique = new Map<string, CoveringRule[]>();
   const unknown = new Map<string, CoveringRule[]>();
+  // Retired IDs still used by rules, e.g. T1562.001 → T1685
+  const retired = new Map<string, { replacedBy: string; rules: CoveringRule[] }>();
   for (const r of rules) {
     const info: CoveringRule = {
       pageId: r.page.id,
@@ -49,18 +51,28 @@ async function computeCoverage(req: Request) {
       status: r.status,
       severity: r.severity,
     };
-    for (const id of parseTechniqueIds(r.mitreTechniques)) {
-      const target = TECHNIQUE_BY_ID.has(id) ? byTechnique : unknown;
-      if (!target.has(id)) target.set(id, []);
-      target.get(id)!.push(info);
+    for (const rawId of parseTechniqueIds(r.mitreTechniques)) {
+      const id = resolveTechniqueId(rawId);
+      if (!id) {
+        if (!unknown.has(rawId)) unknown.set(rawId, []);
+        unknown.get(rawId)!.push(info);
+        continue;
+      }
+      if (id !== rawId) {
+        if (!retired.has(rawId)) retired.set(rawId, { replacedBy: id, rules: [] });
+        retired.get(rawId)!.rules.push(info);
+      }
+      if (!byTechnique.has(id)) byTechnique.set(id, []);
+      const list = byTechnique.get(id)!;
+      if (!list.some((x) => x.pageId === info.pageId)) list.push(info);
     }
   }
-  return { ruleCount: rules.length, byTechnique, unknown };
+  return { ruleCount: rules.length, byTechnique, unknown, retired };
 }
 
 // GET /api/attack/coverage — ATT&CK matrix with the rules covering each technique
 router.get('/coverage', async (req, res) => {
-  const { ruleCount, byTechnique, unknown } = await computeCoverage(req);
+  const { ruleCount, byTechnique, unknown, retired } = await computeCoverage(req);
 
   const coveredParents = new Set(Array.from(byTechnique.keys()).map(parentTechniqueId));
   const parentTotal = TECHNIQUES.filter((t) => !t.id.includes('.')).length;
@@ -71,6 +83,7 @@ router.get('/coverage', async (req, res) => {
     techniques: TECHNIQUES,
     coverage: Object.fromEntries(byTechnique),
     unknownTechniques: Array.from(unknown, ([id, rules]) => ({ id, rules })),
+    retiredTechniques: Array.from(retired, ([id, v]) => ({ id, ...v })),
     summary: {
       rulesAnalyzed: ruleCount,
       coveredTechniques: coveredParents.size,

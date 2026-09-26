@@ -1,0 +1,30 @@
+name: Access LSASS Memory for Dump Creation
+id: fb4c31b0-13e8-4155-8aa5-24de4b8d6717
+version: 16
+author: Example Author
+status: production
+type: TTP
+description: Detects attempts to dump LSASS memory via Sysmon EventCode 10.
+data_source:
+    - Sysmon EventID 10
+search: |-
+    `sysmon` EventCode=10 TargetImage=*lsass.exe CallTrace=*dbghelp.dll*
+      | stats count by dest
+how_to_implement: Requires Sysmon EventCode 10 for lsass.exe.
+known_false_positives: Administrators creating memory dumps for debugging.
+references:
+    - https://example.org/lsass
+finding:
+    title: LSASS dump on $dest$
+    entity:
+        field: dest
+        type: system
+        score: 72
+analytic_story:
+    - Credential Dumping
+mitre_attack_id:
+    - T1003.001
+tests:
+    - name: True Positive Test
+      attack_data:
+        - data: https://example.org/attack_data/windows-sysmon.log

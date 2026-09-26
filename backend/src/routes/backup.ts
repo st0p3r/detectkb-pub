@@ -106,6 +106,11 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
         testNotes?: string;
         sigmaId?: string | null;
         sigmaYaml?: string | null;
+        sourceFormat?: string | null;
+        sourceId?: string | null;
+        sourceContent?: string | null;
+        nativeQuery?: string | null;
+        nativeLanguage?: string | null;
       } | null;
       sysmonEvents?: { source: string; sysmonEvent: { eventId: number } }[];
       splCommand?: {
@@ -204,6 +209,11 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
               testNotes: p.rule.testNotes,
               sigmaId: p.rule.sigmaId ?? null,
               sigmaYaml: p.rule.sigmaYaml ?? null,
+              sourceFormat: p.rule.sourceFormat ?? null,
+              sourceId: p.rule.sourceId ?? null,
+              sourceContent: p.rule.sourceContent ?? null,
+              nativeQuery: p.rule.nativeQuery ?? null,
+              nativeLanguage: p.rule.nativeLanguage ?? null,
             },
             update: {
               status: p.rule.status || 'draft',
@@ -217,6 +227,11 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
               testNotes: p.rule.testNotes,
               sigmaId: p.rule.sigmaId ?? null,
               sigmaYaml: p.rule.sigmaYaml ?? null,
+              sourceFormat: p.rule.sourceFormat ?? null,
+              sourceId: p.rule.sourceId ?? null,
+              sourceContent: p.rule.sourceContent ?? null,
+              nativeQuery: p.rule.nativeQuery ?? null,
+              nativeLanguage: p.rule.nativeLanguage ?? null,
             },
           });
         }
@@ -280,6 +295,11 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
               testNotes: p.rule.testNotes,
               sigmaId: p.rule.sigmaId ?? null,
               sigmaYaml: p.rule.sigmaYaml ?? null,
+              sourceFormat: p.rule.sourceFormat ?? null,
+              sourceId: p.rule.sourceId ?? null,
+              sourceContent: p.rule.sourceContent ?? null,
+              nativeQuery: p.rule.nativeQuery ?? null,
+              nativeLanguage: p.rule.nativeLanguage ?? null,
             },
           });
         }

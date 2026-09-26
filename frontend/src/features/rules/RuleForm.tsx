@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
-import type { DetectionRuleData } from '@/lib/api';
+import { QUERY_LANGUAGE_LABELS, SOURCE_FORMAT_LABELS, type DetectionRuleData } from '@/lib/api';
 import { SigmaPanel } from '@/features/sigma/SigmaPanel';
 
 const STATUS_OPTIONS = [
@@ -131,6 +131,39 @@ export function RuleForm({ value, onChange }: RuleFormProps) {
             <SplCopyButton text={value.splQuery ?? ''} />
           </div>
         </div>
+
+        {/* Query in another language (KQL / EQL / ...) */}
+        <details className="rounded-md border border-border" open={!!value.nativeQuery}>
+          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium">
+            Other query language <span className="font-normal text-muted-foreground">(KQL, EQL, ES|QL, Lucene)</span>
+          </summary>
+          <div className="px-3 pb-3 space-y-2">
+            <select
+              value={value.nativeLanguage ?? ''}
+              onChange={(e) => set('nativeLanguage', e.target.value)}
+              aria-label="Query language"
+              className="px-3 py-1.5 rounded-md border border-border bg-background text-sm"
+            >
+              <option value="">— language —</option>
+              {Object.entries(QUERY_LANGUAGE_LABELS).map(([id, label]) => (
+                <option key={id} value={id}>{label}</option>
+              ))}
+            </select>
+            <textarea
+              value={value.nativeQuery ?? ''}
+              onChange={(e) => set('nativeQuery', e.target.value)}
+              rows={6}
+              spellCheck={false}
+              className="w-full px-3 py-3 rounded-md border border-border bg-zinc-900 text-zinc-100 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y"
+            />
+            {value.sourceFormat && (
+              <p className="text-xs text-muted-foreground">
+                Imported from {SOURCE_FORMAT_LABELS[value.sourceFormat]}
+                {value.sourceId ? <> (id <code>{value.sourceId}</code>)</> : null}. Re-importing with “update” overwrites these fields.
+              </p>
+            )}
+          </div>
+        </details>
 
         {/* Sigma */}
         <details className="group rounded-md border border-border" open={!!value.sigmaYaml}>

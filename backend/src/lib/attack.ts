@@ -18,6 +18,8 @@ export interface AttackTechnique {
 export const ATTACK_VERSION: string | null = attackData.version;
 export const TACTICS: AttackTactic[] = attackData.tactics;
 export const TECHNIQUES: AttackTechnique[] = attackData.techniques;
+/** Revoked technique ID → the current technique that replaced it. */
+export const REVOKED_TECHNIQUES: Record<string, string> = attackData.revoked;
 
 export const TECHNIQUE_BY_ID = new Map(TECHNIQUES.map((t) => [t.id, t]));
 const TACTIC_BY_KEY = new Map<string, AttackTactic>();
@@ -50,6 +52,17 @@ export function parseTechniqueIds(text: string | null | undefined): string[] {
 /** Resolves a tactic from its ID (TA0002), shortname (execution / credential_access) or name. */
 export function findTactic(key: string): AttackTactic | undefined {
   return TACTIC_BY_KEY.get(key.trim().toLowerCase());
+}
+
+/**
+ * Maps a technique ID onto the current matrix: returns the ID itself when it is
+ * current, its replacement when MITRE revoked it, or null when it is unknown
+ * (deprecated without replacement, or a typo).
+ */
+export function resolveTechniqueId(id: string): string | null {
+  if (TECHNIQUE_BY_ID.has(id)) return id;
+  const replacement = REVOKED_TECHNIQUES[id];
+  return replacement && TECHNIQUE_BY_ID.has(replacement) ? replacement : null;
 }
 
 export function parentTechniqueId(id: string): string {

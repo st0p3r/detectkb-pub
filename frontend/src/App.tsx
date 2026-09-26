@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
@@ -15,6 +15,10 @@ import { FilteredPagesPage } from '@/features/pages/FilteredPagesPage';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { ChangePasswordPage } from '@/features/auth/ChangePasswordPage';
 import { AttackCoveragePage } from '@/features/attack/AttackCoveragePage';
+import { AttackerToolsPage } from '@/features/references/AttackerToolsPage';
+
+// Graph library is large: load it only when the page is opened
+const KnowledgeGraphPage = lazy(() => import('@/features/graph/KnowledgeGraphPage'));
 import { AuthProvider } from '@/features/auth/AuthContext';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
 import { UserManagementPage } from '@/features/users/UserManagementPage';
@@ -62,6 +66,15 @@ export default function App() {
             <Route path="/pages/:slug/edit" element={<PageEditorPage />} />
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/attack-coverage" element={<AttackCoveragePage />} />
+            <Route path="/attacker-tools" element={<AttackerToolsPage />} />
+            <Route
+              path="/graph"
+              element={
+                <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading graph…</div>}>
+                  <KnowledgeGraphPage />
+                </Suspense>
+              }
+            />
             <Route path="/spl-library" element={<SplLibraryPage />} />
             <Route path="/data-sources" element={
               <FilteredPagesPage

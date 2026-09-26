@@ -43,9 +43,26 @@ const active = (o) => !o.revoked && !o.x_mitre_deprecated;
     }))
     .sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
 
-  const out = { version: collection?.x_mitre_version || null, tactics, techniques };
+  // Revoked technique IDs → the technique that replaced them (e.g. T1562.001 → T1685),
+  // so rules written against older ATT&CK releases still map onto the current matrix.
+  const byStixId = new Map(objects.map((o) => [o.id, o]));
+  const revoked = {};
+  for (const rel of objects) {
+    if (rel.type !== 'relationship' || rel.relationship_type !== 'revoked-by') continue;
+    const from = byStixId.get(rel.source_ref);
+    const to = byStixId.get(rel.target_ref);
+    if (from?.type !== 'attack-pattern' || !to || !active(to)) continue;
+    const fromId = externalId(from);
+    const toId = externalId(to);
+    if (fromId && toId && fromId !== toId) revoked[fromId] = toId;
+  }
+
+  const out = { version: collection?.x_mitre_version || null, tactics, techniques, revoked };
   fs.writeFileSync(OUT, JSON.stringify(out) + '\n');
-  console.log(`ATT&CK v${out.version}: ${tactics.length} tactics, ${techniques.length} techniques -> ${OUT}`);
+  console.log(
+    `ATT&CK v${out.version}: ${tactics.length} tactics, ${techniques.length} techniques, ` +
+      `${Object.keys(revoked).length} revoked IDs -> ${OUT}`
+  );
 })().catch((err) => {
   console.error(err);
   process.exit(1);

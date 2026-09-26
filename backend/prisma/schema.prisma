@@ -184,10 +184,18 @@ model DetectionRule {
   testNotes       String? @db.LongText
   sigmaId         String? @db.VarChar(64)
   sigmaYaml       String? @db.LongText
+  // Where the rule came from: sigma | escu (Splunk) | elastic | sentinel (null = written here)
+  sourceFormat    String? @db.VarChar(20)
+  sourceId        String? @db.VarChar(128)
+  sourceContent   String? @db.LongText
+  // Query in a non-SPL language (KQL, EQL, ES|QL, KQL-kuery, Lucene) from the source rule
+  nativeQuery     String? @db.LongText
+  nativeLanguage  String? @db.VarChar(20)
 
   // Not @unique: adding a unique constraint would need --accept-data-loss on
   // upgrade. Uniqueness is enforced in routes/rules.ts and routes/sigma.ts.
   @@index([sigmaId])
+  @@index([sourceFormat, sourceId])
 }
 
 model SplCommand {
@@ -237,4 +245,24 @@ model PageSysmonEvent {
 
   @@id([pageId, sysmonEventId])
   @@index([sysmonEventId])
+}
+
+// Attacker-tool references (LOLBAS, GTFOBins, LOLDrivers). Fetched at runtime
+// from the projects' official APIs — not bundled (LOLBAS/GTFOBins are GPL-3.0).
+model ReferenceEntry {
+  id        Int      @id @default(autoincrement())
+  kind      String   @db.VarChar(20)
+  key       String   @db.VarChar(191)
+  name      String   @db.VarChar(255)
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  @@unique([kind, key])
+}
+
+model ReferenceDataset {
+  kind      String   @id @db.VarChar(20)
+  source    String   @db.VarChar(500)
+  count     Int
+  fetchedAt DateTime @default(now())
 }

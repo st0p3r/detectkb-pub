@@ -135,6 +135,10 @@ export function PageEditorPage() {
             references: p.rule.references ?? '',
             testNotes: p.rule.testNotes ?? '',
             sigmaYaml: p.rule.sigmaYaml ?? '',
+            nativeQuery: p.rule.nativeQuery ?? '',
+            nativeLanguage: p.rule.nativeLanguage ?? '',
+            sourceFormat: p.rule.sourceFormat ?? null,
+            sourceId: p.rule.sourceId ?? null,
           });
         }
       })
@@ -196,6 +200,8 @@ export function PageEditorPage() {
           references: ruleData.references || undefined,
           testNotes: ruleData.testNotes || undefined,
           sigmaYaml: ruleData.sigmaYaml ?? null,
+          nativeQuery: ruleData.nativeQuery ?? null,
+          nativeLanguage: ruleData.nativeLanguage ?? null,
         };
         if (ruleData.id) {
           await updateRule(ruleData.id, rulePayload);

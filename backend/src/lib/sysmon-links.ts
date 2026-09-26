@@ -2,7 +2,8 @@ import { prisma } from './prisma';
 import { parseSigmaDocuments } from './sigma';
 
 // Sigma logsource categories (product: windows) → Sysmon event IDs that feed them.
-// https://github.com/SigmaHQ/sigma-specification/blob/main/appendix/sigma-taxonomy-appendix.md
+// Mirrors the official table in the Sigma specification (pinned by test/sysmon-links.test.ts):
+// https://github.com/SigmaHQ/sigma-specification/blob/main/specification/sigma-appendix-taxonomy.md
 export const SIGMA_CATEGORY_TO_SYSMON: Record<string, number[]> = {
   process_creation: [1],
   file_change: [2],
@@ -13,7 +14,6 @@ export const SIGMA_CATEGORY_TO_SYSMON: Record<string, number[]> = {
   image_load: [7],
   create_remote_thread: [8],
   raw_access_thread: [9],
-  raw_access_read: [9],
   process_access: [10],
   file_event: [11],
   registry_event: [12, 13, 14],
@@ -25,7 +25,7 @@ export const SIGMA_CATEGORY_TO_SYSMON: Record<string, number[]> = {
   pipe_created: [17, 18],
   wmi_event: [19, 20, 21],
   dns_query: [22],
-  file_delete: [23, 26],
+  file_delete: [23],
   clipboard_capture: [24],
   process_tampering: [25],
   file_delete_detected: [26],
@@ -36,12 +36,12 @@ export const SIGMA_CATEGORY_TO_SYSMON: Record<string, number[]> = {
 };
 
 const EVENT_ID_PATTERNS = [
-  // EventCode=10, EventID="10", EventCode:10
-  /\bEvent(?:Code|ID)\s*[=:]\s*"?(\d{1,3})\b/gi,
-  // EventCode IN (1, 3, "10")
-  /\bEvent(?:Code|ID)\s+IN\s*\(([^)]*)\)/gi,
-  // "Event ID 10", "Event ID: 10"
-  /\bEvent\s+ID\s*:?\s*(\d{1,3})\b/gi,
+  // SPL EventCode=10, KQL EventID == 10, EQL/ECS event.code == "10", Sigma EventID: 10
+  /\b(?:EventCode|EventID|event\.code|winlog\.event_id)\s*(?:==|=~|=|:)\s*["']?(\d{1,3})\b/gi,
+  // Lists: SPL EventCode IN (1, 3), KQL EventID in (1, 3), EQL event.code in ("1", "3")
+  /\b(?:EventCode|EventID|event\.code|winlog\.event_id)\s+in~?\s*\(([^)]*)\)/gi,
+  // Prose / ESCU data_source: "Event ID 10", "Sysmon EventID 10", "EventCode 10"
+  /\bEvent\s?(?:ID|Code)\s*:?\s*(\d{1,3})\b/gi,
 ];
 
 /** Event IDs mentioned in SPL / prose, only trusted when the text is about Sysmon. */
@@ -50,7 +50,7 @@ export function eventIdsFromText(text: string): number[] {
   const ids = new Set<number>();
   for (const pattern of EVENT_ID_PATTERNS) {
     for (const match of text.matchAll(pattern)) {
-      for (const n of match[1].match(/\d{1,3}/g) ?? []) ids.add(Number(n));
+      for (const n of match[1].match(/\b\d{1,3}\b/g) ?? []) ids.add(Number(n));
     }
   }
   return Array.from(ids);
@@ -84,8 +84,8 @@ async function inferEventIds(pageId: number): Promise<number[]> {
 
   const ids = new Set<number>();
   if (page.rule) {
-    const { splQuery, dataSource, sigmaYaml } = page.rule;
-    eventIdsFromText(`${dataSource ?? ''}\n${splQuery}`).forEach((id) => ids.add(id));
+    const { splQuery, dataSource, sigmaYaml, nativeQuery } = page.rule;
+    eventIdsFromText(`${dataSource ?? ''}\n${splQuery}\n${nativeQuery ?? ''}`).forEach((id) => ids.add(id));
     if (sigmaYaml) eventIdsFromSigma(sigmaYaml).forEach((id) => ids.add(id));
   } else if (page.type === 'DATA_SOURCE') {
     eventIdsFromText(`${page.title}\n${page.contentMd}`).forEach((id) => ids.add(id));

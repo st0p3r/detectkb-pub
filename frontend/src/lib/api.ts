@@ -67,7 +67,29 @@ export interface DetectionRuleData {
   testNotes?: string;
   sigmaId?: string | null;
   sigmaYaml?: string | null;
+  sourceFormat?: RuleSourceFormat | null;
+  sourceId?: string | null;
+  sourceContent?: string | null;
+  nativeQuery?: string | null;
+  nativeLanguage?: string | null;
 }
+
+export type RuleSourceFormat = 'sigma' | 'escu' | 'elastic' | 'sentinel';
+
+export const SOURCE_FORMAT_LABELS: Record<RuleSourceFormat, string> = {
+  sigma: 'Sigma',
+  escu: 'Splunk ESCU',
+  elastic: 'Elastic',
+  sentinel: 'Microsoft Sentinel',
+};
+
+export const QUERY_LANGUAGE_LABELS: Record<string, string> = {
+  kql: 'KQL',
+  eql: 'EQL',
+  esql: 'ES|QL',
+  kuery: 'KQL (Kibana)',
+  lucene: 'Lucene',
+};
 
 export interface RuleWithPage extends DetectionRuleData {
   page: { id: number; title: string; slug: string; type: string; updatedAt: string; tags: { tag: { id: number; name: string } }[] };
@@ -524,8 +546,8 @@ export interface SigmaConversion {
 }
 
 export interface SigmaImportResult {
-  created: { title: string; slug: string }[];
-  updated: { title: string; slug: string }[];
+  created: { title: string; slug: string; format?: RuleSourceFormat }[];
+  updated: { title: string; slug: string; format?: RuleSourceFormat }[];
   skipped: { title: string; reason: string }[];
   errors: { file: string; error: string }[];
   warnings: string[];
@@ -541,12 +563,15 @@ export async function convertSigma(rule: string, target: string) {
   return data as SigmaConversion;
 }
 
-export async function importSigma(payload: {
+/** Imports Sigma / Splunk ESCU / Sentinel YAML and Elastic TOML rules (format detected per file). */
+export async function importRules(payload: {
   files: { name: string; content: string }[];
   overwrite?: boolean;
   convertTo?: string | null;
+  /** 'draft' (default): imported rules start as drafts; 'source': keep the vendor's status */
+  status?: 'draft' | 'source';
 }) {
-  const { data } = await api.post('/api/sigma/import', payload);
+  const { data } = await api.post('/api/rules-import', payload);
   return data as SigmaImportResult;
 }
 
@@ -606,6 +631,7 @@ export interface AttackCoverage {
   techniques: AttackTechnique[];
   coverage: Record<string, CoveringRule[]>;
   unknownTechniques: { id: string; rules: CoveringRule[] }[];
+  retiredTechniques: { id: string; replacedBy: string; rules: CoveringRule[] }[];
   summary: { rulesAnalyzed: number; coveredTechniques: number; totalTechniques: number };
 }
 
@@ -646,4 +672,88 @@ export interface ActivityStats {
 export async function getActivityStats(days = 30) {
   const { data } = await api.get('/api/activity/stats', { params: { days } });
   return data as ActivityStats;
+}
+
+// --- Attacker tool references (LOLBAS / GTFOBins / LOLDrivers) ---
+
+export type ReferenceKind = 'lolbas' | 'gtfobins' | 'loldrivers';
+
+export interface ReferenceDataset {
+  kind: ReferenceKind;
+  label: string;
+  url: string;
+  site: string;
+  license: string;
+  count: number;
+  covered: number;
+  fetchedAt: string | null;
+  source: string | null;
+}
+
+export interface ReferenceSummary {
+  key: string;
+  name: string;
+  description: string;
+  categories: string[];
+  mitre: string[];
+  verified?: boolean;
+  rules: CoveringRule[];
+}
+
+export interface ReferenceDetail {
+  kind: ReferenceKind;
+  key: string;
+  name: string;
+  data: Record<string, unknown>;
+  rules: CoveringRule[];
+}
+
+export async function listReferenceDatasets() {
+  const { data } = await api.get('/api/references');
+  return data as ReferenceDataset[];
+}
+
+export async function listReferences(kind: ReferenceKind, params?: { q?: string; covered?: 'yes' | 'no' }) {
+  const { data } = await api.get(`/api/references/${kind}`, { params });
+  return data as ReferenceSummary[];
+}
+
+export async function getReference(kind: ReferenceKind, key: string) {
+  const { data } = await api.get(`/api/references/${kind}/${encodeURIComponent(key)}`);
+  return data as ReferenceDetail;
+}
+
+export async function getPageReferences(pageId: number) {
+  const { data } = await api.get(`/api/references/page/${pageId}`);
+  return data as { kind: ReferenceKind; key: string; name: string }[];
+}
+
+export async function updateReferenceData(kinds?: ReferenceKind[]) {
+  const { data } = await api.post('/api/references/update', { kinds });
+  return data as { kind: ReferenceKind; count?: number; error?: string }[];
+}
+
+export async function uploadReferenceData(kind: ReferenceKind, fileName: string, content: string) {
+  const { data } = await api.post('/api/references/upload', { kind, fileName, content });
+  return data as { kind: ReferenceKind; count: number };
+}
+
+// --- Knowledge graph ---
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  group: string;
+  slug?: string;
+  url?: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: { source: string; target: string; kind: string }[];
+}
+
+export async function getGraph() {
+  const { data } = await api.get('/api/graph');
+  return data as GraphData;
 }

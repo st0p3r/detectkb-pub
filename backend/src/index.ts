@@ -19,10 +19,14 @@ import pageTypesRouter from './routes/page-types';
 import sysmonEventsRouter from './routes/sysmon-events';
 import activityRouter from './routes/activity';
 import sigmaRouter from './routes/sigma';
+import ruleImportRouter from './routes/rule-import';
+import referencesRouter from './routes/references';
+import graphRouter from './routes/graph';
 import attackRouter from './routes/attack';
 import { authMiddleware, guard, requirePermission } from './middleware/auth';
 import { seedDatabase } from './lib/seed';
 import { syncAllSysmonLinks } from './lib/sysmon-links';
+import { fetchMissingReferenceData } from './lib/reference-bootstrap';
 
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
@@ -31,7 +35,9 @@ const app = express();
 // Behind nginx / the Docker network: trust only private-range proxies for req.ip
 app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 app.use(cors({ origin: CORS_ORIGIN }));
-app.use(express.json({ limit: '10mb' }));
+// Reference datasets (LOLDrivers' drivers.json is ~20 MB) get a larger body limit
+app.use('/api/references/upload', express.json({ limit: '100mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Public endpoints
@@ -51,6 +57,9 @@ app.use('/api/search', searchRouter);
 app.use('/api/page-types', pageTypesRouter);
 app.use('/api/sysmon-events', guard('rules'), sysmonEventsRouter);
 app.use('/api/sigma', sigmaRouter);
+app.use('/api/rules-import', ruleImportRouter);
+app.use('/api/references', referencesRouter);
+app.use('/api/graph', graphRouter);
 app.use('/api/attack', attackRouter);
 
 // Routers that check permissions per route
@@ -75,6 +84,8 @@ seedDatabase()
     app.listen(PORT, () => {
       console.log(`DetectKB backend running on http://localhost:${PORT}`);
     });
+    // Background: download LOLBAS / GTFOBins / LOLDrivers on first start
+    fetchMissingReferenceData();
   })
   .catch((err) => {
     console.error('Seed failed:', err);

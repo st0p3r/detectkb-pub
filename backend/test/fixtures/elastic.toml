@@ -1,0 +1,39 @@
+[metadata]
+creation_date = "2020/11/24"
+maturity = "production"
+
+[rule]
+author = ["Elastic"]
+description = "Identifies execution of utilities abused to dump LSASS."
+false_positives = ["Legitimate troubleshooting"]
+index = ["logs-windows.sysmon_operational-*"]
+language = "eql"
+name = "Potential Credential Access via Windows Utilities"
+note = """## Triage and analysis
+
+### Investigating
+
+Check the parent process."""
+references = ["https://example.org/elastic"]
+risk_score = 73
+rule_id = "00140285-b827-4aee-aa09-8113f58a08f3"
+severity = "high"
+tags = ["OS: Windows", "Data Source: Sysmon", "Data Source: Elastic Defend"]
+type = "eql"
+
+query = '''
+process where event.code == "1" and process.name : "procdump.exe" and process.args : "-ma"
+'''
+
+[[rule.threat]]
+framework = "MITRE ATT&CK"
+[[rule.threat.technique]]
+id = "T1003"
+name = "OS Credential Dumping"
+[[rule.threat.technique.subtechnique]]
+id = "T1003.001"
+name = "LSASS Memory"
+
+[rule.threat.tactic]
+id = "TA0006"
+name = "Credential Access"

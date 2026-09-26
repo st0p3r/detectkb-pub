@@ -1,17 +1,12 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { requirePermission } from '../middleware/auth';
-import { generateUniqueSlug } from '../lib/slug';
-import { syncPageLinks } from '../lib/links';
-import { syncAutoSysmonLinks } from '../lib/sysmon-links';
+import { importRules } from './rule-import';
 import {
   SigmaServiceError,
   convertSigma,
   getSigmaTargets,
-  parseSigmaDocuments,
   ruleToSigma,
-  sigmaToRuleFields,
-  validateSigmaRule,
 } from '../lib/sigma';
 
 const router = Router();
@@ -51,125 +46,8 @@ router.post('/convert', requirePermission('rules:read'), async (req, res) => {
   }
 });
 
-interface ImportFile {
-  name: string;
-  content: string;
-}
-
-// POST /api/sigma/import — { files: [{ name, content }], overwrite?: bool, convertTo?: target | null }
-router.post('/import', requirePermission('rules:create'), async (req, res) => {
-  const { files, overwrite = false, convertTo = 'splunk' } = req.body as {
-    files?: ImportFile[];
-    overwrite?: boolean;
-    convertTo?: string | null;
-  };
-  if (!Array.isArray(files) || files.length === 0) {
-    res.status(400).json({ error: 'files is required' });
-    return;
-  }
-
-  const created: { title: string; slug: string }[] = [];
-  const updated: { title: string; slug: string }[] = [];
-  const skipped: { title: string; reason: string }[] = [];
-  const errors: { file: string; error: string }[] = [];
-  const warnings: string[] = [];
-  let serviceDown = false;
-
-  for (const file of files) {
-    const docs = parseSigmaDocuments(String(file.content ?? ''));
-    if (docs.length === 0) errors.push({ file: file.name, error: 'No YAML documents found' });
-
-    for (const [index, { doc, error, source }] of docs.entries()) {
-      const where = docs.length > 1 ? `${file.name} (document ${index + 1})` : file.name;
-      const problem = error ?? validateSigmaRule(doc!);
-      if (problem) {
-        errors.push({ file: where, error: problem });
-        continue;
-      }
-
-      const fields = sigmaToRuleFields(doc!);
-      const sigmaYaml = source;
-      const existing = fields.sigmaId
-        ? await prisma.detectionRule.findFirst({ where: { sigmaId: fields.sigmaId }, include: { page: true } })
-        : null;
-      if (existing && !overwrite) {
-        skipped.push({ title: fields.title, reason: `already imported as "${existing.page.title}"` });
-        continue;
-      }
-
-      let splQuery = existing?.splQuery ?? '';
-      if (convertTo && !serviceDown) {
-        try {
-          const result = await convertSigma(sigmaYaml, convertTo);
-          splQuery = result.queries.join('\n\n');
-          if (!result.pipelineApplied) {
-            warnings.push(`${fields.title}: no field mapping for this log source, query uses raw Sigma field names`);
-          }
-        } catch (err) {
-          if (!(err instanceof SigmaServiceError)) throw err;
-          if (err.status === 503) serviceDown = true;
-          warnings.push(`${fields.title}: conversion failed — ${err.message}`);
-        }
-      }
-
-      const ruleData = {
-        status: fields.status,
-        severity: fields.severity,
-        splQuery,
-        mitreTactics: fields.mitreTactics,
-        mitreTechniques: fields.mitreTechniques,
-        dataSource: fields.dataSource,
-        falsePositives: fields.falsePositives,
-        references: fields.references,
-        sigmaId: fields.sigmaId,
-        sigmaYaml,
-      };
-
-      let page;
-      if (existing) {
-        page = await prisma.page.update({
-          where: { id: existing.pageId },
-          data: {
-            title: fields.title,
-            slug: await generateUniqueSlug(fields.title, existing.pageId),
-            contentMd: fields.contentMd,
-            rule: { update: ruleData },
-          },
-        });
-        updated.push({ title: page.title, slug: page.slug });
-      } else {
-        const sigmaTag = await prisma.tag.upsert({ where: { name: 'sigma' }, create: { name: 'sigma' }, update: {} });
-        page = await prisma.page.create({
-          data: {
-            title: fields.title,
-            slug: await generateUniqueSlug(fields.title),
-            contentMd: fields.contentMd,
-            type: 'RULE',
-            createdById: req.user?.userId ?? null,
-            tags: { create: [{ tagId: sigmaTag.id }] },
-            rule: { create: ruleData },
-          },
-        });
-        created.push({ title: page.title, slug: page.slug });
-      }
-      await syncPageLinks(page.id, fields.contentMd);
-      await syncAutoSysmonLinks(page.id);
-    }
-  }
-
-  if (serviceDown) warnings.unshift('Sigma conversion service is not reachable — rules were imported without a query.');
-
-  await prisma.auditLog.create({
-    data: {
-      userId: req.user?.userId ?? null,
-      action: 'SIGMA_IMPORT',
-      resourceType: 'rule',
-      newValue: { created: created.length, updated: updated.length, skipped: skipped.length, errors: errors.length },
-    },
-  });
-
-  res.json({ created, updated, skipped, errors, warnings });
-});
+// POST /api/sigma/import — kept for compatibility; accepts every supported format
+router.post('/import', requirePermission('rules:create'), importRules);
 
 async function loadRulesForExport(where: object) {
   const rules = await prisma.detectionRule.findMany({
