@@ -1,8 +1,9 @@
 import PDFDocument from 'pdfkit';
 import { createWriteStream, promises as fsp } from 'fs';
 import { join, dirname } from 'path';
+import { BACKUP_DIR } from '../lib/config';
 
-const DOCS_DIR = join(process.env.BACKUP_DIR || '/app/backups', 'docs');
+const DOCS_DIR = join(BACKUP_DIR, 'docs');
 
 async function ensureDir(filePath: string) {
   await fsp.mkdir(dirname(filePath), { recursive: true });

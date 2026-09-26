@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import path from 'path';
 import { promises as fsp } from 'fs';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { authMiddleware } from '../middleware/auth';
 import {
   generateHTMLReport,
@@ -13,7 +13,6 @@ import {
   type DocRule,
 } from '../services/docService';
 
-const prisma = new PrismaClient();
 const router = Router();
 
 router.use(authMiddleware);

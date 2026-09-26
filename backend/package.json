@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@prisma/client": "^5.10.0",
-    "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -31,6 +30,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.1.0",
     "@types/node": "^20.11.20",
+    "@types/pdfkit": "^0.17.6",
     "prisma": "^5.10.0",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"

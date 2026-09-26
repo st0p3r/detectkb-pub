@@ -1,19 +1,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# DetectKB — Docker Compose
+# DetectKB — Docker Compose (production)
 #
-# Dev usage (hot-reload, source-mounted):
-#   docker-compose up
+#   docker compose up -d --build        # MySQL + API + nginx frontend
 #
-# Prod usage (nginx-served frontend, no volume mounts):
-#   docker-compose --profile prod up
-#   The 'frontend-prod' service replaces 'frontend' in production.
-#   Build it first: docker-compose --profile prod build frontend-prod
+# Development (hot reload, source mounted) — layer the dev override on top:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 #
-# Individual service:
-#   docker-compose up mysql -d        # MySQL only
-#   docker-compose up mysql backend   # API + DB, no frontend container
+# All settings come from .env (see .env.example, or run ./install.sh).
 # ─────────────────────────────────────────────────────────────────────────────
-version: '3.9'
+name: detectkb
+
 services:
   mysql:
     image: mysql:8.0
@@ -24,20 +20,18 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-detectkb}
       MYSQL_USER: ${MYSQL_USER:-detectkb}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-detectkb}
-    ports:
-      - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpassword}"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
     container_name: detectkb-backend
     restart: unless-stopped
     depends_on:
@@ -46,55 +40,32 @@ services:
     environment:
       DATABASE_URL: mysql://${MYSQL_USER:-detectkb}:${MYSQL_PASSWORD:-detectkb}@mysql:3306/${MYSQL_DATABASE:-detectkb}
       PORT: 3001
-      NODE_ENV: ${NODE_ENV:-development}
+      NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: ${JWT_SECRET:-detectkb-dev-secret-change-in-production}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-detectkb}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@detectkb.local}
       BACKUP_DIR: /backups
-    ports:
-      - "3001:3001"
     volumes:
-      - ./backend:/app
-      - /app/node_modules
       - ./backups:/backups
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/api/health || exit 1"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 30s
 
-  # ── Dev frontend: Vite dev server with hot-reload ──────────────────────────
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: detectkb-frontend
-    restart: unless-stopped
-    depends_on:
-      - backend
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      VITE_API_URL: http://localhost:3001
-
-  # ── Prod frontend: nginx static build (use --profile prod) ────────────────
-  frontend-prod:
-    profiles:
-      - prod
-    build:
-      context: ./frontend
       dockerfile: Dockerfile.prod
-    container_name: detectkb-frontend-prod
+    container_name: detectkb-frontend
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
     ports:
-      - "80:80"
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
 
 volumes:
   mysql_data:

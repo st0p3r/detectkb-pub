@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'detectkb-dev-secret-change-in-production';
+import { JWT_SECRET } from '../lib/config';
 
 export interface AuthUser {
   userId?: number;
@@ -18,6 +17,20 @@ declare global {
   }
 }
 
+function decodeToken(token: string): AuthUser | null {
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
+    return {
+      userId: payload.userId as number | undefined,
+      username: (payload.username as string) || '',
+      roles: (payload.roles as string[]) || [],
+      permissions: (payload.permissions as string[]) || [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -25,19 +38,13 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return;
   }
 
-  const token = authHeader.slice(7);
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
-    req.user = {
-      userId: payload.userId as number | undefined,
-      username: (payload.username as string) || '',
-      roles: (payload.roles as string[]) || [],
-      permissions: (payload.permissions as string[]) || [],
-    };
-    next();
-  } catch {
+  const user = decodeToken(authHeader.slice(7));
+  if (!user) {
     res.status(401).json({ error: 'Unauthorized' });
+    return;
   }
+  req.user = user;
+  next();
 }
 
 export function requireRole(...roles: string[]) {
@@ -73,18 +80,7 @@ export function requirePermission(...permissions: string[]) {
 export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
   const authHeader = req.headers['authorization'];
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    try {
-      const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
-      req.user = {
-        userId: payload.userId as number | undefined,
-        username: (payload.username as string) || '',
-        roles: (payload.roles as string[]) || [],
-        permissions: (payload.permissions as string[]) || [],
-      };
-    } catch {
-      // ignore
-    }
+    req.user = decodeToken(authHeader.slice(7)) ?? undefined;
   }
   next();
 }

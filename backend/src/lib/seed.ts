@@ -1,9 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './prisma';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
 import path from 'path';
 
-const prisma = new PrismaClient();
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   admin: [

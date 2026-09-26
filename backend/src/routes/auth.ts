@@ -1,40 +1,62 @@
-import { Router } from 'express';
+import { Router, Request } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
+import { JWT_SECRET } from '../lib/config';
 import { authMiddleware } from '../middleware/auth';
 
-const prisma = new PrismaClient();
 const router = Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'detectkb-dev-secret-change-in-production';
 const JWT_EXPIRY = '24h';
 
-async function getUserWithRoles(userId: number) {
-  return prisma.user.findUnique({
-    where: { id: userId },
+const userWithRolesInclude = {
+  userRoles: {
     include: {
-      userRoles: {
-        include: {
-          role: {
-            include: { permissions: { include: { permission: true } } },
-          },
-        },
+      role: {
+        include: { permissions: { include: { permission: true } } },
       },
     },
-  });
+  },
+} as const;
+
+async function findUserWithRoles(username: string) {
+  return prisma.user.findUnique({ where: { username }, include: userWithRolesInclude });
 }
 
-function buildToken(user: NonNullable<Awaited<ReturnType<typeof getUserWithRoles>>>) {
+type UserWithRoles = NonNullable<Awaited<ReturnType<typeof findUserWithRoles>>>;
+
+function buildToken(user: UserWithRoles) {
   const roles = user.userRoles.map((ur) => ur.role.name);
   const permissions = Array.from(
     new Set(
       user.userRoles.flatMap((ur) => ur.role.permissions.map((rp) => rp.permission.name))
     )
   );
-  return jwt.sign({ userId: user.id, username: user.username, roles, permissions }, JWT_SECRET, {
+  const token = jwt.sign({ userId: user.id, username: user.username, roles, permissions }, JWT_SECRET, {
     expiresIn: JWT_EXPIRY,
   });
+  return { token, roles, permissions };
+}
+
+async function logAuthEvent(
+  req: Request,
+  action: 'LOGIN_SUCCESS' | 'LOGIN_FAILURE',
+  userId: number | null,
+  username?: string
+) {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        userId,
+        action,
+        resourceType: 'auth',
+        newValue: username ? { username } : undefined,
+        ipAddress: req.ip || (req.headers['x-forwarded-for'] as string) || null,
+      },
+    });
+  } catch {
+    // audit logging must never block authentication
+  }
 }
 
 // POST /api/auth/login
@@ -46,76 +68,17 @@ router.post('/login', async (req, res) => {
     return;
   }
 
-  const foundUser = await prisma.user.findUnique({
-    where: { username },
-    include: {
-      userRoles: {
-        include: {
-          role: {
-            include: { permissions: { include: { permission: true } } },
-          },
-        },
-      },
-    },
-  });
-  const user = foundUser;
+  const user = await findUserWithRoles(username);
+  const valid = !!user && user.isActive && (await bcrypt.compare(password, user.passwordHash));
 
-  if (!user || !user.isActive) {
-    // Log failed login attempt
-    try {
-      await prisma.auditLog.create({
-        data: {
-          userId: foundUser?.id || null,
-          action: 'LOGIN_FAILURE',
-          resourceType: 'auth',
-          newValue: { username: username },
-          ipAddress: req.ip || req.headers['x-forwarded-for'] as string || null,
-        },
-      });
-    } catch {}
+  if (!user || !valid) {
+    await logAuthEvent(req, 'LOGIN_FAILURE', user?.id ?? null, username);
     res.status(401).json({ error: 'Invalid credentials' });
     return;
   }
 
-  const valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid) {
-    // Log failed login attempt
-    try {
-      await prisma.auditLog.create({
-        data: {
-          userId: foundUser?.id || null,
-          action: 'LOGIN_FAILURE',
-          resourceType: 'auth',
-          newValue: { username: username },
-          ipAddress: req.ip || req.headers['x-forwarded-for'] as string || null,
-        },
-      });
-    } catch {}
-    res.status(401).json({ error: 'Invalid credentials' });
-    return;
-  }
-
-  const roles = user.userRoles.map((ur) => ur.role.name);
-  const permissions = Array.from(
-    new Set(user.userRoles.flatMap((ur) => ur.role.permissions.map((rp) => rp.permission.name)))
-  );
-  const token = jwt.sign(
-    { userId: user.id, username: user.username, roles, permissions },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRY }
-  );
-
-  // Log successful login
-  try {
-    await prisma.auditLog.create({
-      data: {
-        userId: user.id,
-        action: 'LOGIN_SUCCESS',
-        resourceType: 'auth',
-        ipAddress: req.ip || req.headers['x-forwarded-for'] as string || null,
-      },
-    });
-  } catch {}
+  const { token, roles, permissions } = buildToken(user);
+  await logAuthEvent(req, 'LOGIN_SUCCESS', user.id);
 
   res.json({ token, username: user.username, roles, permissions });
 });

@@ -3,12 +3,14 @@ import { prisma } from '../lib/prisma';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
+import { BACKUP_DIR } from '../lib/config';
+import { authMiddleware } from '../middleware/auth';
 
 const router = Router();
 
-const BACKUP_DIR = process.env.BACKUP_DIR || path.join(process.cwd(), '..', 'backups');
-
-export { BACKUP_DIR };
+// Every backup endpoint (including list/download) exposes the full dataset,
+// so none of them are public.
+router.use(authMiddleware);
 
 export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: number; downloadUrl: string }> {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
