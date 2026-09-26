@@ -224,6 +224,29 @@ export async function getDashboard() {
   return data as DashboardData;
 }
 
+export interface SavedView {
+  id: number;
+  name: string;
+  /** /rules, /pages or /graph */
+  path: string;
+  /** URL query string, without "?" */
+  query: string;
+}
+
+export async function listSavedViews() {
+  const { data } = await api.get('/api/saved-views');
+  return data as SavedView[];
+}
+
+export async function createSavedView(view: Omit<SavedView, 'id'>) {
+  const { data } = await api.post('/api/saved-views', view);
+  return data as SavedView;
+}
+
+export async function deleteSavedView(id: number) {
+  await api.delete(`/api/saved-views/${id}`);
+}
+
 export async function listCategories() {
   const { data } = await api.get('/api/categories');
   return data as Category[];
@@ -716,9 +739,31 @@ export async function importRules(payload: {
   convertTo?: string | null;
   /** 'draft' (default): imported rules start as drafts; 'source': keep the vendor's status */
   status?: 'draft' | 'source';
+  /** Entries (by `where`, as the preview names them) to leave out */
+  skip?: string[];
 }) {
   const { data } = await api.post('/api/rules-import', payload);
   return data as SigmaImportResult;
+}
+
+export interface ImportPreviewItem {
+  /** File (and document) the rule came from; identifies it for `skip` */
+  where: string;
+  format?: RuleSourceFormat;
+  title?: string;
+  /** repeated: the same rule appears earlier in the upload */
+  status: 'new' | 'changed' | 'unchanged' | 'repeated' | 'error';
+  error?: string;
+  existing?: { title: string; slug: string; status: string };
+  changes?: { field: string; label: string; before: string; after: string }[];
+  /** Existing rules with the same title (possibly the same detection from another source) */
+  similar?: { title: string; slug: string; sourceFormat: RuleSourceFormat | null }[];
+}
+
+/** What importing these files would do, without saving anything. */
+export async function previewRuleImport(files: { name: string; content: string }[]) {
+  const { data } = await api.post('/api/rules-import/preview', { files });
+  return data as { items: ImportPreviewItem[] };
 }
 
 export function saveBlob(data: BlobPart, fileName: string, type: string) {

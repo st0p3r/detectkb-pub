@@ -256,7 +256,7 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
         )}
         {error ? <p className="p-6 text-destructive text-sm">{String((error as Error).message)}</p> : null}
         {chain && geo && (
-          <div className="relative m-4" style={{ width: TOTAL_WIDTH, height: geo.height }} onClick={(e) => e.target === e.currentTarget && setPinned(null)}>
+          <div data-graph-export className="relative m-4" style={{ width: TOTAL_WIDTH, height: geo.height }} onClick={(e) => e.target === e.currentTarget && setPinned(null)}>
             {(['tactic', 'technique', 'rule', 'sysmon', 'ds'] as const).map((k) => (
               <div key={k} className="absolute top-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" style={{ left: COLS[k], width: WIDTH[k] }}>
                 {{ tactic: 'Tactic', technique: 'Technique', rule: 'Detection rules', sysmon: 'Sysmon events', ds: 'Data sources' }[k]}

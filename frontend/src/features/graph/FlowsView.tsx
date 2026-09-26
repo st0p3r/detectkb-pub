@@ -182,7 +182,7 @@ export function FlowsView({ tactic, onTacticChange, onShowImpact, onShowChain }:
               several events or tactics counts in each) · hover to trace, click an event to pin it,{' '}
               {tactic ? 'click a technique for its detection chain' : 'click a tactic to see its techniques'}
             </p>
-            <svg viewBox={`0 0 ${W} ${height + 8}`} className="w-full h-auto select-none" role="img" aria-label="Detection flows">
+            <svg data-graph-export data-graph-svg viewBox={`0 0 ${W} ${height + 8}`} className="w-full h-auto select-none" role="img" aria-label="Detection flows">
               <g transform="translate(0,4)">
                 {placed.bands.map((b) => (
                   <path

@@ -56,7 +56,7 @@ export function PathView({ from, to, onChange, onExplore }: PathViewProps) {
         <NodePicker label="To" value={pick(to)} onChange={choose('to')} />
       </div>
 
-      <div className="flex-1 min-h-[420px] rounded-lg border border-border bg-card overflow-auto p-5">
+      <div data-graph-export className="flex-1 min-h-[420px] rounded-lg border border-border bg-card overflow-auto p-5">
         {!from || !to ? (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
             <Route className="w-10 h-10 text-muted-foreground/40" />

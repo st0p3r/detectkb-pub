@@ -43,7 +43,7 @@ export function ImpactView({ events, dataSource, onChange, onShowChain }: Impact
   const covered = sysmon.filter((e) => e.ruleCount > 0);
 
   return (
-    <div className="flex-1 min-h-0 overflow-auto space-y-4 pb-4">
+    <div data-graph-export className="flex-1 min-h-0 overflow-auto space-y-4 pb-4">
       <div className="rounded-lg border border-border bg-card p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-3">
           <Unplug className="w-4 h-4 text-muted-foreground" />

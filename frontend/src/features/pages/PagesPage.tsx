@@ -13,6 +13,8 @@ import {
 } from '@/lib/api';
 import { PAGE_SIZES, DEFAULT_PAGE_SIZE, PaginationFooter } from '@/components/ui/Pagination';
 import { useDebounced } from '@/hooks/useDebounced';
+import { SaveViewButton } from '@/features/views/SaveViewButton';
+import { useListKeyboard } from '@/hooks/useListKeyboard';
 import { TypeBadge } from '@/components/ui/TypeBadge';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -113,6 +115,26 @@ export function PagesPage() {
   const typeCounts = data?.typeCounts ?? {};
   const allTypesCount = Object.values(typeCounts).reduce((a, b) => a + b, 0);
 
+  // Keyboard: j / k highlight a row, Enter or o opens it, e edits
+  const [activeIndex, setActiveIndex] = useState(-1);
+  useEffect(() => setActiveIndex(-1), [data]);
+  useEffect(() => {
+    document.querySelector(`[data-row-index="${activeIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
+  useListKeyboard({
+    count: displayedPages.length,
+    active: activeIndex,
+    setActive: setActiveIndex,
+    onOpen: (i) => navigate(`/pages/${displayedPages[i].slug}`),
+    onOpenFull: (i) => navigate(`/pages/${displayedPages[i].slug}`),
+    onEdit: (i) => navigate(`/pages/${displayedPages[i].slug}/edit`),
+    onEscape: () => {
+      if (activeIndex < 0) return false;
+      setActiveIndex(-1);
+      return true;
+    },
+  });
+
   // The server clamps a page past the end; follow it
   useEffect(() => {
     if (data && !isPlaceholderData && data.page !== page) update({ page: data.page > 1 ? String(data.page) : null }, { replace: true });
@@ -182,6 +204,8 @@ export function PagesPage() {
             </span>
           )}
         </div>
+        <div className="flex items-center gap-2">
+        <SaveViewButton suggestedName={[q && `“${q}”`, typeFilter, selectedTag && `#${selectedTag}`, activeCategory?.name].filter(Boolean).join(' · ') || 'Pages'} />
         <Link
           to="/pages/new"
           className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
@@ -189,6 +213,7 @@ export function PagesPage() {
           <Plus className="w-4 h-4" />
           New Page
         </Link>
+        </div>
       </div>
 
       {/* Type filter (with counts under the other filters) + search */}
@@ -230,6 +255,7 @@ export function PagesPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search pages"
+            data-page-search
             className="w-full pl-8 pr-8 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
           {isFetching && data && (
@@ -333,10 +359,13 @@ export function PagesPage() {
               </tr>
             </thead>
             <tbody>
-              {displayedPages.map((page) => (
+              {displayedPages.map((page, rowIndex) => (
                 <tr
                   key={page.id}
-                  className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors"
+                  data-row-index={rowIndex}
+                  className={`border-b border-border last:border-0 hover:bg-muted/20 transition-colors ${
+                    rowIndex === activeIndex ? 'outline outline-2 -outline-offset-2 outline-primary/50' : ''
+                  }`}
                 >
                   <td className="px-4 py-3">
                     <Link
