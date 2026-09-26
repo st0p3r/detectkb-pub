@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { BookOpen, Plus, Pencil, Eye, Trash2, X } from 'lucide-react';
-import { listPages, deletePage, getTags, listCategories, type Page, type TagWithCount, type Category } from '@/lib/api';
+import { listPages, deletePage, getTags, listCategories, type PageListItem, type TagWithCount, type Category } from '@/lib/api';
 import { TypeBadge } from '@/components/ui/TypeBadge';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -30,12 +30,12 @@ export function PagesPage() {
   const categoryIdParam = searchParams.get('categoryId');
   const { types: pageTypes } = usePageTypes();
 
-  const [pages, setPages] = useState<Page[]>([]);
+  const [pages, setPages] = useState<PageListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('');
   const [search, setSearch] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [confirmPage, setConfirmPage] = useState<Page | null>(null);
+  const [confirmPage, setConfirmPage] = useState<PageListItem | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [tags, setTags] = useState<TagWithCount[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);

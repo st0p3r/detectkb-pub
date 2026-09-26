@@ -3,7 +3,7 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network } from 'lucide-react';
-import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, type Page } from '@/lib/api';
+import { getPage, deletePage, updatePage, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, type Page } from '@/lib/api';
 import { useQuery } from '@tanstack/react-query';
 import { RuleQueryTabs } from '@/features/rules/RuleQueryTabs';
 import { useAuth } from '@/features/auth/AuthContext';
@@ -350,10 +350,10 @@ function SplCommandPanel({
   );
 }
 
-function processWikiLinks(md: string, allPages: { title: string; slug: string }[]): string {
+function processWikiLinks(md: string, wikiLinks: Record<string, string>): string {
   return md.replace(/\[\[([^\]]+)\]\]/g, (_, title) => {
-    const page = allPages.find((p) => p.title.toLowerCase() === title.trim().toLowerCase());
-    if (page) return `[${title}](/pages/${page.slug})`;
+    const slug = wikiLinks[title.trim().toLowerCase()];
+    if (slug) return `[${title}](/pages/${slug})`;
     const encodedTitle = encodeURIComponent(title.trim());
     return `<span class="wiki-link-broken" title="Page not found: ${title}">[${title}](/pages/new?title=${encodedTitle})</span>`;
   });
@@ -383,7 +383,6 @@ export function PageViewPage() {
     }
   }
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [allPages, setAllPages] = useState<{ title: string; slug: string }[]>([]);
   const [backlinks, setBacklinks] = useState<{ id: number; title: string; slug: string; type: string }[]>([]);
 
   useEffect(() => {
@@ -395,12 +394,6 @@ export function PageViewPage() {
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
   }, [slug]);
-
-  useEffect(() => {
-    listPages().then((pages) =>
-      setAllPages(pages.map((p) => ({ title: p.title, slug: p.slug })))
-    );
-  }, []);
 
   useEffect(() => {
     if (!slug) return;
@@ -478,7 +471,7 @@ export function PageViewPage() {
     ? [{ label: 'Detection Rules', to: '/rules' }, { label: page.title }]
     : [{ label: 'Pages', to: '/pages' }, { label: page.title }];
 
-  const processedContent = processWikiLinks(page.contentMd, allPages);
+  const processedContent = processWikiLinks(page.contentMd, page.wikiLinks ?? {});
 
   return (
     <div className="max-w-4xl mx-auto">

@@ -108,6 +108,8 @@ export interface Page {
   category: { id: number; name: string; color?: string } | null;
   rule?: DetectionRuleData | null;
   splCommand?: SplCommandData | null;
+  /** From GET /api/pages/:slug: lower-cased [[link]] title → slug (missing pages left out) */
+  wikiLinks?: Record<string, string>;
   sysmonEvents?: PageSysmonLink[];
 }
 
@@ -123,9 +125,21 @@ export interface Category {
   parentId?: number | null;
 }
 
+/** A page as lists show it: no markdown or rule body (fetch the page for those). */
+export type PageListItem = Pick<Page, 'id' | 'title' | 'slug' | 'type' | 'isPinned' | 'createdAt' | 'updatedAt' | 'tags' | 'category'> & {
+  categoryId: number | null;
+  rule: { status: string; severity: string } | null;
+};
+
 export async function listPages(params?: { type?: string; q?: string; categoryId?: number }) {
   const { data } = await api.get('/api/pages', { params });
-  return data as Page[];
+  return data as PageListItem[];
+}
+
+/** Page titles for [[wiki link]] autocomplete; titles starting with q first. */
+export async function searchPageTitles(q: string, limit = 10) {
+  const { data } = await api.get('/api/pages/titles', { params: { q, limit } });
+  return data as { title: string; slug: string; type: string }[];
 }
 
 export async function getPage(slug: string) {

@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MDEditor from '@uiw/react-md-editor';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getPage,
   createPage,
   updatePage,
-  listPages,
+  searchPageTitles,
   listCategories,
   upsertSplCommand,
   updateSplCommand,
@@ -80,16 +81,12 @@ export function PageEditorPage() {
   const createdPageRef = useRef<Page | null>(null);
 
   // All page titles for autocomplete
-  const [allPageTitles, setAllPageTitles] = useState<{ title: string; slug: string }[]>([]);
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(CLOSED_AUTOCOMPLETE);
   const [activeIndex, setActiveIndex] = useState(0);
 
   const editorWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    listPages().then((pages) =>
-      setAllPageTitles(pages.map((p) => ({ title: p.title, slug: p.slug })))
-    );
     listCategories().then(setCategories).catch(() => {});
   }, []);
 
@@ -253,13 +250,21 @@ export function PageEditorPage() {
     []
   );
 
+  // [[ autocomplete: titles are looked up on the server as you type
+  const { data: titleMatches = [] } = useQuery({
+    queryKey: ['page-titles', autocomplete.query],
+    queryFn: () => searchPageTitles(autocomplete.query),
+    enabled: autocomplete.open,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+  const filteredSuggestions = autocomplete.open ? titleMatches.filter((p) => p.slug !== slug) : [];
+
   // Intercept arrow keys and Enter when autocomplete is open
   function handleEditorKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
       if (!autocomplete.open) return;
 
-      const filtered = allPageTitles.filter((p) =>
-        p.title.toLowerCase().includes(autocomplete.query.toLowerCase())
-      );
+      const filtered = filteredSuggestions;
 
       if (filtered.length === 0) return;
 
@@ -302,12 +307,6 @@ export function PageEditorPage() {
       }
     }, 0);
   }
-
-  const filteredSuggestions = autocomplete.open
-    ? allPageTitles
-        .filter((p) => p.title.toLowerCase().includes(autocomplete.query.toLowerCase()))
-        .slice(0, 10)
-    : [];
 
   if (loading) {
     return (

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { generateUniqueSlug } from '../lib/slug';
-import { syncPageLinks } from '../lib/links';
+import { resolveWikiLinks, syncPageLinks } from '../lib/links';
 import { syncAutoSysmonLinks } from '../lib/sysmon-links';
 
 const router = Router();
@@ -15,6 +15,22 @@ const PAGE_INCLUDE = {
     select: { source: true, sysmonEvent: { select: { id: true, eventId: true, name: true, category: true } } },
     orderBy: { sysmonEvent: { eventId: 'asc' as const } },
   },
+};
+
+// What page lists show: no markdown, queries or imported source files (those
+// made the full list tens of MB). GET /api/pages/:slug has everything.
+const PAGE_LIST_SELECT = {
+  id: true,
+  title: true,
+  slug: true,
+  type: true,
+  isPinned: true,
+  categoryId: true,
+  createdAt: true,
+  updatedAt: true,
+  tags: { include: { tag: true } },
+  category: true,
+  rule: { select: { status: true, severity: true } },
 };
 
 router.get('/', async (req, res) => {
@@ -32,11 +48,30 @@ router.get('/', async (req, res) => {
 
   const pages = await prisma.page.findMany({
     where,
-    include: PAGE_INCLUDE,
+    select: PAGE_LIST_SELECT,
     orderBy: { updatedAt: 'desc' },
   });
 
   res.json(pages);
+});
+
+// GET /api/pages/titles?q=lsass&limit=10 — titles for [[wiki link]] autocomplete,
+// titles starting with q first
+router.get('/titles', async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
+  const select = { title: true, slug: true, type: true };
+  const prefix = await prisma.page.findMany({ where: { title: { startsWith: q } }, select, orderBy: { title: 'asc' }, take: limit });
+  const rest =
+    q && prefix.length < limit
+      ? await prisma.page.findMany({
+          where: { title: { contains: q }, NOT: { title: { startsWith: q } } },
+          select,
+          orderBy: { title: 'asc' },
+          take: limit - prefix.length,
+        })
+      : [];
+  res.json([...prefix, ...rest]);
 });
 
 router.get('/:slug', async (req, res) => {
@@ -46,7 +81,7 @@ router.get('/:slug', async (req, res) => {
   });
 
   if (!page) return res.status(404).json({ error: 'Page not found' });
-  res.json(page);
+  res.json({ ...page, wikiLinks: await resolveWikiLinks(page.contentMd) });
 });
 
 router.post('/', async (req, res) => {
