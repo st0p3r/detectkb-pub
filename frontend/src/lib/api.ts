@@ -147,6 +147,35 @@ export async function deletePage(id: number) {
   await api.delete(`/api/pages/${id}`);
 }
 
+export interface PageSummary {
+  id: number;
+  title: string;
+  slug: string;
+  type: string;
+  updatedAt: string;
+}
+
+export interface DashboardData {
+  /** null when the user can't read pages */
+  pages: { byType: Record<string, number>; pinned: PageSummary[]; recent: PageSummary[]; splCommands: number } | null;
+  /** null when the user can't read rules */
+  rules: {
+    total: number;
+    byStatus: Record<string, number>;
+    bySeverity: Record<string, number>;
+    /** Import format, or "manual" */
+    bySource: Record<string, number>;
+    drafts: { id: number; status: string; severity: string; page: PageSummary }[];
+    /** Parent ATT&CK techniques with a non-deprecated rule */
+    coverage: { covered: number; total: number };
+  } | null;
+}
+
+export async function getDashboard() {
+  const { data } = await api.get('/api/dashboard');
+  return data as DashboardData;
+}
+
 export async function listCategories() {
   const { data } = await api.get('/api/categories');
   return data as Category[];
@@ -200,6 +229,25 @@ export interface RulePage {
   pageSize: number;
   /** Rules per status under the other filters (for the status chips) */
   statusCounts: Record<string, number>;
+}
+
+/** The list filters, without paging and sort (what bulk actions and export take). */
+export type RuleListFilter = Omit<RuleListParams, 'sort' | 'dir' | 'page' | 'pageSize'>;
+
+/** Target of a bulk action: explicit rule ids, or every rule matching a filter. */
+export type RuleBulkTarget = { ids: number[] } | { filter: RuleListFilter };
+
+export type RuleBulkAction = 'status' | 'severity' | 'addTag' | 'removeTag';
+
+export async function bulkUpdateRules(target: RuleBulkTarget, action: RuleBulkAction, value: string) {
+  const { data } = await api.put('/api/rules/bulk', { ...target, action, value });
+  return data as { matched: number; changed: number };
+}
+
+/** Deletes the rules' pages. */
+export async function bulkDeleteRules(target: RuleBulkTarget) {
+  const { data } = await api.delete('/api/rules/bulk', { data: target });
+  return data as { deleted: number };
 }
 
 /** One page of rules, filtered, searched and sorted on the server. */
@@ -607,7 +655,7 @@ export async function importRules(payload: {
   return data as SigmaImportResult;
 }
 
-function saveBlob(data: BlobPart, fileName: string, type: string) {
+export function saveBlob(data: BlobPart, fileName: string, type: string) {
   const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement('a');
   a.href = url;
@@ -626,9 +674,13 @@ export async function downloadSigmaRule(pageId: number, slug: string) {
 }
 
 /** Downloads all rules as one multi-document Sigma YAML; resolves to the number of rules. */
-export async function downloadSigmaRules(params: { status?: string; skeletons?: boolean }) {
+/** Sigma export of every rule, the rules matching a list filter, or the given rule ids. */
+export async function downloadSigmaRules(params: { skeletons?: boolean; ids?: number[]; filter?: RuleListFilter }) {
   const response = await api.get('/api/sigma/export', {
-    params: { status: params.status || undefined, skeletons: params.skeletons ? '1' : undefined },
+    params: {
+      ...(params.ids ? { ids: params.ids.join(',') } : params.filter),
+      skeletons: params.skeletons ? '1' : undefined,
+    },
     responseType: 'text',
   });
   saveBlob(response.data, 'detectkb-sigma-rules.yml', 'application/yaml');

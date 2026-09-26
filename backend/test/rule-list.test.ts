@@ -65,6 +65,7 @@ describe('rule list: query parsing', () => {
             { dataSource: { contains: 'mimikatz' } },
             { sigmaId: { contains: 'mimikatz' } },
             { sourceId: { contains: 'mimikatz' } },
+            { page: { tags: { some: { tag: { name: { contains: 'mimikatz' } } } } } },
           ],
         },
       ],

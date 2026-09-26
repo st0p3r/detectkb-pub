@@ -64,6 +64,7 @@ export function ruleWhere(f: RuleListQuery, omit?: 'status'): Prisma.DetectionRu
         { dataSource: { contains: f.q } },
         { sigmaId: { contains: f.q } },
         { sourceId: { contains: f.q } },
+        { page: { tags: { some: { tag: { name: { contains: f.q } } } } } },
       ],
     });
   }

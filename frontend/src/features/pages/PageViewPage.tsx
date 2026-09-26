@@ -3,9 +3,9 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network } from 'lucide-react';
-import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, QUERY_LANGUAGE_LABELS, SOURCE_FORMAT_LABELS, type Page } from '@/lib/api';
+import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, type Page } from '@/lib/api';
 import { useQuery } from '@tanstack/react-query';
-import { SigmaPanel } from '@/features/sigma/SigmaPanel';
+import { RuleQueryTabs } from '@/features/rules/RuleQueryTabs';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
 import { TypeBadge } from '@/components/ui/TypeBadge';
@@ -38,16 +38,8 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
-  const [splCopied, setSplCopied] = useState(false);
+function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: string }) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
-
-  function copySpl() {
-    navigator.clipboard.writeText(rule.splQuery ?? '').then(() => {
-      setSplCopied(true);
-      setTimeout(() => setSplCopied(false), 2000);
-    });
-  }
 
   function toggleSection(key: string) {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -69,24 +61,7 @@ function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
         )}
       </div>
 
-      {rule.splQuery && (
-        <div className="px-6 py-4 border-b border-border/60">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">SPL Query</span>
-            <button
-              onClick={copySpl}
-              aria-label={splCopied ? 'Copied' : 'Copy SPL query'}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-            >
-              {splCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              {splCopied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-          <pre className="bg-zinc-900 text-zinc-100 rounded-md px-4 py-3 text-xs font-mono overflow-x-auto whitespace-pre-wrap">
-            {rule.splQuery}
-          </pre>
-        </div>
-      )}
+      <RuleQueryTabs rule={rule} slug={slug} />
 
       {(tactics.length > 0 || techniques.length > 0) && (
         <div className="px-6 py-4 border-b border-border/60 space-y-2">
@@ -164,39 +139,6 @@ function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
         </CollapsibleSection>
       )}
 
-      {rule.nativeQuery && (
-        <CollapsibleSection
-          label={`${QUERY_LANGUAGE_LABELS[rule.nativeLanguage ?? ''] ?? rule.nativeLanguage ?? 'Other'} Query`}
-          isOpen={!!openSections['native']}
-          onToggle={() => toggleSection('native')}
-        >
-          <pre className="px-3 py-3 rounded-md bg-zinc-900 text-zinc-100 text-xs font-mono whitespace-pre-wrap break-all">
-            {rule.nativeQuery}
-          </pre>
-        </CollapsibleSection>
-      )}
-
-      {rule.sourceFormat && rule.sourceContent && (
-        <CollapsibleSection
-          label={`Original ${SOURCE_FORMAT_LABELS[rule.sourceFormat]} rule`}
-          isOpen={!!openSections['source']}
-          onToggle={() => toggleSection('source')}
-        >
-          <pre className="px-3 py-3 rounded-md bg-zinc-900 text-zinc-100 text-xs font-mono overflow-x-auto max-h-96">
-            {rule.sourceContent}
-          </pre>
-        </CollapsibleSection>
-      )}
-
-      {rule.sigmaYaml && (
-        <CollapsibleSection
-          label="Sigma Rule & Conversions"
-          isOpen={!!openSections['sigma']}
-          onToggle={() => toggleSection('sigma')}
-        >
-          <SigmaPanel sigmaYaml={rule.sigmaYaml} />
-        </CollapsibleSection>
-      )}
     </div>
   );
 }
@@ -658,7 +600,7 @@ export function PageViewPage() {
 
         {/* Detection Rule structured panel */}
         {page.type === 'RULE' && page.rule && (
-          <RulePanel rule={page.rule} />
+          <RulePanel rule={page.rule} slug={page.slug} />
         )}
 
         <SysmonLinksBar links={page.sysmonEvents ?? []} />

@@ -80,7 +80,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     .catch(next);
 }
 
-function isAdmin(user: AuthUser): boolean {
+export function isAdmin(user: AuthUser): boolean {
   return user.roles.includes('admin');
 }
 

@@ -18,6 +18,7 @@ import docsRouter from './routes/docs';
 import pageTypesRouter from './routes/page-types';
 import sysmonEventsRouter from './routes/sysmon-events';
 import activityRouter from './routes/activity';
+import dashboardRouter from './routes/dashboard';
 import sigmaRouter from './routes/sigma';
 import ruleImportRouter from './routes/rule-import';
 import referencesRouter from './routes/references';
@@ -61,6 +62,7 @@ app.use('/api/rules-import', ruleImportRouter);
 app.use('/api/references', referencesRouter);
 app.use('/api/graph', graphRouter);
 app.use('/api/attack', attackRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 // Routers that check permissions per route
 app.use('/api/backup', backupRouter);

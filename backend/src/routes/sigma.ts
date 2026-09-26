@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { parseRuleListQuery, ruleWhere } from '../lib/rule-list';
 import { prisma } from '../lib/prisma';
 import { requirePermission } from '../middleware/auth';
 import { importRules } from './rule-import';
@@ -99,13 +100,16 @@ router.get('/export/:pageId', requirePermission('rules:read'), async (req, res) 
   res.send(rule.yaml);
 });
 
-// GET /api/sigma/export?status=production,testing&skeletons=1 — all rules as one multi-document YAML
+// GET /api/sigma/export?status=production,testing&skeletons=1 — rules as one multi-document YAML.
+// Takes the rule list's filters (status, severity, source, technique, q, …) or ids=1,2,3.
 router.get('/export', requirePermission('rules:read'), async (req, res) => {
-  const status = typeof req.query.status === 'string' && req.query.status ? req.query.status.split(',') : null;
   const includeSkeletons = req.query.skeletons === '1' || req.query.skeletons === 'true';
+  const ids = typeof req.query.ids === 'string' && req.query.ids ? req.query.ids.split(',').map(Number).filter(Number.isInteger) : null;
   const where = {
-    ...(status ? { status: { in: status } } : {}),
-    ...(includeSkeletons ? {} : { sigmaYaml: { not: null } }),
+    AND: [
+      ids ? { id: { in: ids } } : ruleWhere(parseRuleListQuery(req.query)),
+      includeSkeletons ? {} : { sigmaYaml: { not: null } },
+    ],
   };
   const rules = await loadRulesForExport(where);
   res.setHeader('Content-Type', 'application/yaml; charset=utf-8');

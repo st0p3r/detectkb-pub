@@ -107,6 +107,73 @@ router.get('/', async (req, res) => {
   });
 });
 
+/** Rules a bulk action targets: explicit ids, or every rule matching a list filter. */
+async function bulkTargets(body: Record<string, unknown>) {
+  if (Array.isArray(body.ids)) {
+    const ids = body.ids.map(Number).filter(Number.isInteger);
+    return ids.length ? prisma.detectionRule.findMany({ where: { id: { in: ids } }, select: { id: true, pageId: true } }) : [];
+  }
+  if (body.filter && typeof body.filter === 'object') {
+    return prisma.detectionRule.findMany({
+      where: ruleWhere(parseRuleListQuery(body.filter as Record<string, unknown>)),
+      select: { id: true, pageId: true },
+    });
+  }
+  return null;
+}
+
+const BULK_ACTIONS = ['status', 'severity', 'addTag', 'removeTag'] as const;
+
+// PUT /api/rules/bulk { ids | filter, action: status|severity|addTag|removeTag, value }
+router.put('/bulk', async (req, res) => {
+  const { action } = req.body ?? {};
+  const value = typeof req.body?.value === 'string' ? req.body.value.trim() : '';
+  if (!BULK_ACTIONS.includes(action)) return res.status(400).json({ error: `action must be one of ${BULK_ACTIONS.join(', ')}` });
+  if (action === 'status' && !RULE_STATUSES.includes(value)) return res.status(400).json({ error: 'Invalid status' });
+  if (action === 'severity' && !RULE_SEVERITIES.includes(value)) return res.status(400).json({ error: 'Invalid severity' });
+  if ((action === 'addTag' || action === 'removeTag') && (!value || value.length > 80))
+    return res.status(400).json({ error: 'Tag name must be 1–80 characters' });
+
+  const targets = await bulkTargets(req.body);
+  if (!targets) return res.status(400).json({ error: 'Send ids or filter' });
+  const ids = targets.map((t) => t.id);
+  const pageIds = targets.map((t) => t.pageId);
+
+  let changed = 0;
+  if (action === 'status' || action === 'severity') {
+    changed = (await prisma.detectionRule.updateMany({ where: { id: { in: ids }, [action]: { not: value } }, data: { [action]: value } })).count;
+  } else if (action === 'addTag') {
+    const tag = await prisma.tag.upsert({ where: { name: value }, create: { name: value }, update: {} });
+    changed = (
+      await prisma.tagsOnPages.createMany({ data: pageIds.map((pageId) => ({ pageId, tagId: tag.id })), skipDuplicates: true })
+    ).count;
+  } else {
+    const tag = await prisma.tag.findUnique({ where: { name: value } });
+    if (tag) {
+      changed = (await prisma.tagsOnPages.deleteMany({ where: { tagId: tag.id, pageId: { in: pageIds } } })).count;
+      await prisma.tag.deleteMany({ where: { id: tag.id, pages: { none: {} } } });
+    }
+  }
+
+  await prisma.auditLog.create({
+    data: { userId: req.user?.userId ?? null, action: 'RULE_BULK_UPDATE', resourceType: 'rule', newValue: { action, value, rules: ids.length, changed } },
+  });
+  res.json({ matched: ids.length, changed });
+});
+
+// DELETE /api/rules/bulk { ids | filter } — deletes the rules' pages
+router.delete('/bulk', async (req, res) => {
+  const targets = await bulkTargets(req.body ?? {});
+  if (!targets) return res.status(400).json({ error: 'Send ids or filter' });
+  const pageIds = targets.map((t) => t.pageId);
+  const { count } = await prisma.page.deleteMany({ where: { id: { in: pageIds } } });
+  await prisma.tag.deleteMany({ where: { pages: { none: {} } } });
+  await prisma.auditLog.create({
+    data: { userId: req.user?.userId ?? null, action: 'RULE_BULK_DELETE', resourceType: 'rule', newValue: { deleted: count } },
+  });
+  res.json({ deleted: count });
+});
+
 // GET /api/rules/:pageId — get single rule by pageId
 router.get('/:pageId', async (req, res) => {
   const pageId = Number(req.params.pageId);

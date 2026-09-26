@@ -1,17 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
+import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, ChevronLeft, ChevronRight, Loader2, X, Rows3, Rows4 } from 'lucide-react';
 import {
   SOURCE_FORMAT_LABELS,
   apiErrorMessage,
   downloadSigmaRules,
   listRulesPage,
+  type RuleListFilter,
   type RuleListParams,
   type RuleSortKey,
   type RuleSourceFormat,
 } from '@/lib/api';
 import { RuleImportDialog } from '@/features/rules/RuleImportDialog';
+import { RuleBulkBar } from '@/features/rules/RuleBulkBar';
+import { SourceBadge } from '@/components/ui/SourceBadge';
+import { SOURCE_STYLES, sourceLabel } from '@/lib/ruleSource';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -67,6 +71,34 @@ function pageWindow(page: number, pageCount: number): (number | null)[] {
   const sorted = Array.from(pages).sort((a, b) => a - b);
   return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? [null, p] : [p]));
 }
+
+const DENSITY_KEY = 'detectkb.rulesDensity';
+
+function readDensity(): 'comfortable' | 'compact' {
+  try {
+    return localStorage.getItem(DENSITY_KEY) === 'compact' ? 'compact' : 'comfortable';
+  } catch {
+    return 'comfortable';
+  }
+}
+
+function Checkbox({ checked, indeterminate, onChange, label }: { checked: boolean; indeterminate?: boolean; onChange: () => void; label: string }) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      ref={(el) => {
+        if (el) el.indeterminate = !!indeterminate;
+      }}
+      onChange={onChange}
+      aria-label={label}
+      className="w-4 h-4 rounded border-border accent-primary cursor-pointer align-middle"
+    />
+  );
+}
+
+const sortBtn =
+  'flex items-center gap-0.5 hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none';
 
 export function RulesPage() {
   const navigate = useNavigate();
@@ -144,6 +176,77 @@ export function RulesPage() {
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const filtersActive = !!(q || technique || tactic) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
+
+  // Selection: rule ids (kept across pages), or "every rule matching the filters"
+  const listFilter: RuleListFilter = {
+    q: query.q,
+    status: query.status,
+    severity: query.severity,
+    source: query.source,
+    technique: query.technique,
+    tactic: query.tactic,
+  };
+  const filterKey = JSON.stringify(listFilter);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [allMatching, setAllMatching] = useState(false);
+  const clearSelection = useCallback(() => {
+    setSelected(new Set());
+    setAllMatching(false);
+  }, []);
+  // A selection belongs to one filter; changing the filter drops it
+  useEffect(clearSelection, [filterKey, clearSelection]);
+  const pageIds = rules.map((r) => r.id!);
+  const selectionCount = allMatching ? total : selected.size;
+
+  function toggleOne(id: number) {
+    if (allMatching) {
+      // Leaving "all matching": keep this page minus the unticked rule
+      setAllMatching(false);
+      setSelected(new Set(pageIds.filter((x) => x !== id)));
+      return;
+    }
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function togglePage() {
+    if (allMatching) return clearSelection();
+    const all = pageIds.every((id) => selected.has(id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of pageIds) {
+        if (all) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (!selectionCount) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !(e.target as HTMLElement).closest('input, textarea, [role=dialog], [role=toolbar]')) clearSelection();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selectionCount, clearSelection]);
+
+  const [density, setDensity] = useState(readDensity);
+  const compact = density === 'compact';
+  const cellY = compact ? 'py-1.5' : 'py-3';
+  function toggleDensity() {
+    const next = compact ? 'comfortable' : 'compact';
+    setDensity(next);
+    try {
+      localStorage.setItem(DENSITY_KEY, next);
+    } catch {
+      /* not remembered */
+    }
+  }
 
   // The server clamps a page past the end (e.g. after deleting rules); follow it
   useEffect(() => {
@@ -328,6 +431,16 @@ export function RulesPage() {
             </option>
           ))}
         </select>
+
+        <button
+          onClick={toggleDensity}
+          title={compact ? 'Comfortable rows' : 'Compact rows'}
+          aria-label={compact ? 'Show comfortable rows' : 'Show compact rows'}
+          aria-pressed={compact}
+          className="px-2.5 py-2 rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+        >
+          {compact ? <Rows3 className="w-4 h-4" /> : <Rows4 className="w-4 h-4" />}
+        </button>
       </div>
 
       {/* Filters that arrive from links elsewhere (technique / tactic chips) */}
@@ -360,12 +473,11 @@ export function RulesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40">
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Title</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Severity</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">MITRE Techniques</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Data Source</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Last Updated</th>
+                {['Title', 'Status', 'Severity', 'MITRE Techniques', 'Data Source', 'Last Updated'].map((h) => (
+                  <th key={h} className="text-left px-4 py-3 font-medium text-muted-foreground">
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -400,109 +512,141 @@ export function RulesPage() {
         </div>
       ) : (
         <div className={`rounded-lg border border-border bg-card overflow-hidden transition-opacity ${isFetching ? 'opacity-70' : ''}`}>
-          <table className="w-full text-sm">
+          <table className="w-full text-sm table-fixed">
+            <colgroup>
+              <col className="w-10" />
+              <col />
+              <col className="w-28" />
+              <col className="w-24" />
+              <col className="w-52" />
+              <col className="w-56" />
+              <col className="w-28" />
+            </colgroup>
             <thead>
               <tr className="border-b border-border bg-muted/40">
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                  <button
-                    className="flex items-center gap-0.5 hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-                    onClick={() => toggleSort('title')}
-                  >
+                <th className="pl-4 pr-0 py-3">
+                  <Checkbox
+                    checked={allMatching || (pageIds.length > 0 && pageIds.every((id) => selected.has(id)))}
+                    indeterminate={!allMatching && pageIds.some((id) => selected.has(id)) && !pageIds.every((id) => selected.has(id))}
+                    onChange={togglePage}
+                    label="Select all rules on this page"
+                  />
+                </th>
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>
+                  <button className={sortBtn} onClick={() => toggleSort('title')}>
                     Title <SortIndicator col="title" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                  <button
-                    className="flex items-center gap-0.5 hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-                    onClick={() => toggleSort('status')}
-                  >
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>
+                  <button className={sortBtn} onClick={() => toggleSort('status')}>
                     Status <SortIndicator col="status" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                  <button
-                    className="flex items-center gap-0.5 hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-                    onClick={() => toggleSort('severity')}
-                  >
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>
+                  <button className={sortBtn} onClick={() => toggleSort('severity')}>
                     Severity <SortIndicator col="severity" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">MITRE Techniques</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Data Source</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                  <button
-                    className="flex items-center gap-0.5 hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-                    onClick={() => toggleSort('updatedAt')}
-                  >
-                    Last Updated <SortIndicator col="updatedAt" />
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>MITRE Techniques</th>
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>Data Source</th>
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>
+                  <button className={sortBtn} onClick={() => toggleSort('updatedAt')}>
+                    Updated <SortIndicator col="updatedAt" />
                   </button>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {rules.map((rule, idx) => {
+              {rules.map((rule) => {
                 const techniques = splitChips(rule.mitreTechniques);
+                const shown = techniques.slice(0, compact ? 2 : 3);
+                const isSelected = allMatching || selected.has(rule.id!);
+                // Imports also tag rules with their format; the source badge already says it
+                const tags = rule.page.tags.filter(({ tag }) => tag.name !== rule.sourceFormat);
                 return (
                   <tr
                     key={rule.id}
-                    className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${
-                      idx % 2 === 0 ? '' : 'bg-muted/10'
+                    className={`border-b border-border last:border-0 transition-colors ${
+                      isSelected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/30'
                     }`}
                   >
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => navigate(`/pages/${rule.page.slug}`)}
-                        className="font-medium text-primary hover:underline text-left focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-                      >
-                        {rule.page.title}
-                      </button>
-                      {rule.page.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {rule.page.tags.slice(0, 3).map(({ tag }) => (
-                            <span
-                              key={tag.id}
-                              className="px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground text-xs"
-                            >
-                              {tag.name}
+                    <td className={`pl-4 pr-0 ${cellY}`}>
+                      <Checkbox checked={isSelected} onChange={() => toggleOne(rule.id!)} label={`Select ${rule.page.title}`} />
+                    </td>
+                    <td className={`px-4 ${cellY} min-w-0`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        {compact && rule.sourceFormat && (
+                          <span
+                            className={`w-2 h-2 rounded-full flex-shrink-0 ${SOURCE_STYLES[rule.sourceFormat]?.dot ?? ''}`}
+                            title={sourceLabel(rule.sourceFormat)}
+                          />
+                        )}
+                        <Link
+                          to={`/pages/${rule.page.slug}`}
+                          title={rule.page.title}
+                          className={`font-medium text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary/50 outline-none ${compact ? 'truncate' : 'line-clamp-2'}`}
+                        >
+                          {rule.page.title}
+                        </Link>
+                      </div>
+                      {!compact && (rule.sourceFormat || tags.length > 0) && (
+                        <div className="flex flex-wrap items-center gap-1 mt-1">
+                          {rule.sourceFormat && <SourceBadge source={rule.sourceFormat} onClick={() => update({ source: rule.sourceFormat! })} />}
+                          {tags.slice(0, 3).map(({ tag }) => (
+                            <span key={tag.id} className="px-1.5 py-px rounded-full bg-muted text-muted-foreground text-[11px] leading-4">
+                              #{tag.name}
                             </span>
                           ))}
+                          {tags.length > 3 && (
+                            <span className="text-[11px] text-muted-foreground" title={tags.slice(3).map(({ tag }) => tag.name).join(', ')}>
+                              +{tags.length - 3}
+                            </span>
+                          )}
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className={`px-4 ${cellY}`}>
                       <StatusBadge status={rule.status} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className={`px-4 ${cellY}`}>
                       <SeverityBadge severity={rule.severity} />
                     </td>
-                    <td className="px-4 py-3">
+                    <td className={`px-4 ${cellY}`}>
                       {techniques.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {techniques.slice(0, 4).map((t) => (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {shown.map((t) => (
                             <button
                               key={t}
                               onClick={() => update({ technique: t })}
-                              className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-xs font-mono hover:ring-1 hover:ring-blue-400 transition-all focus-visible:ring-2 focus-visible:ring-blue-400 outline-none"
+                              title={`Only rules for ${t}`}
+                              className="px-1.5 py-px rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-[11px] leading-4 font-mono hover:ring-1 hover:ring-blue-400 transition-all focus-visible:ring-2 focus-visible:ring-blue-400 outline-none"
                             >
                               {t}
                             </button>
                           ))}
-                          {techniques.length > 4 && (
-                            <span className="text-xs text-muted-foreground">+{techniques.length - 4}</span>
+                          {techniques.length > shown.length && (
+                            <span className="text-[11px] text-muted-foreground cursor-help" title={techniques.slice(shown.length).join(', ')}>
+                              +{techniques.length - shown.length}
+                            </span>
                           )}
                         </div>
                       ) : (
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className={`px-4 ${cellY}`}>
                       {rule.dataSource ? (
-                        <span className="font-mono text-xs text-foreground/80">{rule.dataSource}</span>
+                        <span
+                          className={`block font-mono text-xs text-foreground/80 ${compact ? 'truncate' : 'line-clamp-2 break-words'}`}
+                          title={rule.dataSource}
+                        >
+                          {rule.dataSource}
+                        </span>
                       ) : (
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">
+                    <td className={`px-4 ${cellY} text-muted-foreground text-xs whitespace-nowrap`} title={new Date(rule.page.updatedAt).toLocaleString()}>
                       {relativeTime(rule.page.updatedAt)}
                     </td>
                   </tr>
@@ -513,7 +657,7 @@ export function RulesPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-t border-border bg-muted/20 text-xs text-muted-foreground">
             <span>
               Showing {((page - 1) * pageSize + 1).toLocaleString()}–{Math.min(page * pageSize, total).toLocaleString()} of{' '}
-              {total.toLocaleString()} rules
+              {total.toLocaleString()} rule{total === 1 ? '' : 's'}
             </span>
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-1.5">
@@ -572,6 +716,26 @@ export function RulesPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {selectionCount > 0 && (
+        <RuleBulkBar
+          count={selectionCount}
+          target={allMatching ? { filter: listFilter } : { ids: Array.from(selected) }}
+          canUpdate={hasPermission('rules:update')}
+          canDelete={hasPermission('rules:delete')}
+          selectAll={
+            !allMatching && total > pageIds.length && pageIds.every((id) => selected.has(id))
+              ? { total, onSelect: () => setAllMatching(true) }
+              : undefined
+          }
+          onClear={clearSelection}
+          onDone={() => {
+            clearSelection();
+            queryClient.invalidateQueries({ queryKey: ['rules'] });
+            queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+          }}
+        />
       )}
     </div>
   );
