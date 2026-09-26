@@ -908,6 +908,10 @@ export interface GraphNode {
   url?: string;
   status?: string;
   severity?: string;
+  /** Techniques and tools: rules mapped to / mentioning it */
+  ruleCount?: number;
+  /** Technique or tool no rule covers */
+  gap?: boolean;
   degree: number;
 }
 
@@ -926,6 +930,10 @@ export interface GraphMoreNode {
   targetGroup: string;
   remaining: number;
   offset: number;
+  /** A whole neighbour group as one card ("58 rules"), opened on click */
+  cluster?: boolean;
+  /** Cluster members by status (rules) or gap / covered (tools, techniques) */
+  breakdown?: Record<string, number>;
   degree: number;
 }
 
@@ -971,6 +979,80 @@ export interface DetectionChain {
   rules: ChainRule[];
   sysmon: { eventId: number; name: string; ruleCount: number }[];
   dataSources: { pageId: number; title: string; slug: string; sysmon: number[] }[];
+}
+
+export async function getGraphPaths(from: string, to: string) {
+  const { data } = await api.get('/api/graph/path', { params: { from, to } });
+  return data as { paths: string[][]; nodes: GraphNode[]; edges: GraphEdge[] };
+}
+
+export interface ImpactedRule {
+  pageId: number;
+  title: string;
+  slug: string;
+  status: string;
+  severity: string;
+  techniques: string[];
+  sysmon: number[];
+  /** lost: no telemetry left · atRisk: lists other sources that may feed it · partial: some events left */
+  level: 'lost' | 'atRisk' | 'partial';
+  lostEvents: number[];
+  alternatives: string[];
+}
+
+export interface TechniqueImpact {
+  id: string;
+  name: string;
+  rules: number;
+  lost: number;
+  atRisk: number;
+}
+
+export interface ImpactAnalysis {
+  events: number[];
+  rules: ImpactedRule[];
+  counts: { activeRules: number; lost: number; atRisk: number; partial: number };
+  uncovered: TechniqueImpact[];
+  reduced: TechniqueImpact[];
+}
+
+/** What stops working if these Sysmon events (or a data source page's events) are lost. */
+export async function getImpact(params: { sysmon?: number[]; dataSource?: number }) {
+  const { data } = await api.get('/api/graph/impact', {
+    params: { sysmon: params.sysmon?.length ? params.sysmon.join(',') : undefined, dataSource: params.dataSource },
+  });
+  return data as ImpactAnalysis;
+}
+
+export interface CoverageFlows {
+  sources: { id: string; eventId: number | null; label: string; rules: number }[];
+  targets: { id: string; label: string; rules: number }[];
+  links: { source: string; target: string; rules: number }[];
+  rules: number;
+}
+
+/** Rules per (Sysmon event → tactic), or → technique within one tactic. */
+export async function getCoverageFlows(params: { status?: string; source?: string; tactic?: string; withoutSysmon?: '0' }) {
+  const { data } = await api.get('/api/graph/flows', { params });
+  return data as CoverageFlows;
+}
+
+export interface ToolGaps {
+  summary: { tools: number; toolsWithoutRules: number; techniques: number; techniquesWithoutRules: number };
+  techniques: {
+    id: string;
+    name: string;
+    tactics: string[];
+    /** Rules on the technique (and its sub-techniques) */
+    rules: number;
+    uncoveredTools: number;
+    tools: { id: string; name: string; kind: string; ruleCount: number }[];
+  }[];
+}
+
+export async function getToolGaps(kind?: string) {
+  const { data } = await api.get('/api/graph/gaps', { params: { kind: kind || undefined } });
+  return data as ToolGaps;
 }
 
 export async function getDetectionChain(technique: string, status?: string) {

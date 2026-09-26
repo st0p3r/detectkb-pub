@@ -31,6 +31,13 @@ export function NodePanel({ node, onClose, children, neighbours, onSelectNeighbo
             {node.degree === 1 ? '' : 's'}
           </div>
           <div className="font-semibold">{node.label}</div>
+          {node.gap ? (
+            <div className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">No rule covers this — a detection gap</div>
+          ) : node.ruleCount ? (
+            <div className="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+              {node.ruleCount} rule{node.ruleCount === 1 ? '' : 's'} {node.group === 'technique' ? 'mapped to it' : 'mention it'}
+            </div>
+          ) : null}
         </div>
         <button onClick={onClose} aria-label="Close" className="p-1 rounded hover:bg-accent">
           <X className="w-4 h-4" />

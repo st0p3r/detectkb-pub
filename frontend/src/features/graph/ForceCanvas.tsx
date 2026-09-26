@@ -4,7 +4,7 @@ import type { GraphEdge, GraphMoreNode, GraphNode } from '@/lib/api';
 import { usePageTypes } from '@/context/PageTypesContext';
 import { ENTITY_GROUPS, cssColor, isPageGroup } from './graphStyle';
 import { useNodeIcons } from './nodeIcons';
-import { CARD_H, CARD_MIN_SCALE, CARD_W, STATUS_COLORS, TILE, cardText, fitText, rectCollide, wrapText } from './nodeCard';
+import { BREAKDOWN_COLORS, CARD_H, CARD_MIN_SCALE, CARD_W, GAP_COLOR, STATUS_COLORS, TILE, breakdownEntries, cardText, fitText, rectCollide, wrapText } from './nodeCard';
 
 export type CanvasNode = (GraphNode | GraphMoreNode) & NodeObject;
 type CanvasLink = { source: string | CanvasNode; target: string | CanvasNode; kind: string };
@@ -127,6 +127,10 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
       const x = node.x!;
       const y = node.y!;
       const isMore = node.group === 'more';
+      const cluster = isMore && !!(node as GraphMoreNode).cluster;
+      // "+N more" pills are dashed; clusters are solid cards standing for a group
+      const dashed = isMore && !cluster;
+      const gap = !isMore && !!(node as GraphNode).gap;
       const color = colorOf(isMore ? (node as GraphMoreNode).targetGroup : node.group);
       const selected = id === selectedId;
       const hot = selected || id === hovered;
@@ -147,7 +151,12 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
         ctx.roundRect(x - t / 2, y - t / 2, t, t, 6 / scale);
         ctx.fillStyle = isMore ? card : color;
         ctx.fill();
-        if (isMore) {
+        if (gap) {
+          ctx.setLineDash([3 / scale, 2 / scale]);
+          ctx.lineWidth = 2 / scale;
+          ctx.strokeStyle = GAP_COLOR;
+          ctx.stroke();
+        } else if (isMore) {
           ctx.setLineDash([3 / scale, 2 / scale]);
           ctx.lineWidth = 1 / scale;
           ctx.strokeStyle = color;
@@ -168,11 +177,20 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
       ctx.fillStyle = card;
       ctx.fill();
       ctx.shadowColor = 'transparent';
-      if (isMore) ctx.setLineDash([4, 3]);
-      ctx.lineWidth = selected ? 2 : 1;
-      ctx.strokeStyle = selected ? primary : hot || isMore ? color : border;
+      if (dashed || gap) ctx.setLineDash([4, 3]);
+      ctx.lineWidth = selected ? 2 : gap || cluster ? 1.5 : 1;
+      ctx.strokeStyle = selected ? primary : gap ? GAP_COLOR : hot || isMore ? color : border;
       ctx.stroke();
       ctx.setLineDash([]);
+      if (cluster) {
+        // Second card edge behind: a stack of cards
+        ctx.beginPath();
+        ctx.moveTo(left + 8, top + CARD_H + 3);
+        ctx.lineTo(left + CARD_W - 8, top + CARD_H + 3);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+      }
 
       // Icon badge, vertically centred
       ctx.beginPath();
@@ -190,7 +208,7 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
       ctx.textBaseline = 'alphabetic';
       ctx.font = '600 11px Inter, system-ui, sans-serif';
       const lines = wrapText(ctx, title, textWidth, 2);
-      const blockTop = y - (lines.length * 13 + 13) / 2;
+      const blockTop = y - (lines.length * 13 + 13) / 2 - (cluster ? 3 : 0);
       ctx.fillStyle = fg;
       lines.forEach((line, i) => ctx.fillText(line, textLeft, blockTop + 10 + i * 13));
       const subBase = blockTop + lines.length * 13 + 10;
@@ -204,8 +222,27 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
         ctx.fill();
         subLeft += 11;
       }
-      ctx.fillStyle = muted;
+      ctx.fillStyle = gap ? GAP_COLOR : muted;
       ctx.fillText(fitText(ctx, subtitle, CARD_W - 58 - (subLeft - textLeft)), subLeft, subBase);
+
+      if (cluster) {
+        // Breakdown bar: statuses of the rules, or tools with / without rules
+        const entries = breakdownEntries((node as GraphMoreNode).breakdown);
+        const total = entries.reduce((n, [, v]) => n + v, 0) || 1;
+        const barW = CARD_W - 58;
+        let bx = textLeft;
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(textLeft, subBase + 5, barW, 4, 2);
+        ctx.clip();
+        for (const [k, v] of entries) {
+          const w = (v / total) * barW;
+          ctx.fillStyle = BREAKDOWN_COLORS[k] ?? '#94a3b8';
+          ctx.fillRect(bx, subBase + 5, w, 4);
+          bx += w;
+        }
+        ctx.restore();
+      }
 
       // Connection count: filled once the node's neighbours are loaded
       if (hasBadge) {

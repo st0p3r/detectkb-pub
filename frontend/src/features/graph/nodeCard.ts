@@ -14,17 +14,37 @@ export const STATUS_COLORS: Record<string, string> = {
   deprecated: '#ef4444',
 };
 
+/** Colours of a cluster's breakdown bar (rule statuses, or gap / covered). */
+export const BREAKDOWN_COLORS: Record<string, string> = { ...STATUS_COLORS, covered: '#10b981', gap: '#ef4444' };
+export const GAP_COLOR = '#ef4444';
+const BREAKDOWN_ORDER = ['production', 'testing', 'draft', 'deprecated', 'covered', 'gap'];
+
+export function breakdownEntries(breakdown: Record<string, number> = {}) {
+  return Object.entries(breakdown).sort((a, b) => BREAKDOWN_ORDER.indexOf(a[0]) - BREAKDOWN_ORDER.indexOf(b[0]));
+}
+
+/** "58 Rules", "34 LOLBAS", "12 ATT&CK techniques" */
+function countLabel(n: number, label: string) {
+  const plural = /s$/i.test(label) || label === label.toUpperCase() ? label : `${label}s`;
+  return `${n} ${n === 1 ? label : plural}`;
+}
+
 /** Title / subtitle shown on a node card, derived from the node's group and label. */
 export function cardText(node: GraphNode | GraphMoreNode, groupLabel: (g: string) => string) {
   if (node.group === 'more') {
     const m = node as GraphMoreNode;
+    if (m.cluster) {
+      const parts = breakdownEntries(m.breakdown).map(([k, v]) => `${v} ${k === 'gap' ? 'without rules' : k === 'covered' ? 'with rules' : k}`);
+      return { title: countLabel(m.remaining, groupLabel(m.targetGroup)), subtitle: parts.join(' · ') || 'click to open' };
+    }
     return { title: `${m.remaining} more`, subtitle: `${groupLabel(m.targetGroup)} · click to load` };
   }
   const n = node as GraphNode;
+  const rules = n.ruleCount === undefined ? '' : n.gap ? ' · no rules' : ` · ${n.ruleCount} rule${n.ruleCount === 1 ? '' : 's'}`;
   switch (n.group) {
     case 'technique': {
       const [id, ...name] = n.label.split(' ');
-      return { title: name.join(' ') || id, subtitle: `${id} · Technique` };
+      return { title: name.join(' ') || id, subtitle: `${id}${rules || ' · Technique'}` };
     }
     case 'sysmon': {
       const m = n.label.match(/^EID (\d+) (.*)$/);
@@ -34,7 +54,7 @@ export function cardText(node: GraphNode | GraphMoreNode, groupLabel: (g: string
     case 'gtfobins':
     case 'loldrivers': {
       const m = n.label.match(/^(.*) \(([^)]+)\)$/);
-      return m ? { title: m[1], subtitle: m[2] } : { title: n.label, subtitle: groupLabel(n.group) };
+      return m ? { title: m[1], subtitle: `${m[2]}${rules}` } : { title: n.label, subtitle: `${groupLabel(n.group)}${rules}` };
     }
     case 'RULE':
       return { title: n.label, subtitle: [n.severity, n.status].filter(Boolean).join(' · ') || 'Rule' };

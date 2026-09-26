@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { kbCache, markDataChanged } from './kb-cache';
 import { prisma } from './prisma';
-import { parseTechniqueIds } from './attack';
+import { parseTechniqueIds, resolveTechniqueId } from './attack';
 
 // Attacker-tool references and their automatic matching against detection rules.
 //   lolbas     — Living Off The Land Binaries, Scripts and Libraries (Windows)
@@ -291,6 +291,8 @@ export interface ReferenceMatches {
   byPage: Map<number, { kind: ReferenceKind; key: string }[]>;
   /** "kind:key" → entry name, for every entry (so callers needn't query names) */
   names: Map<string, string>;
+  /** "kind:key" → the current ATT&CK technique IDs the entry maps to */
+  techniques: Map<string, string[]>;
 }
 
 const matchesCache = kbCache(buildReferenceMatches);
@@ -330,7 +332,14 @@ async function buildReferenceMatches(): Promise<ReferenceMatches> {
     }
   }
   const names = new Map(entries.map((e) => [`${e.kind}:${e.key}`, e.name]));
-  return { byEntry, byPage, names };
+  const techniques = new Map<string, string[]>();
+  for (const e of entries) {
+    const ids = Array.from(
+      new Set(entryTechniques((e.data ?? {}) as Obj).map(resolveTechniqueId).filter((t): t is string => !!t))
+    );
+    if (ids.length) techniques.set(`${e.kind}:${e.key}`, ids);
+  }
+  return { byEntry, byPage, names, techniques };
 }
 
 /** ATT&CK techniques an entry maps to (for display). */

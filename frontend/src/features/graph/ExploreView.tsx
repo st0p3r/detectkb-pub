@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { EyeOff, GitBranch, Loader2, RotateCcw, Search } from 'lucide-react';
+import { EyeOff, GitBranch, Loader2, RotateCcw, Route, Search } from 'lucide-react';
 import {
   apiErrorMessage,
   getGraphHubs,
@@ -23,6 +23,7 @@ interface ExploreViewProps {
   focusId: string | null;
   onFocusChange: (id: string | null) => void;
   onShowChain: (technique: string) => void;
+  onFindPaths: (from: string) => void;
 }
 
 /**
@@ -30,7 +31,7 @@ interface ExploreViewProps {
  * neighbours; big neighbour groups arrive as "+N more" nodes that load the
  * next page when clicked.
  */
-export function ExploreView({ focusId, onFocusChange, onShowChain }: ExploreViewProps) {
+export function ExploreView({ focusId, onFocusChange, onShowChain, onFindPaths }: ExploreViewProps) {
   const { toast } = useToast();
   const { getLabelFor, getColorFor } = usePageTypes();
   const [nodes, setNodes] = useState(new Map<string, GraphNode | GraphMoreNode>());
@@ -164,7 +165,7 @@ export function ExploreView({ focusId, onFocusChange, onShowChain }: ExploreView
           </button>
         )}
         <span className="text-xs text-muted-foreground">
-          Click a node to load its neighbours · click <span className="px-1.5 rounded-full border border-dashed">+N more</span> to load the next {PAGE_SIZE}
+          Click a node to load its neighbours · large groups arrive as one card, click it to open · red dashed: no rule covers it
         </span>
         {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
       </div>
@@ -212,6 +213,9 @@ export function ExploreView({ focusId, onFocusChange, onShowChain }: ExploreView
                 <GitBranch className="w-3 h-3" /> Detection chain
               </button>
             )}
+            <button onClick={() => onFindPaths(selectedNode.id)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border text-xs hover:bg-accent">
+              <Route className="w-3 h-3" /> Find paths
+            </button>
             {selectedNode.id !== focusId && (
               <>
                 <button onClick={() => onFocusChange(selectedNode.id)} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border text-xs hover:bg-accent">

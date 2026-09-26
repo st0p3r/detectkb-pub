@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { TACTICS, TECHNIQUE_BY_ID, TECHNIQUES, parseTechniqueIds, resolveTechniqueId } from '../lib/attack';
-import { LAYERS, filterLayers, getGraph, neighbourhood } from '../lib/graph';
+import { LAYERS, filterLayers, findPaths, getGraph, neighbourhood } from '../lib/graph';
+import { analyzeImpact, computeFlows, loadRuleTelemetry } from '../lib/coverage-analysis';
+import { REFERENCE_KINDS } from '../lib/references';
 import { computeReferenceMatches } from '../lib/references';
 
 const router = Router();
@@ -144,6 +146,116 @@ router.get('/chain', async (req, res) => {
     dataSources: dataSources
       .map((d) => ({ pageId: d.id, title: d.title, slug: d.slug, sysmon: d.sysmonEvents.map((s) => s.sysmonEvent.eventId) }))
       .filter((d) => d.sysmon.some((id) => sysmon.has(id))),
+  });
+});
+
+// GET /api/graph/path?from=lolbas:certutil.exe&to=technique:T1105 — shortest
+// paths between two nodes (tags and categories aren't used as stepping stones)
+router.get('/path', async (req, res) => {
+  const graph = await getGraph();
+  const from = String(req.query.from ?? '');
+  const to = String(req.query.to ?? '');
+  if (!graph.nodes.has(from) || !graph.nodes.has(to)) {
+    res.status(404).json({ error: 'Unknown node' });
+    return;
+  }
+  const paths = findPaths(graph, from, to, { maxPaths: Math.min(Number(req.query.max) || 8, 20) });
+  const ids = new Set(paths.flat());
+  res.json({
+    paths,
+    nodes: Array.from(ids, (id) => graph.nodes.get(id)!),
+    edges: graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
+  });
+});
+
+// GET /api/graph/impact?sysmon=1,10&dataSource=<pageId> — what stops working if
+// those Sysmon events (or every event a data source page lists) are lost
+router.get('/impact', async (req, res) => {
+  const events = new Set(
+    String(req.query.sysmon ?? '')
+      .split(',')
+      .map(Number)
+      .filter((n) => Number.isInteger(n) && n >= 0)
+  );
+  const dataSourceId = Number(req.query.dataSource);
+  if (dataSourceId) {
+    const links = await prisma.pageSysmonEvent.findMany({ where: { pageId: dataSourceId }, select: { sysmonEvent: { select: { eventId: true } } } });
+    for (const l of links) events.add(l.sysmonEvent.eventId);
+  }
+  if (!events.size) {
+    res.status(400).json({ error: 'Choose at least one Sysmon event or data source' });
+    return;
+  }
+  const result = analyzeImpact(await loadRuleTelemetry(), events);
+  res.json({ events: Array.from(events).sort((a, b) => a - b), ...result });
+});
+
+// GET /api/graph/flows?status=production&tactic=credential-access — detections
+// per (Sysmon event → tactic) for the Sankey view; with tactic, → techniques
+router.get('/flows', async (req, res) => {
+  const status = typeof req.query.status === 'string' && req.query.status ? req.query.status.split(',') : null;
+  const source = typeof req.query.source === 'string' && req.query.source ? req.query.source : null;
+  const tactic = typeof req.query.tactic === 'string' && req.query.tactic ? req.query.tactic : undefined;
+  if (tactic && !TACTICS.some((t) => t.shortname === tactic)) {
+    res.status(404).json({ error: `Unknown tactic ${tactic}` });
+    return;
+  }
+  const rules = (await loadRuleTelemetry()).filter(
+    (r) =>
+      (status ? status.includes(r.status) : r.status !== 'deprecated') &&
+      (!source || (source === 'manual' ? !r.sourceFormat : r.sourceFormat === source))
+  );
+  const events = await prisma.sysmonEvent.findMany({ select: { eventId: true, name: true } });
+  const names = new Map(events.map((e) => [e.eventId, e.name]));
+  const flows = computeFlows(rules, { tactic, withoutSysmon: req.query.withoutSysmon !== '0' });
+  res.json({
+    ...flows,
+    sources: flows.sources.map((s) => ({ ...s, label: s.eventId === null ? 'No Sysmon event' : `EID ${s.eventId} ${names.get(s.eventId) ?? ''}`.trim() })),
+  });
+});
+
+// GET /api/graph/gaps?kind=lolbas — ATT&CK techniques attacker tools are known
+// to use, with the tools no rule mentions and the technique's own rule count
+router.get('/gaps', async (req, res) => {
+  const graph = await getGraph();
+  const kind = typeof req.query.kind === 'string' && req.query.kind in REFERENCE_KINDS ? req.query.kind : null;
+  const byTechnique = new Map<string, { id: string; name: string; tactics: string[]; rules: number; tools: { id: string; name: string; kind: string; ruleCount: number }[] }>();
+
+  // Rules on a technique, counting a parent's sub-techniques' rules once each
+  const rulesOn = (techId: string) => {
+    const rules = new Set<string>();
+    const ids = techId.includes('.') ? [techId] : TECHNIQUES.filter((t) => t.id === techId || t.id.startsWith(`${techId}.`)).map((t) => t.id);
+    for (const id of ids)
+      for (const nb of graph.adjacency.get(`technique:${id}`) ?? []) if (graph.nodes.get(nb)?.group === 'RULE') rules.add(nb);
+    return rules.size;
+  };
+
+  for (const e of graph.edges) {
+    if (e.kind !== 'tool-technique') continue;
+    const tool = graph.nodes.get(e.source)!;
+    if (kind && tool.group !== kind) continue;
+    const techId = e.target.slice('technique:'.length);
+    if (!byTechnique.has(techId)) {
+      const t = TECHNIQUE_BY_ID.get(techId);
+      byTechnique.set(techId, { id: techId, name: t?.name ?? techId, tactics: t?.tactics ?? [], rules: rulesOn(techId), tools: [] });
+    }
+    byTechnique.get(techId)!.tools.push({ id: tool.id, name: tool.label.replace(/ \([^)]+\)$/, ''), kind: tool.group, ruleCount: tool.ruleCount ?? 0 });
+  }
+
+  const techniques = Array.from(byTechnique.values()).map((t) => {
+    t.tools.sort((a, b) => a.ruleCount - b.ruleCount || a.name.localeCompare(b.name));
+    return { ...t, uncoveredTools: t.tools.filter((x) => !x.ruleCount).length };
+  });
+  const tools = new Map(techniques.flatMap((t) => t.tools.map((x) => [x.id, x] as const)));
+  res.json({
+    summary: {
+      tools: tools.size,
+      toolsWithoutRules: Array.from(tools.values()).filter((x) => !x.ruleCount).length,
+      techniques: techniques.length,
+      techniquesWithoutRules: techniques.filter((t) => !t.rules).length,
+    },
+    // Techniques with no rule at all first, then most undetected tools
+    techniques: techniques.sort((a, b) => Number(!!a.rules) - Number(!!b.rules) || b.uncoveredTools - a.uncoveredTools || a.id.localeCompare(b.id)),
   });
 });
 
