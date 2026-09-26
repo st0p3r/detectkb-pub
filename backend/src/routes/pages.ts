@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { generateUniqueSlug } from '../lib/slug';
 import { resolveWikiLinks, syncPageLinks } from '../lib/links';
@@ -33,26 +34,44 @@ const PAGE_LIST_SELECT = {
   rule: { select: { status: true, severity: true } },
 };
 
-router.get('/', async (req, res) => {
-  const { type, categoryId, q } = req.query;
+const PAGE_SORTS = ['title', 'type', 'updatedAt'] as const;
+type PageSort = (typeof PAGE_SORTS)[number];
 
-  const where: Record<string, unknown> = {};
-  if (type) where.type = type;
-  if (categoryId) where.categoryId = Number(categoryId);
-  if (q) {
-    where.OR = [
-      { title: { contains: String(q) } },
-      { contentMd: { contains: String(q) } },
-    ];
+// GET /api/pages?type=&categoryId=&tag=&q= — every matching page (list columns).
+// With page= it is paged and sorted (sort=title|type|updatedAt, dir=, pageSize=)
+// and returns { items, total, page, pageSize, typeCounts }.
+router.get('/', async (req, res) => {
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const type = str(req.query.type);
+  const q = str(req.query.q);
+  const tag = str(req.query.tag);
+  const categoryId = Number(req.query.categoryId) || undefined;
+
+  // Everything but the type, which the type chips count across
+  const base: Prisma.PageWhereInput[] = [];
+  if (categoryId) base.push({ categoryId });
+  if (tag) base.push({ tags: { some: { tag: { name: tag } } } });
+  if (q) base.push({ OR: [{ title: { contains: q } }, { contentMd: { contains: q } }] });
+  const where: Prisma.PageWhereInput = { AND: [...base, ...(type ? [{ type }] : [])] };
+
+  if (req.query.page === undefined) {
+    res.json(await prisma.page.findMany({ where, select: PAGE_LIST_SELECT, orderBy: { updatedAt: 'desc' } }));
+    return;
   }
 
-  const pages = await prisma.page.findMany({
-    where,
-    select: PAGE_LIST_SELECT,
-    orderBy: { updatedAt: 'desc' },
-  });
+  const sort: PageSort = PAGE_SORTS.includes(req.query.sort as PageSort) ? (req.query.sort as PageSort) : 'updatedAt';
+  const dir = req.query.dir === 'asc' || req.query.dir === 'desc' ? req.query.dir : sort === 'updatedAt' ? 'desc' : 'asc';
+  const pageSize = Math.min(Math.max(Math.floor(Number(req.query.pageSize)) || 50, 1), 200);
 
-  res.json(pages);
+  const [total, byType] = await Promise.all([
+    prisma.page.count({ where }),
+    prisma.page.groupBy({ by: ['type'], where: { AND: base }, _count: { _all: true } }),
+  ]);
+  const page = Math.min(Math.max(Math.floor(Number(req.query.page)) || 1, 1), Math.max(1, Math.ceil(total / pageSize)));
+  const orderBy: Prisma.PageOrderByWithRelationInput[] = [{ [sort]: dir }, ...(sort === 'updatedAt' ? [] : [{ updatedAt: 'desc' as const }]), { id: 'asc' }];
+  const items = await prisma.page.findMany({ where, select: PAGE_LIST_SELECT, orderBy, skip: (page - 1) * pageSize, take: pageSize });
+
+  res.json({ items, total, page, pageSize, typeCounts: Object.fromEntries(byType.map((g) => [g.type, g._count._all])) });
 });
 
 // GET /api/pages/titles?q=lsass&limit=10 — titles for [[wiki link]] autocomplete,

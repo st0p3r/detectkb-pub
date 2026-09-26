@@ -136,6 +136,32 @@ export async function listPages(params?: { type?: string; q?: string; categoryId
   return data as PageListItem[];
 }
 
+export type PageSortKey = 'title' | 'type' | 'updatedAt';
+
+export interface PageListParams {
+  q?: string;
+  type?: string;
+  tag?: string;
+  categoryId?: number;
+  sort?: PageSortKey;
+  dir?: 'asc' | 'desc';
+  page: number;
+  pageSize: number;
+}
+
+/** One page of the page list, filtered and sorted on the server. */
+export async function listPagesPage(params: PageListParams) {
+  const { data } = await api.get('/api/pages', { params });
+  return data as {
+    items: PageListItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+    /** Pages per type under the other filters (for the type chips) */
+    typeCounts: Record<string, number>;
+  };
+}
+
 /** Page titles for [[wiki link]] autocomplete; titles starting with q first. */
 export async function searchPageTitles(q: string, limit = 10) {
   const { data } = await api.get('/api/pages/titles', { params: { q, limit } });

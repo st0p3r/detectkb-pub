@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, ChevronLeft, ChevronRight, Loader2, X, Rows3, Rows4 } from 'lucide-react';
+import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, Loader2, X, Rows3, Rows4 } from 'lucide-react';
 import {
   SOURCE_FORMAT_LABELS,
   apiErrorMessage,
@@ -12,6 +12,8 @@ import {
   type RuleSortKey,
   type RuleSourceFormat,
 } from '@/lib/api';
+import { PAGE_SIZES, DEFAULT_PAGE_SIZE, PaginationFooter } from '@/components/ui/Pagination';
+import { useDebounced } from '@/hooks/useDebounced';
 import { RuleImportDialog } from '@/features/rules/RuleImportDialog';
 import { RuleBulkBar } from '@/features/rules/RuleBulkBar';
 import { SourceBadge } from '@/components/ui/SourceBadge';
@@ -52,25 +54,7 @@ function SkeletonRows() {
   );
 }
 
-const PAGE_SIZES = [25, 50, 100] as const;
-const DEFAULT_PAGE_SIZE = 50;
 const SORT_KEYS: RuleSortKey[] = ['title', 'status', 'severity', 'updatedAt'];
-
-function useDebounced<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return debounced;
-}
-
-/** Page numbers to show around the current one, with gaps as null. */
-function pageWindow(page: number, pageCount: number): (number | null)[] {
-  const pages = new Set([1, pageCount, page - 1, page, page + 1].filter((p) => p >= 1 && p <= pageCount));
-  const sorted = Array.from(pages).sort((a, b) => a - b);
-  return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? [null, p] : [p]));
-}
 
 const DENSITY_KEY = 'detectkb.rulesDensity';
 
@@ -174,7 +158,6 @@ export function RulesPage() {
   });
   const rules = data?.items ?? [];
   const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const filtersActive = !!(q || technique || tactic) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
 
   // Selection: rule ids (kept across pages), or "every rule matching the filters"
@@ -654,67 +637,14 @@ export function RulesPage() {
               })}
             </tbody>
           </table>
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-t border-border bg-muted/20 text-xs text-muted-foreground">
-            <span>
-              Showing {((page - 1) * pageSize + 1).toLocaleString()}–{Math.min(page * pageSize, total).toLocaleString()} of{' '}
-              {total.toLocaleString()} rule{total === 1 ? '' : 's'}
-            </span>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5">
-                Per page
-                <select
-                  value={pageSize}
-                  onChange={(e) => update({ size: e.target.value === String(DEFAULT_PAGE_SIZE) ? null : e.target.value })}
-                  aria-label="Rules per page"
-                  className="px-1.5 py-1 rounded border border-border bg-background text-xs"
-                >
-                  {PAGE_SIZES.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {pageCount > 1 && (
-                <nav className="flex items-center gap-1" aria-label="Pagination">
-                  <button
-                    onClick={() => update({ page: page - 1 > 1 ? String(page - 1) : null })}
-                    disabled={page <= 1}
-                    aria-label="Previous page"
-                    className="p-1 rounded hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  {pageWindow(page, pageCount).map((p, i) =>
-                    p === null ? (
-                      <span key={`gap${i}`} className="px-1">
-                        …
-                      </span>
-                    ) : (
-                      <button
-                        key={p}
-                        onClick={() => update({ page: p > 1 ? String(p) : null })}
-                        aria-current={p === page ? 'page' : undefined}
-                        className={`min-w-[1.75rem] px-1.5 py-0.5 rounded ${
-                          p === page ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
-                        }`}
-                      >
-                        {p}
-                      </button>
-                    )
-                  )}
-                  <button
-                    onClick={() => update({ page: String(page + 1) })}
-                    disabled={page >= pageCount}
-                    aria-label="Next page"
-                    className="p-1 rounded hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </nav>
-              )}
-            </div>
-          </div>
+          <PaginationFooter
+            page={page}
+            pageSize={pageSize}
+            total={total}
+            noun={['rule', 'rules']}
+            onPageChange={(p) => update({ page: p > 1 ? String(p) : null })}
+            onPageSizeChange={(n) => update({ size: n === DEFAULT_PAGE_SIZE ? null : String(n) })}
+          />
         </div>
       )}
 
