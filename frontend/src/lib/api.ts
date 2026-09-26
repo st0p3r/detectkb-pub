@@ -746,6 +746,8 @@ export interface GraphNode {
   group: string;
   slug?: string;
   url?: string;
+  status?: string;
+  severity?: string;
   degree: number;
 }
 

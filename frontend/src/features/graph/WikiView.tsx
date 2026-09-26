@@ -108,6 +108,7 @@ export function WikiView({ onExplore }: { onExplore: (nodeId: string) => void })
             edges={view.edges}
             selectedId={selected}
             alwaysLabel={view.nodes.length <= 80}
+            variant={view.nodes.length <= 60 ? 'card' : 'dot'}
             onNodeClick={(n) => setSelected(String(n.id))}
             onBackgroundClick={() => setSelected(null)}
           />

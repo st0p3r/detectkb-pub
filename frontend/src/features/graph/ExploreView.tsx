@@ -197,6 +197,7 @@ export function ExploreView({ focusId, onFocusChange, onShowChain }: ExploreView
             selectedId={selected}
             expandedIds={expanded}
             alwaysLabel={nodeList.length <= 60}
+            variant="card"
             onNodeClick={onNodeClick}
             onBackgroundClick={() => setSelected(null)}
           />

@@ -13,6 +13,9 @@ export interface GraphNode {
   group: string;
   slug?: string;
   url?: string;
+  /** Rule nodes: status and severity, shown on node cards */
+  status?: string;
+  severity?: string;
   degree: number;
 }
 
@@ -55,7 +58,7 @@ async function buildGraph(): Promise<Graph> {
         type: true,
         category: { select: { id: true, name: true } },
         tags: { select: { tag: { select: { name: true } } } },
-        rule: { select: { mitreTechniques: true } },
+        rule: { select: { mitreTechniques: true, status: true, severity: true } },
       },
     }),
     prisma.pageLink.findMany({ select: { sourceId: true, targetId: true } }),
@@ -78,7 +81,7 @@ async function buildGraph(): Promise<Graph> {
 
   for (const p of pages) {
     const id = `page:${p.id}`;
-    node({ id, label: p.title, group: p.type, slug: p.slug });
+    node({ id, label: p.title, group: p.type, slug: p.slug, status: p.rule?.status, severity: p.rule?.severity });
     if (p.category) {
       const cid = `category:${p.category.id}`;
       node({ id: cid, label: p.category.name, group: 'category' });
