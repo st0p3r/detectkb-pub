@@ -224,10 +224,10 @@ function EntryRow({ kind, item, initiallyOpen }: { kind: ReferenceKind; item: Re
             <span
               className={cn(
                 'ml-auto px-2 py-0.5 rounded-full text-xs font-medium border',
-                item.rules.length ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : 'bg-muted text-muted-foreground border-border'
+                item.ruleCount ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : 'bg-muted text-muted-foreground border-border'
               )}
             >
-              {item.rules.length ? `${item.rules.length} rule${item.rules.length === 1 ? '' : 's'}` : 'no rules'}
+              {item.ruleCount ? `${item.ruleCount} rule${item.ruleCount === 1 ? '' : 's'}` : 'no rules'}
             </span>
           </div>
           {item.description && <p className="text-sm text-muted-foreground mt-0.5 line-clamp-1">{item.description}</p>}
@@ -268,8 +268,8 @@ export function AttackerToolsPage() {
     const q = search.trim().toLowerCase();
     if (q && !i.name.toLowerCase().includes(q) && !i.description.toLowerCase().includes(q)) return false;
     if (category && !i.categories.includes(category)) return false;
-    if (covered === 'yes' && !i.rules.length) return false;
-    if (covered === 'no' && i.rules.length) return false;
+    if (covered === 'yes' && !i.ruleCount) return false;
+    if (covered === 'no' && i.ruleCount) return false;
     return true;
   });
 

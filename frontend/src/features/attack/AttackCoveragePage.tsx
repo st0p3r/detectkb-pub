@@ -6,6 +6,7 @@ import {
   apiErrorMessage,
   downloadNavigatorLayer,
   getAttackCoverage,
+  getTechniqueRules,
   type AttackTechnique,
   type CoveringRule,
 } from '@/lib/api';
@@ -40,8 +41,8 @@ const attackUrl = (id: string) => `https://attack.mitre.org/techniques/${id.repl
 interface ParentCell {
   technique: AttackTechnique;
   subs: AttackTechnique[];
-  /** Rules on the technique itself or any sub-technique (deduplicated). */
-  rules: CoveringRule[];
+  /** Rules on the technique itself or any sub-technique (each rule once). */
+  count: number;
 }
 
 export function AttackCoveragePage() {
@@ -65,20 +66,17 @@ export function AttackCoveragePage() {
       const parent = t.id.split('.')[0];
       subsByParent.set(parent, [...(subsByParent.get(parent) ?? []), t]);
     }
-    const cellFor = (t: AttackTechnique): ParentCell => {
-      const subs = subsByParent.get(t.id) ?? [];
-      const byPage = new Map<number, CoveringRule>();
-      for (const id of [t.id, ...subs.map((s) => s.id)]) {
-        for (const r of data.coverage[id] ?? []) byPage.set(r.pageId, r);
-      }
-      return { technique: t, subs, rules: Array.from(byPage.values()) };
-    };
+    const cellFor = (t: AttackTechnique): ParentCell => ({
+      technique: t,
+      subs: subsByParent.get(t.id) ?? [],
+      count: data.parentCounts[t.id] ?? 0,
+    });
     const parents = data.techniques.filter((t) => !t.id.includes('.')).map(cellFor);
     return data.tactics.map((tactic) => {
       const cells = parents
         .filter((c) => c.technique.tactics.includes(tactic.shortname))
-        .sort((a, b) => b.rules.length - a.rules.length || a.technique.name.localeCompare(b.technique.name));
-      return { tactic, cells, covered: cells.filter((c) => c.rules.length > 0).length };
+        .sort((a, b) => b.count - a.count || a.technique.name.localeCompare(b.technique.name));
+      return { tactic, cells, covered: cells.filter((c) => c.count > 0).length };
     });
   }, [data]);
 
@@ -253,21 +251,21 @@ export function AttackCoveragePage() {
                   </div>
                   <div className="space-y-1">
                     {cells
-                      .filter((c) => !onlyCovered || c.rules.length > 0)
+                      .filter((c) => !onlyCovered || c.count > 0)
                       .map((c) => (
                         <button
                           key={c.technique.id}
                           onClick={() => setSelected(c.technique.id === selected ? null : c.technique.id)}
-                          title={`${c.technique.id} ${c.technique.name} — ${c.rules.length} rule(s)`}
+                          title={`${c.technique.id} ${c.technique.name} — ${c.count} rule${c.count === 1 ? '' : 's'}`}
                           className={cn(
                             'w-full text-left px-1.5 py-1 rounded border text-[11px] leading-tight transition-shadow hover:ring-2 hover:ring-primary/40',
-                            heatClass(c.rules.length),
+                            heatClass(c.count),
                             selected === c.technique.id && 'ring-2 ring-primary'
                           )}
                         >
                           <span className="flex justify-between gap-1">
                             <span className="font-mono opacity-80">{c.technique.id}</span>
-                            {c.rules.length > 0 && <span className="font-semibold tabular-nums">{c.rules.length}</span>}
+                            {c.count > 0 && <span className="font-semibold tabular-nums">{c.count}</span>}
                           </span>
                           <span className="block truncate">{c.technique.name}</span>
                         </button>
@@ -279,7 +277,7 @@ export function AttackCoveragePage() {
           </div>
 
           {selectedCell && (
-            <TechniqueDetail cell={selectedCell} coverage={data.coverage} onClose={() => setSelected(null)} />
+            <TechniqueDetail cell={selectedCell} status={status} onClose={() => setSelected(null)} />
           )}
         </>
       )}
@@ -301,13 +299,18 @@ function RuleList({ rules }: { rules: CoveringRule[] }) {
   );
 }
 
-function TechniqueDetail({ cell, coverage, onClose }: {
+function TechniqueDetail({ cell, status, onClose }: {
   cell: ParentCell;
-  coverage: Record<string, CoveringRule[]>;
+  status: string;
   onClose: () => void;
 }) {
   const { technique, subs } = cell;
-  const own = coverage[technique.id] ?? [];
+  // The rules load when a technique is opened; the matrix only has counts
+  const { data: coverage, isLoading } = useQuery({
+    queryKey: ['attack-technique-rules', technique.id, status],
+    queryFn: () => getTechniqueRules(technique.id, status),
+  });
+  const own = coverage?.[technique.id] ?? [];
   return (
     <div className="mt-5 rounded-lg border border-border bg-card p-5">
       <div className="flex items-start justify-between gap-4 mb-4">
@@ -336,19 +339,27 @@ function TechniqueDetail({ cell, coverage, onClose }: {
       <div className="space-y-4">
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-            Rules mapped to {technique.id} ({own.length})
+            Rules mapped to {technique.id} {coverage && `(${own.length})`}
           </h3>
-          {own.length ? <RuleList rules={own} /> : <p className="text-sm text-muted-foreground">None.</p>}
+          {isLoading ? (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading rules…
+            </p>
+          ) : own.length ? (
+            <RuleList rules={own} />
+          ) : (
+            <p className="text-sm text-muted-foreground">None.</p>
+          )}
         </div>
 
         {subs.length > 0 && (
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-              Sub-techniques ({subs.filter((s) => coverage[s.id]?.length).length} / {subs.length} covered)
+              Sub-techniques ({subs.filter((s) => coverage?.[s.id]?.length).length} / {subs.length} covered)
             </h3>
             <div className="grid sm:grid-cols-2 gap-2">
               {subs.map((s) => {
-                const rules = coverage[s.id] ?? [];
+                const rules = coverage?.[s.id] ?? [];
                 return (
                   <div key={s.id} className={cn('rounded-md border px-3 py-2', rules.length ? 'border-primary/30' : 'border-border')}>
                     <a href={attackUrl(s.id)} target="_blank" rel="noreferrer" className="text-sm hover:underline">

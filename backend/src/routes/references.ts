@@ -94,8 +94,8 @@ router.get('/:kind', async (req, res) => {
   const items = entries
     .map((e) => {
       const data = (e.data ?? {}) as Obj;
-      const rules = matches.byEntry.get(`${kind}:${e.key}`) ?? [];
-      // Summary only; GET /:kind/:key has the full record
+      // Summary only (the rule count, not the rules); GET /:kind/:key has the full record
+      const ruleCount = matches.byEntry.get(`${kind}:${e.key}`)?.length ?? 0;
       return {
         key: e.key,
         name: e.name,
@@ -103,13 +103,13 @@ router.get('/:kind', async (req, res) => {
         categories: (data.categories as string[] | undefined) ?? (data.category ? [String(data.category)] : []),
         mitre: (data.mitre as string[] | undefined) ?? [],
         verified: data.verified,
-        rules,
+        ruleCount,
       };
     })
     .filter((e) => !q || e.name.toLowerCase().includes(q) || e.description.toLowerCase().includes(q) || e.categories.some((c) => c.toLowerCase().includes(q)));
 
   const covered = req.query.covered;
-  res.json(covered === 'yes' ? items.filter((i) => i.rules.length) : covered === 'no' ? items.filter((i) => !i.rules.length) : items);
+  res.json(covered === 'yes' ? items.filter((i) => i.ruleCount) : covered === 'no' ? items.filter((i) => !i.ruleCount) : items);
 });
 
 // GET /api/references/:kind/:key — full record

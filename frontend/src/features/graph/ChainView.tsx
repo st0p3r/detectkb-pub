@@ -136,7 +136,7 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
       .slice(0, 10)
       .map((t) => ({
         ...t,
-        rules: Object.entries(coverage.coverage).filter(([id]) => id === t.id || id.startsWith(`${t.id}.`)).reduce((n, [, r]) => n + r.length, 0),
+        rules: coverage.parentCounts[t.id] ?? 0,
       }));
   }, [picker, coverage]);
 

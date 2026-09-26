@@ -70,18 +70,29 @@ async function computeCoverage(req: Request) {
   return { ruleCount: rules.length, byTechnique, unknown, retired };
 }
 
-// GET /api/attack/coverage — ATT&CK matrix with the rules covering each technique
+// GET /api/attack/coverage — ATT&CK matrix with rule counts per technique.
+// The rules themselves come from /techniques/:id/rules when a cell is opened
+// (sending every covering rule made this ~700 KB).
 router.get('/coverage', async (req, res) => {
   const { ruleCount, byTechnique, unknown, retired } = await computeCoverage(req);
 
   const coveredParents = new Set(Array.from(byTechnique.keys()).map(parentTechniqueId));
   const parentTotal = TECHNIQUES.filter((t) => !t.id.includes('.')).length;
 
+  // Parent cell = rules on the technique or any sub-technique, each rule once
+  const parentRules = new Map<string, Set<number>>();
+  for (const [id, rules] of byTechnique) {
+    const parent = parentTechniqueId(id);
+    if (!parentRules.has(parent)) parentRules.set(parent, new Set());
+    for (const r of rules) parentRules.get(parent)!.add(r.pageId);
+  }
+
   res.json({
     attackVersion: ATTACK_VERSION,
     tactics: TACTICS,
     techniques: TECHNIQUES,
-    coverage: Object.fromEntries(byTechnique),
+    counts: Object.fromEntries(Array.from(byTechnique, ([id, rules]) => [id, rules.length])),
+    parentCounts: Object.fromEntries(Array.from(parentRules, ([id, pages]) => [id, pages.size])),
     unknownTechniques: Array.from(unknown, ([id, rules]) => ({ id, rules })),
     retiredTechniques: Array.from(retired, ([id, v]) => ({ id, ...v })),
     summary: {
@@ -90,6 +101,14 @@ router.get('/coverage', async (req, res) => {
       totalTechniques: parentTotal,
     },
   });
+});
+
+// GET /api/attack/techniques/T1003/rules?status= — the rules covering a
+// technique and each of its sub-techniques: { "T1003": [...], "T1003.001": [...] }
+router.get('/techniques/:id/rules', async (req, res) => {
+  const parent = parentTechniqueId(req.params.id.toUpperCase());
+  const { byTechnique } = await computeCoverage(req);
+  res.json(Object.fromEntries(Array.from(byTechnique).filter(([id]) => parentTechniqueId(id) === parent)));
 });
 
 // GET /api/attack/navigator-layer — ATT&CK Navigator layer (v4.5) as a download

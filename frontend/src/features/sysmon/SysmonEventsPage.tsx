@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Shield, ChevronDown, ChevronRight, Copy, Check, Search, Activity, Database } from 'lucide-react';
-import { listSysmonEvents, type SysmonEvent, type SysmonLinkedPage } from '@/lib/api';
+import { Shield, ChevronDown, ChevronRight, Copy, Check, Search, Activity, Database, Loader2 } from 'lucide-react';
+import { getSysmonEventPages, listSysmonEvents, type SysmonEvent, type SysmonLinkedPage } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
 
@@ -43,13 +43,18 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+const LIST_LIMIT = 50;
+
 function LinkedPageList({ title, icon: Icon, pages, empty }: {
   title: string;
   icon: React.ElementType;
   pages: SysmonLinkedPage[];
   empty?: string;
 }) {
+  // Event 1 alone has ~1,000 rules: show the first 50 until asked
+  const [showAll, setShowAll] = useState(false);
   if (!pages.length && !empty) return null;
+  const shown = showAll ? pages : pages.slice(0, LIST_LIMIT);
   return (
     <div>
       <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
@@ -59,7 +64,7 @@ function LinkedPageList({ title, icon: Icon, pages, empty }: {
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
         <ul className="space-y-1">
-          {pages.map((p) => (
+          {shown.map((p) => (
             <li key={p.id} className="flex items-center gap-2 flex-wrap text-sm">
               <Link to={`/pages/${p.slug}`} className="text-primary hover:underline">{p.title}</Link>
               {p.status && <StatusBadge status={p.status} />}
@@ -69,9 +74,39 @@ function LinkedPageList({ title, icon: Icon, pages, empty }: {
               )}
             </li>
           ))}
+          {pages.length > shown.length && (
+            <li>
+              <button onClick={() => setShowAll(true)} className="text-sm text-primary hover:underline">
+                Show all {pages.length.toLocaleString()}
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>
+  );
+}
+
+/** The pages linked to an event, fetched when its card is opened. */
+function EventLinks({ eventId }: { eventId: number }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['sysmon-event-pages', eventId],
+    queryFn: () => getSysmonEventPages(eventId),
+    staleTime: 30 * 1000,
+  });
+  if (isLoading || !data) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading linked rules…
+      </p>
+    );
+  }
+  return (
+    <>
+      <LinkedPageList title="Detection rules using this event" icon={Shield} pages={data.rules} empty="No detection rule depends on this event yet." />
+      <LinkedPageList title="Data sources" icon={Database} pages={data.dataSources} />
+      <LinkedPageList title="Other pages" icon={Activity} pages={data.otherPages} />
+    </>
   );
 }
 
@@ -84,7 +119,7 @@ function EventCard({ event, index, initiallyExpanded }: { event: SysmonEvent; in
       ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [initiallyExpanded]);
-  const ruleCount = event.rules.length;
+  const { ruleCount, dataSourceCount } = event;
   const cat = CATEGORY_COLORS[event.category] ?? { bg: 'bg-slate-500/10', text: 'text-slate-400', dot: '#94a3b8' };
   const val = VALUE_COLORS[event.detectionValue] ?? VALUE_COLORS.medium;
 
@@ -119,9 +154,9 @@ function EventCard({ event, index, initiallyExpanded }: { event: SysmonEvent; in
             >
               {ruleCount ? `${ruleCount} rule${ruleCount === 1 ? '' : 's'}` : 'no rules'}
             </span>
-            {event.dataSources.length > 0 && (
+            {dataSourceCount > 0 && (
               <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-sky-500/10 text-sky-500 border border-sky-500/20">
-                {event.dataSources.length} data source{event.dataSources.length === 1 ? '' : 's'}
+                {dataSourceCount} data source{dataSourceCount === 1 ? '' : 's'}
               </span>
             )}
           </div>
@@ -135,14 +170,7 @@ function EventCard({ event, index, initiallyExpanded }: { event: SysmonEvent; in
 
       {expanded && (
         <div className="border-t border-border/60 px-5 py-4 space-y-4 bg-muted/20">
-          <LinkedPageList
-            title="Detection rules using this event"
-            icon={Shield}
-            pages={event.rules}
-            empty="No detection rule depends on this event yet."
-          />
-          <LinkedPageList title="Data sources" icon={Database} pages={event.dataSources} />
-          <LinkedPageList title="Other pages" icon={Activity} pages={event.otherPages} />
+          <EventLinks eventId={event.eventId} />
 
           {event.keyFields && (
             <div>
@@ -199,7 +227,7 @@ export function SysmonEventsPage() {
     queryFn: () => listSysmonEvents(),
     staleTime: 30 * 1000,
   });
-  const coveredCount = events.filter((e) => e.rules.length > 0).length;
+  const coveredCount = events.filter((e) => e.ruleCount > 0).length;
 
   const categories = Array.from(new Set(events.map((e) => e.category))).sort();
 
@@ -208,7 +236,7 @@ export function SysmonEventsPage() {
     const q = search.toLowerCase();
     const matchSearch = !q || e.name.toLowerCase().includes(q) || e.description.toLowerCase().includes(q) || (e.attackPatterns ?? '').toLowerCase().includes(q) || (e.detectionTips ?? '').toLowerCase().includes(q);
     const matchCoverage =
-      coverage === 'all' || (coverage === 'covered' ? e.rules.length > 0 : e.rules.length === 0);
+      coverage === 'all' || (coverage === 'covered' ? e.ruleCount > 0 : e.ruleCount === 0);
     return matchCat && matchSearch && matchCoverage;
   });
 

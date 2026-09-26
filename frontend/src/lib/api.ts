@@ -639,9 +639,21 @@ export interface SysmonEvent {
   detectionValue: string;
   isBuiltIn: boolean;
   createdAt: string;
+  ruleCount: number;
+  dataSourceCount: number;
+  otherPageCount: number;
+}
+
+export interface SysmonEventPages {
   rules: SysmonLinkedPage[];
   dataSources: SysmonLinkedPage[];
   otherPages: SysmonLinkedPage[];
+}
+
+/** Pages linked to a Sysmon event (by event ID), loaded when its card opens. */
+export async function getSysmonEventPages(eventId: number) {
+  const { data } = await api.get(`/api/sysmon-events/${eventId}/pages`);
+  return data as SysmonEventPages;
 }
 
 export interface SysmonLinkedPage {
@@ -767,7 +779,10 @@ export interface AttackCoverage {
   attackVersion: string | null;
   tactics: AttackTactic[];
   techniques: AttackTechnique[];
-  coverage: Record<string, CoveringRule[]>;
+  /** Rules per technique or sub-technique ID */
+  counts: Record<string, number>;
+  /** Rules per parent technique, counting its sub-techniques' rules once each */
+  parentCounts: Record<string, number>;
   unknownTechniques: { id: string; rules: CoveringRule[] }[];
   retiredTechniques: { id: string; replacedBy: string; rules: CoveringRule[] }[];
   summary: { rulesAnalyzed: number; coveredTechniques: number; totalTechniques: number };
@@ -776,6 +791,12 @@ export interface AttackCoverage {
 export async function getAttackCoverage(status?: string) {
   const { data } = await api.get('/api/attack/coverage', { params: { status: status || undefined } });
   return data as AttackCoverage;
+}
+
+/** Rules covering a technique and each of its sub-techniques, keyed by ID. */
+export async function getTechniqueRules(id: string, status?: string) {
+  const { data } = await api.get(`/api/attack/techniques/${encodeURIComponent(id)}/rules`, { params: { status: status || undefined } });
+  return data as Record<string, CoveringRule[]>;
 }
 
 export async function downloadNavigatorLayer(status?: string) {
@@ -835,7 +856,8 @@ export interface ReferenceSummary {
   categories: string[];
   mitre: string[];
   verified?: boolean;
-  rules: CoveringRule[];
+  /** Rules mentioning it (the list itself is on the detail) */
+  ruleCount: number;
 }
 
 export interface ReferenceDetail {
