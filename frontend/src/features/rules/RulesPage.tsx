@@ -1,7 +1,16 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown } from 'lucide-react';
-import { SOURCE_FORMAT_LABELS, apiErrorMessage, downloadSigmaRules, listRules, type RuleSourceFormat, type RuleWithPage } from '@/lib/api';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, ChevronLeft, ChevronRight, Loader2, X } from 'lucide-react';
+import {
+  SOURCE_FORMAT_LABELS,
+  apiErrorMessage,
+  downloadSigmaRules,
+  listRulesPage,
+  type RuleListParams,
+  type RuleSortKey,
+  type RuleSourceFormat,
+} from '@/lib/api';
 import { RuleImportDialog } from '@/features/rules/RuleImportDialog';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
@@ -39,29 +48,107 @@ function SkeletonRows() {
   );
 }
 
+const PAGE_SIZES = [25, 50, 100] as const;
+const DEFAULT_PAGE_SIZE = 50;
+const SORT_KEYS: RuleSortKey[] = ['title', 'status', 'severity', 'updatedAt'];
+
+function useDebounced<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
+/** Page numbers to show around the current one, with gaps as null. */
+function pageWindow(page: number, pageCount: number): (number | null)[] {
+  const pages = new Set([1, pageCount, page - 1, page, page + 1].filter((p) => p >= 1 && p <= pageCount));
+  const sorted = Array.from(pages).sort((a, b) => a - b);
+  return sorted.flatMap((p, i) => (i > 0 && p - sorted[i - 1] > 1 ? [null, p] : [p]));
+}
+
 export function RulesPage() {
   const navigate = useNavigate();
-  const [rules, setRules] = useState<RuleWithPage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [severityFilter, setSeverityFilter] = useState<string>('all');
-  const [sourceFilter, setSourceFilter] = useState<string>('all');
-  const [sortKey, setSortKey] = useState<'title' | 'status' | 'severity' | 'updatedAt'>('updatedAt');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const queryClient = useQueryClient();
+  // Filters, sort and page live in the URL, so links (/rules?technique=T1003,
+  // /rules?status=draft) and the back button work and views can be shared.
+  const [params, setParams] = useSearchParams();
+  const statusFilter = params.get('status') ?? 'all';
+  const severityFilter = params.get('severity') ?? 'all';
+  const sourceFilter = params.get('source') ?? 'all';
+  const technique = params.get('technique') ?? '';
+  const tactic = params.get('tactic') ?? '';
+  const q = params.get('q') ?? '';
+  const sortKey: RuleSortKey = SORT_KEYS.includes(params.get('sort') as RuleSortKey) ? (params.get('sort') as RuleSortKey) : 'updatedAt';
+  const sortDir: 'asc' | 'desc' = params.get('dir') === 'asc' || params.get('dir') === 'desc' ? (params.get('dir') as 'asc' | 'desc') : sortKey === 'updatedAt' ? 'desc' : 'asc';
+  const page = Math.max(1, Number(params.get('page')) || 1);
+  const sizeParam = Number(params.get('size'));
+  const pageSize = (PAGE_SIZES as readonly number[]).includes(sizeParam) ? sizeParam : DEFAULT_PAGE_SIZE;
+
+  /** Update URL params; any change other than the page goes back to page 1. */
+  const update = useCallback(
+    (changes: Record<string, string | null>, opts?: { replace?: boolean }) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          for (const [k, v] of Object.entries(changes)) {
+            if (v === null || v === '' || v === 'all') next.delete(k);
+            else next.set(k, v);
+          }
+          if (!('page' in changes)) next.delete('page');
+          return next;
+        },
+        { replace: opts?.replace }
+      );
+    },
+    [setParams]
+  );
+
+  const [search, setSearch] = useState(q);
+  const debouncedSearch = useDebounced(search.trim(), 300);
+  useEffect(() => {
+    if (debouncedSearch !== q) update({ q: debouncedSearch }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to typing
+  }, [debouncedSearch]);
+  // Back/forward (or a link) changed q: show it in the box
+  useEffect(() => {
+    if (q !== debouncedSearch) setSearch(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to the URL
+  }, [q]);
 
   const { hasPermission } = useAuth();
   const { toast } = useToast();
   const [importOpen, setImportOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
 
+  const query: RuleListParams = {
+    q: q || undefined,
+    status: statusFilter === 'all' ? undefined : statusFilter,
+    severity: severityFilter === 'all' ? undefined : severityFilter,
+    source: sourceFilter === 'all' ? undefined : sourceFilter,
+    technique: technique || undefined,
+    tactic: tactic || undefined,
+    sort: sortKey,
+    dir: sortDir,
+    page,
+    pageSize,
+  };
+  const { data, isLoading, isFetching, isPlaceholderData, isError, error } = useQuery({
+    queryKey: ['rules', 'page', query],
+    queryFn: () => listRulesPage(query),
+    // Keep the current rows on screen while the next page / filter loads
+    placeholderData: keepPreviousData,
+  });
+  const rules = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const filtersActive = !!(q || technique || tactic) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
+
+  // The server clamps a page past the end (e.g. after deleting rules); follow it
   useEffect(() => {
-    setLoading(true);
-    listRules()
-      .then(setRules)
-      .finally(() => setLoading(false));
-  }, [reloadKey]);
+    if (data && !isPlaceholderData && data.page !== page) update({ page: data.page > 1 ? String(data.page) : null }, { replace: true });
+  }, [data, isPlaceholderData, page, update]);
 
   async function handleExport(skeletons: boolean) {
     setExportMenuOpen(false);
@@ -78,58 +165,21 @@ export function RulesPage() {
     }
   }
 
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { draft: 0, testing: 0, production: 0, deprecated: 0 };
-    for (const r of rules) {
-      if (r.status in counts) counts[r.status]++;
-    }
-    return counts;
-  }, [rules]);
+  const statusCounts = { draft: 0, testing: 0, production: 0, deprecated: 0, ...data?.statusCounts };
+  const allCount = Object.values(statusCounts).reduce((a, b) => a + b, 0);
 
-  const filtered = useMemo(() => {
-    let list = [...rules];
-
-    if (statusFilter !== 'all') list = list.filter((r) => r.status === statusFilter);
-    if (severityFilter !== 'all') list = list.filter((r) => r.severity === severityFilter);
-    if (sourceFilter !== 'all') {
-      list = list.filter((r) => (sourceFilter === 'manual' ? !r.sourceFormat : r.sourceFormat === sourceFilter));
-    }
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = list.filter((r) => r.page.title.toLowerCase().includes(q));
-    }
-
-    list.sort((a, b) => {
-      let av: string;
-      let bv: string;
-      if (sortKey === 'title') {
-        av = a.page.title.toLowerCase();
-        bv = b.page.title.toLowerCase();
-      } else if (sortKey === 'updatedAt') {
-        av = a.page.updatedAt;
-        bv = b.page.updatedAt;
-      } else {
-        av = a[sortKey] ?? '';
-        bv = b[sortKey] ?? '';
-      }
-      if (av < bv) return sortDir === 'asc' ? -1 : 1;
-      if (av > bv) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
-
-    return list;
-  }, [rules, statusFilter, severityFilter, sourceFilter, search, sortKey, sortDir]);
-
-  function toggleSort(key: typeof sortKey) {
-    if (sortKey === key) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
+  function toggleSort(key: RuleSortKey) {
+    if (sortKey === key) update({ sort: key, dir: sortDir === 'asc' ? 'desc' : 'asc' });
+    // Newest and most severe first are the useful defaults for those columns
+    else update({ sort: key, dir: key === 'updatedAt' || key === 'severity' ? 'desc' : 'asc' });
   }
 
-  function SortIndicator({ col }: { col: typeof sortKey }) {
+  function clearFilters() {
+    setSearch('');
+    setParams(new URLSearchParams(pageSize === DEFAULT_PAGE_SIZE ? {} : { size: String(pageSize) }));
+  }
+
+  function SortIndicator({ col }: { col: RuleSortKey }) {
     if (sortKey !== col) return <span className="text-muted-foreground/40 ml-1">↕</span>;
     return <span className="ml-1 text-primary">{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
@@ -143,9 +193,9 @@ export function RulesPage() {
         <div className="flex items-center gap-3">
           <Shield className="w-6 h-6 text-muted-foreground" />
           <h1 className="text-2xl font-semibold tracking-tight">Detection Rules</h1>
-          {!loading && (
-            <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">
-              {rules.length}
+          {data && (
+            <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs font-medium" title="Rules matching the filters">
+              {total.toLocaleString()}
             </span>
           )}
         </div>
@@ -197,16 +247,17 @@ export function RulesPage() {
       <RuleImportDialog
         open={importOpen}
         onClose={() => setImportOpen(false)}
-        onImported={() => setReloadKey((k) => k + 1)}
+        onImported={() => queryClient.invalidateQueries({ queryKey: ['rules'] })}
       />
 
-      {/* Status summary chips */}
-      {!loading && rules.length > 0 && (
+      {/* Status summary chips — counts under the other filters */}
+      {data && allCount > 0 && (
         <div className="flex flex-wrap gap-2 mb-5">
           {(Object.entries(statusCounts) as [string, number][]).map(([status, count]) => (
             <button
               key={status}
-              onClick={() => setStatusFilter(statusFilter === status ? 'all' : status)}
+              onClick={() => update({ status: statusFilter === status ? null : status })}
+              aria-pressed={statusFilter === status}
               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none ${
                 statusFilter === status
                   ? 'border-primary/60 ring-1 ring-primary/40'
@@ -214,7 +265,7 @@ export function RulesPage() {
               }`}
             >
               <StatusBadge status={status} />
-              <span className="text-muted-foreground">{count}</span>
+              <span className="text-muted-foreground">{count.toLocaleString()}</span>
             </button>
           ))}
         </div>
@@ -228,15 +279,18 @@ export function RulesPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by title..."
+            placeholder="Search title, technique, data source, rule id..."
             aria-label="Search rules"
-            className="w-full pl-8 pr-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            className="w-full pl-8 pr-8 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
+          {isFetching && data && (
+            <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 animate-spin text-muted-foreground" aria-label="Loading" />
+          )}
         </div>
 
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => update({ status: e.target.value })}
           aria-label="Filter by status"
           className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
@@ -249,7 +303,7 @@ export function RulesPage() {
 
         <select
           value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value)}
+          onChange={(e) => update({ severity: e.target.value })}
           aria-label="Filter by severity"
           className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
@@ -262,7 +316,7 @@ export function RulesPage() {
 
         <select
           value={sourceFilter}
-          onChange={(e) => setSourceFilter(e.target.value)}
+          onChange={(e) => update({ source: e.target.value })}
           aria-label="Filter by source"
           className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
@@ -276,8 +330,32 @@ export function RulesPage() {
         </select>
       </div>
 
+      {/* Filters that arrive from links elsewhere (technique / tactic chips) */}
+      {(technique || tactic) && (
+        <div className="flex flex-wrap items-center gap-2 mb-4 text-xs">
+          <span className="text-muted-foreground">Filtered by</span>
+          {[
+            ['technique', technique, 'Technique'],
+            ['tactic', tactic, 'Tactic'],
+          ]
+            .filter(([, v]) => v)
+            .map(([key, value, label]) => (
+              <span key={key} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                {label}: <span className="font-mono">{value}</span>
+                <button onClick={() => update({ [key]: null })} aria-label={`Remove ${label.toLowerCase()} filter`} className="p-0.5 rounded-full hover:bg-blue-200 dark:hover:bg-blue-800">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+        </div>
+      )}
+
       {/* Table */}
-      {loading ? (
+      {isError ? (
+        <div className="rounded-lg border border-border bg-card p-10 text-center text-sm text-destructive">
+          {apiErrorMessage(error, 'Could not load rules')}
+        </div>
+      ) : isLoading ? (
         <div className="rounded-lg border border-border bg-card overflow-hidden" role="status" aria-label="Loading rules">
           <table className="w-full text-sm">
             <thead>
@@ -295,7 +373,7 @@ export function RulesPage() {
             </tbody>
           </table>
         </div>
-      ) : rules.length === 0 ? (
+      ) : total === 0 && !filtersActive ? (
         <div className="rounded-lg border border-border bg-card p-16 text-center">
           <Shield className="w-12 h-12 text-muted-foreground/40 mx-auto mb-4" />
           <h2 className="text-lg font-semibold mb-2">No detection rules yet</h2>
@@ -310,18 +388,18 @@ export function RulesPage() {
             Create your first rule
           </button>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : total === 0 ? (
         <div className="rounded-lg border border-border bg-card p-10 text-center">
           <p className="text-muted-foreground text-sm">No rules match the current filters.</p>
           <button
-            onClick={() => { setSearch(''); setStatusFilter('all'); setSeverityFilter('all'); setSourceFilter('all'); }}
+            onClick={clearFilters}
             className="mt-3 text-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
           >
             Clear filters
           </button>
         </div>
       ) : (
-        <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <div className={`rounded-lg border border-border bg-card overflow-hidden transition-opacity ${isFetching ? 'opacity-70' : ''}`}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40">
@@ -362,7 +440,7 @@ export function RulesPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((rule, idx) => {
+              {rules.map((rule, idx) => {
                 const techniques = splitChips(rule.mitreTechniques);
                 return (
                   <tr
@@ -403,7 +481,7 @@ export function RulesPage() {
                           {techniques.slice(0, 4).map((t) => (
                             <button
                               key={t}
-                              onClick={() => navigate(`/rules?technique=${encodeURIComponent(t)}`)}
+                              onClick={() => update({ technique: t })}
                               className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 text-xs font-mono hover:ring-1 hover:ring-blue-400 transition-all focus-visible:ring-2 focus-visible:ring-blue-400 outline-none"
                             >
                               {t}
@@ -432,11 +510,67 @@ export function RulesPage() {
               })}
             </tbody>
           </table>
-          {filtered.length > 0 && (
-            <div className="px-4 py-2 border-t border-border bg-muted/20 text-xs text-muted-foreground">
-              Showing {filtered.length} of {rules.length} rules
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-t border-border bg-muted/20 text-xs text-muted-foreground">
+            <span>
+              Showing {((page - 1) * pageSize + 1).toLocaleString()}–{Math.min(page * pageSize, total).toLocaleString()} of{' '}
+              {total.toLocaleString()} rules
+            </span>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5">
+                Per page
+                <select
+                  value={pageSize}
+                  onChange={(e) => update({ size: e.target.value === String(DEFAULT_PAGE_SIZE) ? null : e.target.value })}
+                  aria-label="Rules per page"
+                  className="px-1.5 py-1 rounded border border-border bg-background text-xs"
+                >
+                  {PAGE_SIZES.map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {pageCount > 1 && (
+                <nav className="flex items-center gap-1" aria-label="Pagination">
+                  <button
+                    onClick={() => update({ page: page - 1 > 1 ? String(page - 1) : null })}
+                    disabled={page <= 1}
+                    aria-label="Previous page"
+                    className="p-1 rounded hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  {pageWindow(page, pageCount).map((p, i) =>
+                    p === null ? (
+                      <span key={`gap${i}`} className="px-1">
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={p}
+                        onClick={() => update({ page: p > 1 ? String(p) : null })}
+                        aria-current={p === page ? 'page' : undefined}
+                        className={`min-w-[1.75rem] px-1.5 py-0.5 rounded ${
+                          p === page ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    )
+                  )}
+                  <button
+                    onClick={() => update({ page: String(page + 1) })}
+                    disabled={page >= pageCount}
+                    aria-label="Next page"
+                    className="p-1 rounded hover:bg-accent disabled:opacity-40 disabled:pointer-events-none"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </nav>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>

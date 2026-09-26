@@ -171,9 +171,41 @@ export async function getBrokenLinks() {
   return data as { sourceSlug: string; sourceTitle: string; brokenTitle: string }[];
 }
 
+/** Every matching rule (list columns only — no queries or source content). */
 export async function listRules(params?: { status?: string; severity?: string; technique?: string }) {
   const { data } = await api.get('/api/rules', { params });
   return data as RuleWithPage[];
+}
+
+export type RuleSortKey = 'title' | 'status' | 'severity' | 'updatedAt';
+
+export interface RuleListParams {
+  q?: string;
+  status?: string;
+  severity?: string;
+  /** Import format, or "manual" for rules written here */
+  source?: string;
+  technique?: string;
+  tactic?: string;
+  sort?: RuleSortKey;
+  dir?: 'asc' | 'desc';
+  page: number;
+  pageSize: number;
+}
+
+export interface RulePage {
+  items: RuleWithPage[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Rules per status under the other filters (for the status chips) */
+  statusCounts: Record<string, number>;
+}
+
+/** One page of rules, filtered, searched and sorted on the server. */
+export async function listRulesPage(params: RuleListParams) {
+  const { data } = await api.get('/api/rules', { params });
+  return data as RulePage;
 }
 
 export async function upsertRule(payload: Omit<DetectionRuleData, 'id'>) {

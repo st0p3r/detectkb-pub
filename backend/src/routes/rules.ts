@@ -2,6 +2,15 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { parseSingleSigmaRule } from '../lib/sigma';
 import { syncAutoSysmonLinks } from '../lib/sysmon-links';
+import {
+  RULE_LIST_SELECT,
+  RULE_SEVERITIES,
+  RULE_STATUSES,
+  enumSlices,
+  parseRuleListQuery,
+  ruleOrderBy,
+  ruleWhere,
+} from '../lib/rule-list';
 
 const router = Router();
 
@@ -37,23 +46,65 @@ const RULE_PAGE_SELECT = {
   tags: { include: { tag: true } },
 };
 
-// GET /api/rules — list all rules with page info, supports filters
+// GET /api/rules — the rule list. With ?page= it is paged, filtered, searched
+// and sorted server-side and returns { items, total, page, pageSize,
+// statusCounts }; without it, every matching rule (list columns only).
 router.get('/', async (req, res) => {
-  const { status, severity, technique, dataSource } = req.query;
+  const f = parseRuleListQuery(req.query);
+  const where = ruleWhere(f);
 
-  const where: Record<string, unknown> = {};
-  if (status) where.status = String(status);
-  if (severity) where.severity = String(severity);
-  if (technique) where.mitreTechniques = { contains: String(technique) };
-  if (dataSource) where.dataSource = { contains: String(dataSource) };
+  if (req.query.page === undefined) {
+    res.json(await prisma.detectionRule.findMany({ where, select: RULE_LIST_SELECT, orderBy: ruleOrderBy('updatedAt', 'desc') }));
+    return;
+  }
 
-  const rules = await prisma.detectionRule.findMany({
-    where,
-    include: { page: { select: RULE_PAGE_SELECT } },
-    orderBy: { page: { updatedAt: 'desc' } },
+  const [total, byStatus] = await Promise.all([
+    prisma.detectionRule.count({ where }),
+    prisma.detectionRule.groupBy({ by: ['status'], where: ruleWhere(f, 'status'), _count: { _all: true } }),
+  ]);
+  const pageCount = Math.max(1, Math.ceil(total / f.pageSize));
+  const page = Math.min(f.page, pageCount);
+  const skip = (page - 1) * f.pageSize;
+
+  let items;
+  if (f.sort === 'status' || f.sort === 'severity') {
+    const field = f.sort;
+    const order = field === 'status' ? RULE_STATUSES : RULE_SEVERITIES;
+    const counts = new Map(
+      (
+        await prisma.detectionRule.groupBy({ by: [field], where, _count: { _all: true } })
+      ).map((g) => [g[field], g._count._all])
+    );
+    const slices = enumSlices(f.dir === 'asc' ? order : [...order].reverse(), counts, skip, f.pageSize);
+    const parts = await Promise.all(
+      slices.map((s) =>
+        prisma.detectionRule.findMany({
+          where: { AND: [where, { [field]: s.value }] },
+          select: RULE_LIST_SELECT,
+          orderBy: ruleOrderBy('updatedAt', 'desc'),
+          skip: s.skip,
+          take: s.take,
+        })
+      )
+    );
+    items = parts.flat();
+  } else {
+    items = await prisma.detectionRule.findMany({
+      where,
+      select: RULE_LIST_SELECT,
+      orderBy: ruleOrderBy(f.sort, f.dir),
+      skip,
+      take: f.pageSize,
+    });
+  }
+
+  res.json({
+    items,
+    total,
+    page,
+    pageSize: f.pageSize,
+    statusCounts: Object.fromEntries(byStatus.map((g) => [g.status, g._count._all])),
   });
-
-  res.json(rules);
 });
 
 // GET /api/rules/:pageId — get single rule by pageId

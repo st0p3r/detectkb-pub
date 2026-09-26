@@ -12,7 +12,7 @@ import {
   Search,
   ArrowRight,
 } from 'lucide-react';
-import { listPages, listRules, listSplCommands, getBrokenLinks } from '@/lib/api';
+import { listPages, listRulesPage, listSplCommands, getBrokenLinks } from '@/lib/api';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { TypeBadge } from '@/components/ui/TypeBadge';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -138,9 +138,10 @@ export function DashboardPage() {
     queryFn: () => listPages(),
   });
 
-  const { data: rules, isLoading: rulesLoading } = useQuery({
-    queryKey: ['rules'],
-    queryFn: () => listRules(),
+  // The 5 newest drafts; the status counts cover every rule (they ignore the status filter)
+  const { data: drafts, isLoading: rulesLoading } = useQuery({
+    queryKey: ['rules', 'page', 'dashboard-drafts'],
+    queryFn: () => listRulesPage({ status: 'draft', sort: 'updatedAt', dir: 'desc', page: 1, pageSize: 5 }),
   });
 
   const { data: splCommands, isLoading: splLoading } = useQuery({
@@ -158,14 +159,10 @@ export function DashboardPage() {
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, 8);
 
-  const draftRules = rules?.filter((r) => r.status === 'draft').slice(0, 5) ?? [];
+  const draftRules = drafts?.items ?? [];
 
-  const ruleCounts = {
-    draft: rules?.filter((r) => r.status === 'draft').length ?? 0,
-    testing: rules?.filter((r) => r.status === 'testing').length ?? 0,
-    production: rules?.filter((r) => r.status === 'production').length ?? 0,
-    deprecated: rules?.filter((r) => r.status === 'deprecated').length ?? 0,
-  };
+  const ruleCounts = { draft: 0, testing: 0, production: 0, deprecated: 0, ...drafts?.statusCounts };
+  const ruleTotal = Object.values(ruleCounts).reduce((a, b) => a + b, 0);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -190,9 +187,9 @@ export function DashboardPage() {
         <StatCard
           icon={Shield}
           label="Detection Rules"
-          value={rules?.length ?? 0}
+          value={ruleTotal}
           sub={
-            !rulesLoading && rules ? (
+            !rulesLoading && drafts ? (
               <div className="flex flex-wrap gap-1 mt-0.5">
                 {ruleCounts.draft > 0 && (
                   <span className="text-xs text-muted-foreground">draft&nbsp;<strong className="text-foreground">{ruleCounts.draft}</strong></span>
@@ -294,7 +291,7 @@ export function DashboardPage() {
                   </Link>
                 </li>
               ))}
-              {(rules?.filter((r) => r.status === 'draft').length ?? 0) > 5 && (
+              {ruleCounts.draft > 5 && (
                 <li>
                   <Link to="/rules?status=draft" className="text-xs text-primary hover:underline">
                     View all draft rules →
