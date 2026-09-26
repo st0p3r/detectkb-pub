@@ -107,6 +107,12 @@ router.get('/', async (req, res) => {
   });
 });
 
+// GET /api/rules/ids?<list filters> — ids of every matching rule ("select all")
+router.get('/ids', async (req, res) => {
+  const rules = await prisma.detectionRule.findMany({ where: ruleWhere(parseRuleListQuery(req.query)), select: { id: true }, orderBy: { id: 'asc' } });
+  res.json(rules.map((r) => r.id));
+});
+
 /** Rules a bulk action targets: explicit ids, or every rule matching a list filter. */
 async function bulkTargets(body: Record<string, unknown>) {
   if (Array.isArray(body.ids)) {

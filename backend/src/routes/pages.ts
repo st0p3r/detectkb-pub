@@ -40,19 +40,30 @@ type PageSort = (typeof PAGE_SORTS)[number];
 // GET /api/pages?type=&categoryId=&tag=&q= — every matching page (list columns).
 // With page= it is paged and sorted (sort=title|type|updatedAt, dir=, pageSize=)
 // and returns { items, total, page, pageSize, typeCounts }.
-router.get('/', async (req, res) => {
+/**
+ * Filters of the page list: type, excludeType (e.g. RULE), categoryId, tag, q.
+ * `base` leaves the type out, for the type chip counts.
+ */
+function pageFilters(query: Record<string, unknown>) {
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
-  const type = str(req.query.type);
-  const q = str(req.query.q);
-  const tag = str(req.query.tag);
-  const categoryId = Number(req.query.categoryId) || undefined;
+  const type = str(query.type);
+  const excludeType = str(query.excludeType);
+  const q = str(query.q);
+  const tag = str(query.tag);
+  const categoryId = Number(query.categoryId) || undefined;
 
-  // Everything but the type, which the type chips count across
   const base: Prisma.PageWhereInput[] = [];
   if (categoryId) base.push({ categoryId });
   if (tag) base.push({ tags: { some: { tag: { name: tag } } } });
   if (q) base.push({ OR: [{ title: { contains: q } }, { contentMd: { contains: q } }] });
-  const where: Prisma.PageWhereInput = { AND: [...base, ...(type ? [{ type }] : [])] };
+  const types: Prisma.PageWhereInput[] = [];
+  if (type) types.push({ type });
+  if (excludeType) types.push({ type: { notIn: excludeType.split(',') } });
+  return { base, where: { AND: [...base, ...types] } as Prisma.PageWhereInput };
+}
+
+router.get('/', async (req, res) => {
+  const { base, where } = pageFilters(req.query);
 
   if (req.query.page === undefined) {
     res.json(await prisma.page.findMany({ where, select: PAGE_LIST_SELECT, orderBy: { updatedAt: 'desc' } }));
@@ -72,6 +83,12 @@ router.get('/', async (req, res) => {
   const items = await prisma.page.findMany({ where, select: PAGE_LIST_SELECT, orderBy, skip: (page - 1) * pageSize, take: pageSize });
 
   res.json({ items, total, page, pageSize, typeCounts: Object.fromEntries(byType.map((g) => [g.type, g._count._all])) });
+});
+
+// GET /api/pages/ids?<list filters> — ids of every matching page ("select all")
+router.get('/ids', async (req, res) => {
+  const pages = await prisma.page.findMany({ where: pageFilters(req.query).where, select: { id: true }, orderBy: { id: 'asc' } });
+  res.json(pages.map((p) => p.id));
 });
 
 // GET /api/pages/titles?q=lsass&limit=10 — titles for [[wiki link]] autocomplete,

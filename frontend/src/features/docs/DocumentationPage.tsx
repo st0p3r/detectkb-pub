@@ -10,14 +10,14 @@ import {
   generateDetectionMatrix,
   downloadGeneratedDoc,
   deleteGeneratedDoc,
-  listPages,
-  listRules,
   listTagsAll,
+  apiErrorMessage,
   type GeneratedDoc,
 } from '@/lib/api';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { relativeTime } from '@/lib/time';
+import { SelectionPicker } from './SelectionPicker';
 
 type ReportType = 'html' | 'pdf' | 'matrix';
 
@@ -33,20 +33,16 @@ export function DocumentationPage() {
   const [reportType, setReportType] = useState<ReportType>('pdf');
   const [title, setTitle] = useState('Detection Report');
   const [includeToc, setIncludeToc] = useState(true);
-  const [selectedPages, setSelectedPages] = useState<number[]>([]);
-  const [selectedRules, setSelectedRules] = useState<number[]>([]);
+  const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
+  const [selectedRules, setSelectedRules] = useState<Set<number>>(new Set());
   const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [deletingDoc, setDeletingDoc] = useState<GeneratedDoc | null>(null);
-  const [pageSearch, setPageSearch] = useState('');
-  const [ruleSearch, setRuleSearch] = useState('');
 
   const { data: docs = [], isLoading: docsLoading } = useQuery({
     queryKey: ['generated-docs'],
     queryFn: listGeneratedDocs,
   });
 
-  const { data: pages = [] } = useQuery({ queryKey: ['pages'], queryFn: () => listPages() });
-  const { data: rules = [] } = useQuery({ queryKey: ['rules'], queryFn: () => listRules() });
   const { data: tags = [] } = useQuery({ queryKey: ['tags-all'], queryFn: listTagsAll });
 
   const generateMutation = useMutation({
@@ -54,9 +50,9 @@ export function DocumentationPage() {
       if (reportType === 'matrix') {
         return generateDetectionMatrix({ title, tagIds: selectedTags.length ? selectedTags : undefined });
       } else if (reportType === 'html') {
-        return generateHTMLReport({ title, pageIds: selectedPages, ruleIds: selectedRules, includeTableOfContents: includeToc });
+        return generateHTMLReport({ title, pageIds: [...selectedPages], ruleIds: [...selectedRules], includeTableOfContents: includeToc });
       } else {
-        return generatePDFReport({ title, pageIds: selectedPages, ruleIds: selectedRules });
+        return generatePDFReport({ title, pageIds: [...selectedPages], ruleIds: [...selectedRules] });
       }
     },
     onSuccess: (result) => {
@@ -73,29 +69,14 @@ export function DocumentationPage() {
     },
   });
 
-  function togglePage(id: number) {
-    setSelectedPages((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
-  }
-
-  function toggleRule(id: number) {
-    setSelectedRules((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
-  }
-
   function toggleTag(id: number) {
     setSelectedTags((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
   }
 
-  const filteredPages = pages.filter((p) =>
-    !pageSearch || p.title.toLowerCase().includes(pageSearch.toLowerCase())
-  );
-
-  const filteredRules = rules.filter((r) =>
-    !ruleSearch || r.page.title.toLowerCase().includes(ruleSearch.toLowerCase())
-  );
-
   const canGenerate =
     !generateMutation.isPending &&
-    (reportType === 'matrix' || selectedPages.length > 0 || selectedRules.length > 0);
+    (reportType === 'matrix' || selectedPages.size > 0 || selectedRules.size > 0);
+  const itemCount = selectedPages.size + selectedRules.size;
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -159,7 +140,9 @@ export function DocumentationPage() {
 
               {reportType !== 'matrix' && (
                 <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
-                  {selectedPages.length} pages · {selectedRules.length} rules selected
+                  {selectedPages.size.toLocaleString()} page{selectedPages.size === 1 ? '' : 's'} · {selectedRules.size.toLocaleString()} rule
+                  {selectedRules.size === 1 ? '' : 's'} selected
+                  {itemCount > 500 && <span className="block mt-1">Large report — generating takes a few seconds.</span>}
                 </div>
               )}
 
@@ -188,7 +171,7 @@ export function DocumentationPage() {
               </button>
 
               {generateMutation.error && (
-                <p className="text-xs text-destructive">{(generateMutation.error as Error).message}</p>
+                <p className="text-xs text-destructive">{apiErrorMessage(generateMutation.error, 'Could not generate the report')}</p>
               )}
             </div>
           </div>
@@ -218,99 +201,8 @@ export function DocumentationPage() {
             </div>
           ) : (
             <>
-              <div className="rounded-lg border border-border bg-card p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="font-semibold text-sm">Pages ({selectedPages.length}/{pages.length})</h2>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => setSelectedPages(pages.map((p) => p.id))}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      All
-                    </button>
-                    <span className="text-muted-foreground text-xs">·</span>
-                    <button
-                      onClick={() => setSelectedPages([])}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      None
-                    </button>
-                  </div>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search pages…"
-                  value={pageSearch}
-                  onChange={(e) => setPageSearch(e.target.value)}
-                  className="w-full px-2.5 py-1.5 rounded border border-border bg-background text-xs mb-2 focus:outline-none focus:ring-1 focus:ring-primary/50"
-                />
-                <div className="max-h-48 overflow-y-auto space-y-0.5">
-                  {filteredPages.map((page) => (
-                    <label key={page.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selectedPages.includes(page.id)}
-                        onChange={() => togglePage(page.id)}
-                        className="w-3.5 h-3.5"
-                      />
-                      <span className="text-sm truncate flex-1">{page.title}</span>
-                      <span className="text-xs text-muted-foreground flex-shrink-0">{page.type}</span>
-                    </label>
-                  ))}
-                  {filteredPages.length === 0 && (
-                    <p className="text-xs text-muted-foreground px-2 py-3">No pages match</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-lg border border-border bg-card p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="font-semibold text-sm">Detection Rules ({selectedRules.length}/{rules.length})</h2>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => setSelectedRules(rules.map((r) => r.id!))}
-                      className="text-xs text-primary hover:underline"
-                    >
-                      All
-                    </button>
-                    <span className="text-muted-foreground text-xs">·</span>
-                    <button
-                      onClick={() => setSelectedRules([])}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      None
-                    </button>
-                  </div>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Search rules…"
-                  value={ruleSearch}
-                  onChange={(e) => setRuleSearch(e.target.value)}
-                  className="w-full px-2.5 py-1.5 rounded border border-border bg-background text-xs mb-2 focus:outline-none focus:ring-1 focus:ring-primary/50"
-                />
-                <div className="max-h-48 overflow-y-auto space-y-0.5">
-                  {filteredRules.map((rule) => (
-                    <label key={rule.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selectedRules.includes(rule.id!)}
-                        onChange={() => toggleRule(rule.id!)}
-                        className="w-3.5 h-3.5"
-                      />
-                      <span className="text-sm truncate flex-1">{rule.page.title}</span>
-                      <span className={`text-xs flex-shrink-0 ${
-                        rule.severity === 'critical' ? 'text-red-500' :
-                        rule.severity === 'high' ? 'text-orange-500' :
-                        rule.severity === 'medium' ? 'text-yellow-500' : 'text-green-500'
-                      }`}>{rule.severity}</span>
-                    </label>
-                  ))}
-                  {filteredRules.length === 0 && (
-                    <p className="text-xs text-muted-foreground px-2 py-3">No rules match</p>
-                  )}
-                </div>
-              </div>
+              <SelectionPicker kind="pages" selected={selectedPages} onChange={setSelectedPages} />
+              <SelectionPicker kind="rules" selected={selectedRules} onChange={setSelectedRules} />
             </>
           )}
         </div>

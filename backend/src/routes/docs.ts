@@ -15,6 +15,39 @@ import {
 
 const router = Router();
 
+const MAX_REPORT_ITEMS = 5000;
+
+const toIds = (v: unknown) => (Array.isArray(v) ? v.map(Number).filter(Number.isInteger) : []);
+
+/**
+ * The pages and rules a report was asked for. An empty list means none of
+ * that kind (it used to mean all of them, so picking only rules also dumped
+ * every page into the report).
+ */
+async function loadReportSelection(rawPageIds: unknown, rawRuleIds: unknown) {
+  const pageIds = toIds(rawPageIds);
+  const ruleIds = toIds(rawRuleIds);
+  if (!pageIds.length && !ruleIds.length) return 'Select at least one page or rule';
+  if (pageIds.length + ruleIds.length > MAX_REPORT_ITEMS) return `A report can hold at most ${MAX_REPORT_ITEMS} pages and rules`;
+  const [pages, rules] = await Promise.all([
+    pageIds.length
+      ? prisma.page.findMany({
+          where: { id: { in: pageIds } },
+          include: { tags: { include: { tag: true } }, splCommand: true },
+          orderBy: { title: 'asc' },
+        })
+      : [],
+    ruleIds.length
+      ? prisma.detectionRule.findMany({
+          where: { id: { in: ruleIds } },
+          include: { page: { select: { title: true } } },
+          orderBy: { page: { title: 'asc' } },
+        })
+      : [],
+  ]);
+  return { pages: pages as DocPage[], rules: rules as unknown as DocRule[] };
+}
+
 router.use(guard('docs', { checkReads: true }));
 
 // POST /api/docs/html — generate HTML report
@@ -26,17 +59,9 @@ router.post('/html', async (req, res) => {
     includeTableOfContents?: boolean;
   };
 
-  const pages = (await prisma.page.findMany({
-    where: pageIds.length ? { id: { in: pageIds } } : {},
-    include: { tags: { include: { tag: true } } },
-    orderBy: { title: 'asc' },
-  })) as DocPage[];
-
-  const rules = await prisma.detectionRule.findMany({
-    where: ruleIds.length ? { id: { in: ruleIds } } : {},
-    include: { page: { select: { title: true } } },
-    orderBy: { id: 'asc' },
-  }) as unknown as DocRule[];
+  const selection = await loadReportSelection(pageIds, ruleIds);
+  if (typeof selection === 'string') return res.status(400).json({ error: selection });
+  const { pages, rules } = selection;
 
   const filePath = await generateHTMLReport(title, pages, rules, { includeTableOfContents });
   const fileSize = await getFileSize(filePath);
@@ -63,17 +88,9 @@ router.post('/pdf', async (req, res) => {
     ruleIds?: number[];
   };
 
-  const pages = (await prisma.page.findMany({
-    where: pageIds.length ? { id: { in: pageIds } } : {},
-    include: { tags: { include: { tag: true } } },
-    orderBy: { title: 'asc' },
-  })) as DocPage[];
-
-  const rules = await prisma.detectionRule.findMany({
-    where: ruleIds.length ? { id: { in: ruleIds } } : {},
-    include: { page: { select: { title: true } } },
-    orderBy: { id: 'asc' },
-  }) as unknown as DocRule[];
+  const selection = await loadReportSelection(pageIds, ruleIds);
+  if (typeof selection === 'string') return res.status(400).json({ error: selection });
+  const { pages, rules } = selection;
 
   const filePath = await generatePDFReport(title, pages, rules);
   const fileSize = await getFileSize(filePath);
@@ -99,19 +116,10 @@ router.post('/matrix', async (req, res) => {
     tagIds?: number[];
   };
 
-  let rules = await prisma.detectionRule.findMany({
-    include: { page: { select: { title: true } } },
+  const rules = await prisma.detectionRule.findMany({
+    where: tagIds?.length ? { page: { tags: { some: { tagId: { in: tagIds.map(Number) } } } } } : {},
+    select: { id: true, status: true, severity: true, mitreTechniques: true, page: { select: { title: true } } },
   });
-
-  if (tagIds?.length) {
-    const pageIdsWithTags = (
-      await prisma.tagsOnPages.findMany({
-        where: { tagId: { in: tagIds } },
-        select: { pageId: true },
-      })
-    ).map((t) => t.pageId);
-    rules = rules.filter((r) => pageIdsWithTags.includes(r.pageId));
-  }
 
   const filePath = await exportDetectionMatrix(rules as unknown as DocRule[], title);
   const fileSize = await getFileSize(filePath);

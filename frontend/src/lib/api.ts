@@ -141,6 +141,8 @@ export type PageSortKey = 'title' | 'type' | 'updatedAt';
 export interface PageListParams {
   q?: string;
   type?: string;
+  /** Comma-separated types to leave out, e.g. "RULE" */
+  excludeType?: string;
   tag?: string;
   categoryId?: number;
   sort?: PageSortKey;
@@ -160,6 +162,12 @@ export async function listPagesPage(params: PageListParams) {
     /** Pages per type under the other filters (for the type chips) */
     typeCounts: Record<string, number>;
   };
+}
+
+/** Ids of every page matching the list filters ("select all matching"). */
+export async function listPageIds(filter: Omit<PageListParams, 'sort' | 'dir' | 'page' | 'pageSize'>) {
+  const { data } = await api.get('/api/pages/ids', { params: filter });
+  return data as number[];
 }
 
 /** Page titles for [[wiki link]] autocomplete; titles starting with q first. */
@@ -282,6 +290,12 @@ export type RuleBulkAction = 'status' | 'severity' | 'addTag' | 'removeTag';
 export async function bulkUpdateRules(target: RuleBulkTarget, action: RuleBulkAction, value: string) {
   const { data } = await api.put('/api/rules/bulk', { ...target, action, value });
   return data as { matched: number; changed: number };
+}
+
+/** Ids of every rule matching the list filters ("select all matching"). */
+export async function listRuleIds(filter: RuleListFilter) {
+  const { data } = await api.get('/api/rules/ids', { params: filter });
+  return data as number[];
 }
 
 /** Deletes the rules' pages. */

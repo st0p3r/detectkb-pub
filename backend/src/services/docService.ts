@@ -256,6 +256,9 @@ export interface DocRule {
   severity?: string;
   status?: string;
   splQuery?: string;
+  /** Imported rules' own query (KQL, EQL, ES|QL…) */
+  nativeQuery?: string | null;
+  nativeLanguage?: string | null;
   mitreTactics?: string;
   mitreTechniques?: string;
   dataSource?: string;
@@ -263,6 +266,11 @@ export interface DocRule {
   references?: string;
   testNotes?: string;
 }
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+const QUERY_LANGUAGE_LABELS: Record<string, string> = { kql: 'KQL', eql: 'EQL', esql: 'ES|QL', kuery: 'KQL (Kibana)', lucene: 'Lucene' };
+const nativeLabel = (r: DocRule) => `${QUERY_LANGUAGE_LABELS[r.nativeLanguage ?? ''] ?? r.nativeLanguage ?? 'Native'} Query`;
 
 export async function generateHTMLReport(
   title: string,
@@ -319,6 +327,7 @@ export async function generateHTMLReport(
             ${r.dataSource ? `<div>Data Source: ${escapeHtml(r.dataSource)}</div>` : ''}
           </div>
           ${r.splQuery ? `<div class="field-label">SPL Query</div><pre><code>${escapeHtml(r.splQuery)}</code></pre>` : ''}
+          ${r.nativeQuery ? `<div class="field-label">${escapeHtml(nativeLabel(r))}</div><pre><code>${escapeHtml(r.nativeQuery)}</code></pre>` : ''}
           ${r.falsePositives ? `<div class="field-label">False Positives</div><div class="field-block">${escapeHtml(r.falsePositives)}</div>` : ''}
           ${r.references ? `<div class="field-label">References</div><div class="field-block">${mdToHtml(r.references)}</div>` : ''}
           ${r.testNotes ? `<div class="field-label">Test Notes</div><div class="field-block">${mdToHtml(r.testNotes)}</div>` : ''}
@@ -338,7 +347,7 @@ export async function generateHTMLReport(
   <div class="cover">
     <h1>${escapeHtml(title)}</h1>
     <p>Generated on ${timestamp}</p>
-    <p>${pages.length} pages &bull; ${rules.length} detection rules</p>
+    <p>${plural(pages.length, 'page')} &bull; ${plural(rules.length, 'detection rule')}</p>
   </div>
   ${tocHtml}
   ${pagesHtml}
@@ -388,7 +397,7 @@ export async function generatePDFReport(
   doc.fontSize(12).font('Helvetica').text(
     `Generated on ${new Date().toLocaleDateString()}`, 50, 240, { align: 'center' }
   );
-  doc.fontSize(11).text(`${pages.length} pages · ${rules.length} detection rules`, 50, 265, { align: 'center' });
+  doc.fontSize(11).text(`${plural(pages.length, 'page')} · ${plural(rules.length, 'detection rule')}`, 50, 265, { align: 'center' });
   doc.addPage();
 
   // Table of contents
@@ -467,6 +476,12 @@ export async function generatePDFReport(
         doc.moveDown(0.3);
         doc.fontSize(9).font('Courier-Bold').text('SPL Query:');
         doc.font('Courier').text(r.splQuery, { lineGap: 1 });
+        doc.font('Helvetica');
+      }
+      if (r.nativeQuery) {
+        doc.moveDown(0.3);
+        doc.fontSize(9).font('Courier-Bold').text(`${nativeLabel(r)}:`);
+        doc.font('Courier').text(r.nativeQuery, { lineGap: 1 });
         doc.font('Helvetica');
       }
       if (r.falsePositives) {
