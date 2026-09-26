@@ -19,6 +19,7 @@ import pageTypesRouter from './routes/page-types';
 import sysmonEventsRouter from './routes/sysmon-events';
 import activityRouter from './routes/activity';
 import dashboardRouter from './routes/dashboard';
+import { markDataChanged } from './lib/kb-cache';
 import sigmaRouter from './routes/sigma';
 import ruleImportRouter from './routes/rule-import';
 import referencesRouter from './routes/references';
@@ -47,6 +48,19 @@ app.use('/api/health', healthRouter);
 
 // Everything below requires a logged-in, active user
 app.use('/api', authMiddleware);
+
+// A successful write may change what the knowledge graph and the tool matches
+// are built from: mark those caches stale (lib/kb-cache). Writes that only
+// produce files or touch accounts don't count.
+const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|backup\/json$)/;
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !WRITES_WITHOUT_KB_CHANGES.test(req.originalUrl.split('?')[0])) {
+    res.on('finish', () => {
+      if (res.statusCode < 400) markDataChanged();
+    });
+  }
+  next();
+});
 
 app.use('/api/pages', guard('pages', { checkReads: true }), pagesRouter);
 app.use('/api/categories', guard('pages'), categoriesRouter);

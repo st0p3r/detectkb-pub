@@ -1,10 +1,12 @@
 import { prisma } from './prisma';
 import { TECHNIQUE_BY_ID, parseTechniqueIds, resolveTechniqueId } from './attack';
 import { REFERENCE_KINDS, computeReferenceMatches } from './references';
+import { kbCache, onDataChanged } from './kb-cache';
 
 // The knowledge graph: pages, wiki links, ATT&CK techniques, Sysmon events,
-// tags, categories and attacker-tool references. Built once and cached
-// briefly; the routes serve filtered views and neighbourhoods of it.
+// tags, categories and attacker-tool references. Built once and cached until
+// data changes (lib/kb-cache); the routes serve filtered views and
+// neighbourhoods of it.
 
 export interface GraphNode {
   id: string;
@@ -45,8 +47,6 @@ export const LAYERS: Record<string, (group: string) => boolean> = {
   category: (g) => g === 'category',
 };
 
-let cache: { at: number; graph: Graph } | null = null;
-const CACHE_MS = 15_000;
 
 async function buildGraph(): Promise<Graph> {
   const [pages, links, sysmon, matches] = await Promise.all([
@@ -112,19 +112,11 @@ async function buildGraph(): Promise<Graph> {
     edge(`page:${s.pageId}`, nid, 'sysmon');
   }
 
-  const refKeys = Array.from(matches.byPage.values()).flat();
-  if (refKeys.length) {
-    const entries = await prisma.referenceEntry.findMany({
-      where: { OR: refKeys.map((r) => ({ kind: r.kind, key: r.key })) },
-      select: { kind: true, key: true, name: true },
-    });
-    const names = new Map(entries.map((e) => [`${e.kind}:${e.key}`, e.name]));
-    for (const [pageId, refs] of matches.byPage) {
-      for (const r of refs) {
-        const nid = `${r.kind}:${r.key}`;
-        node({ id: nid, label: `${names.get(nid) ?? r.key} (${REFERENCE_KINDS[r.kind].label})`, group: r.kind });
-        edge(`page:${pageId}`, nid, 'reference');
-      }
+  for (const [pageId, refs] of matches.byPage) {
+    for (const r of refs) {
+      const nid = `${r.kind}:${r.key}`;
+      node({ id: nid, label: `${matches.names.get(nid) ?? r.key} (${REFERENCE_KINDS[r.kind].label})`, group: r.kind });
+      edge(`page:${pageId}`, nid, 'reference');
     }
   }
 
@@ -140,11 +132,29 @@ async function buildGraph(): Promise<Graph> {
   return { nodes, edges: valid, adjacency };
 }
 
-export async function getGraph(): Promise<Graph> {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.graph;
-  cache = { at: Date.now(), graph: await buildGraph() };
-  return cache.graph;
+const graphCache = kbCache(buildGraph);
+let lastUsed = 0;
+
+export function getGraph(): Promise<Graph> {
+  lastUsed = Date.now();
+  return graphCache.get();
 }
+
+// After a change, rebuild in the background once writes settle (an import
+// makes hundreds), so the next graph view doesn't wait for it. Only while
+// someone has used the graph recently.
+const WARM_DELAY_MS = 3_000;
+const WARM_IF_USED_WITHIN_MS = 30 * 60_000;
+let warmTimer: NodeJS.Timeout | null = null;
+onDataChanged(() => {
+  if (Date.now() - lastUsed > WARM_IF_USED_WITHIN_MS) return;
+  if (warmTimer) clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    graphCache.get().catch((err) => console.error('Graph rebuild failed:', err));
+  }, WARM_DELAY_MS);
+  warmTimer.unref();
+});
 
 /** Subgraph restricted to the given layers (see LAYERS). */
 export function filterLayers(graph: Graph, layers: string[]) {

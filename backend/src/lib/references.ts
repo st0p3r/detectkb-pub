@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { kbCache, markDataChanged } from './kb-cache';
 import { prisma } from './prisma';
 import { parseTechniqueIds } from './attack';
 
@@ -189,7 +190,7 @@ export async function storeReferenceData(kind: ReferenceKind, json: unknown, sou
     },
     { timeout: 60000 }
   );
-  invalidateReferenceMatches();
+  markDataChanged();
   return unique.length;
 }
 
@@ -285,16 +286,21 @@ export function matchText(matchers: Matcher[], text: string): Map<ReferenceKind,
   return found;
 }
 
-let cache: { at: number; byEntry: Map<string, MatchedRule[]>; byPage: Map<number, { kind: ReferenceKind; key: string }[]> } | null = null;
-const CACHE_MS = 15_000;
-
-export function invalidateReferenceMatches() {
-  cache = null;
+export interface ReferenceMatches {
+  byEntry: Map<string, MatchedRule[]>;
+  byPage: Map<number, { kind: ReferenceKind; key: string }[]>;
+  /** "kind:key" → entry name, for every entry (so callers needn't query names) */
+  names: Map<string, string>;
 }
 
-/** For every rule: which reference entries it mentions (cached briefly). */
-export async function computeReferenceMatches() {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache;
+const matchesCache = kbCache(buildReferenceMatches);
+
+/** For every rule: which reference entries it mentions (cached until data changes). */
+export function computeReferenceMatches(): Promise<ReferenceMatches> {
+  return matchesCache.get();
+}
+
+async function buildReferenceMatches(): Promise<ReferenceMatches> {
   const [entries, rules] = await Promise.all([
     prisma.referenceEntry.findMany({ select: { kind: true, key: true, name: true, data: true } }),
     prisma.detectionRule.findMany({
@@ -323,8 +329,8 @@ export async function computeReferenceMatches() {
       }
     }
   }
-  cache = { at: Date.now(), byEntry, byPage };
-  return cache;
+  const names = new Map(entries.map((e) => [`${e.kind}:${e.key}`, e.name]));
+  return { byEntry, byPage, names };
 }
 
 /** ATT&CK techniques an entry maps to (for display). */

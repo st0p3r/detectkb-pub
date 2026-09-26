@@ -111,15 +111,6 @@ router.get('/chain', async (req, res) => {
 
   const refKeys = new Map<number, { kind: string; key: string }[]>();
   for (const { r } of chainRules) refKeys.set(r.page.id, refs.byPage.get(r.page.id) ?? []);
-  const allRefs = Array.from(refKeys.values()).flat();
-  const refEntries = allRefs.length
-    ? await prisma.referenceEntry.findMany({
-        where: { OR: allRefs.map((x) => ({ kind: x.kind, key: x.key })) },
-        select: { kind: true, key: true, name: true },
-      })
-    : [];
-  const refName = new Map(refEntries.map((e) => [`${e.kind}:${e.key}`, e.name]));
-
   const sysmon = new Map<number, { eventId: number; name: string; ruleCount: number }>();
   const out = chainRules.map(({ r, techniques }) => {
     const events = r.page.sysmonEvents.map((s) => s.sysmonEvent);
@@ -138,7 +129,7 @@ router.get('/chain', async (req, res) => {
       dataSource: r.dataSource,
       techniques,
       sysmon: events.map((e) => e.eventId).sort((a, b) => a - b),
-      tools: (refKeys.get(r.page.id) ?? []).map((x) => ({ kind: x.kind, key: x.key, name: refName.get(`${x.kind}:${x.key}`) ?? x.key })),
+      tools: (refKeys.get(r.page.id) ?? []).map((x) => ({ kind: x.kind, key: x.key, name: refs.names.get(`${x.kind}:${x.key}`) ?? x.key })),
     };
   });
 
