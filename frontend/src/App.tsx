@@ -1,34 +1,40 @@
-import React, { Suspense, lazy, useState, useEffect } from 'react';
+import React, { lazy, useState, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
 import { DashboardPage } from '@/features/dashboard/DashboardPage';
-import { PagesPage } from '@/features/pages/PagesPage';
-import { PageEditorPage } from '@/features/pages/PageEditorPage';
-import { PageViewPage } from '@/features/pages/PageViewPage';
-import { RulesPage } from '@/features/rules/RulesPage';
-import { SplLibraryPage } from '@/features/spl/SplLibraryPage';
-import { BrokenLinksPage } from '@/features/links/BrokenLinksPage';
-import { SearchPage } from '@/features/search/SearchPage';
-import { BackupPage } from '@/features/backup/BackupPage';
-import { SettingsPage } from '@/features/settings/SettingsPage';
-import { FilteredPagesPage } from '@/features/pages/FilteredPagesPage';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { ChangePasswordPage } from '@/features/auth/ChangePasswordPage';
-import { AttackCoveragePage } from '@/features/attack/AttackCoveragePage';
-import { AttackerToolsPage } from '@/features/references/AttackerToolsPage';
 
-// Graph library is large: load it only when the page is opened
-const KnowledgeGraphPage = lazy(() => import('@/features/graph/KnowledgeGraphPage'));
 import { AuthProvider } from '@/features/auth/AuthContext';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
-import { UserManagementPage } from '@/features/users/UserManagementPage';
-import { TagManagementPage } from '@/features/tags/TagManagementPage';
-import { DocumentationPage } from '@/features/docs/DocumentationPage';
-import { CustomTypesPage } from '@/features/settings/CustomTypesPage';
 import { PageTypesProvider } from '@/context/PageTypesContext';
-import { SysmonEventsPage } from '@/features/sysmon/SysmonEventsPage';
-import { ActivityPage } from '@/features/activity/ActivityPage';
 import { Database, Lightbulb } from 'lucide-react';
+
+// Each page is its own chunk, loaded when first opened (the Markdown editor,
+// graph and ATT&CK data made one ~2 MB bundle). The dashboard and login stay
+// in the main bundle; Layout shows a fallback while a page loads.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- any props; each page keeps its own
+const named = <M extends Record<K, React.ComponentType<any>>, K extends keyof M & string>(load: () => Promise<M>, name: K) =>
+  lazy(() => load().then((m) => ({ default: m[name] })));
+const PagesPage = named(() => import('@/features/pages/PagesPage'), 'PagesPage');
+const PageEditorPage = named(() => import('@/features/pages/PageEditorPage'), 'PageEditorPage');
+const PageViewPage = named(() => import('@/features/pages/PageViewPage'), 'PageViewPage');
+const RulesPage = named(() => import('@/features/rules/RulesPage'), 'RulesPage');
+const SplLibraryPage = named(() => import('@/features/spl/SplLibraryPage'), 'SplLibraryPage');
+const BrokenLinksPage = named(() => import('@/features/links/BrokenLinksPage'), 'BrokenLinksPage');
+const SearchPage = named(() => import('@/features/search/SearchPage'), 'SearchPage');
+const BackupPage = named(() => import('@/features/backup/BackupPage'), 'BackupPage');
+const SettingsPage = named(() => import('@/features/settings/SettingsPage'), 'SettingsPage');
+const FilteredPagesPage = named(() => import('@/features/pages/FilteredPagesPage'), 'FilteredPagesPage');
+const AttackCoveragePage = named(() => import('@/features/attack/AttackCoveragePage'), 'AttackCoveragePage');
+const AttackerToolsPage = named(() => import('@/features/references/AttackerToolsPage'), 'AttackerToolsPage');
+const UserManagementPage = named(() => import('@/features/users/UserManagementPage'), 'UserManagementPage');
+const TagManagementPage = named(() => import('@/features/tags/TagManagementPage'), 'TagManagementPage');
+const DocumentationPage = named(() => import('@/features/docs/DocumentationPage'), 'DocumentationPage');
+const CustomTypesPage = named(() => import('@/features/settings/CustomTypesPage'), 'CustomTypesPage');
+const SysmonEventsPage = named(() => import('@/features/sysmon/SysmonEventsPage'), 'SysmonEventsPage');
+const ActivityPage = named(() => import('@/features/activity/ActivityPage'), 'ActivityPage');
+const KnowledgeGraphPage = lazy(() => import('@/features/graph/KnowledgeGraphPage'));
 
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => {
@@ -67,14 +73,7 @@ export default function App() {
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/attack-coverage" element={<AttackCoveragePage />} />
             <Route path="/attacker-tools" element={<AttackerToolsPage />} />
-            <Route
-              path="/graph"
-              element={
-                <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading graph…</div>}>
-                  <KnowledgeGraphPage />
-                </Suspense>
-              }
-            />
+            <Route path="/graph" element={<KnowledgeGraphPage />} />
             <Route path="/spl-library" element={<SplLibraryPage />} />
             <Route path="/data-sources" element={
               <FilteredPagesPage
