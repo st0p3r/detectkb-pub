@@ -13,12 +13,12 @@ export async function syncPageLinks(sourceId: number, contentMd: string) {
 
   if (titles.length === 0) return;
 
-  // Resolve titles to IDs (case-insensitive, exclude self)
-  // MySQL does not support mode:'insensitive' on `in` filters in Prisma,
-  // so we use OR with individual contains filters.
+  // Resolve titles to IDs, excluding self. Prisma's `mode: 'insensitive'` only
+  // exists for PostgreSQL/MongoDB (on MySQL it throws); MySQL's default
+  // collation already compares case-insensitively.
   const targets = await prisma.page.findMany({
     where: {
-      OR: titles.map((t) => ({ title: { equals: t, mode: 'insensitive' as const } })),
+      title: { in: titles },
       id: { not: sourceId },
     },
     select: { id: true },
