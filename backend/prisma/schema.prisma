@@ -8,18 +8,19 @@ datasource db {
 }
 
 model User {
-  id            Int            @id @default(autoincrement())
-  username      String         @unique @db.VarChar(120)
-  email         String         @unique @db.VarChar(255)
-  passwordHash  String         @db.VarChar(255)
-  firstName     String?        @db.VarChar(100)
-  lastName      String?        @db.VarChar(100)
-  isActive      Boolean        @default(true)
-  userRoles     UserRole[]
-  auditLogs     AuditLog[]
-  generatedDocs GeneratedDoc[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id                 Int            @id @default(autoincrement())
+  username           String         @unique @db.VarChar(120)
+  email              String         @unique @db.VarChar(255)
+  passwordHash       String         @db.VarChar(255)
+  firstName          String?        @db.VarChar(100)
+  lastName           String?        @db.VarChar(100)
+  isActive           Boolean        @default(true)
+  mustChangePassword Boolean        @default(false)
+  userRoles          UserRole[]
+  auditLogs          AuditLog[]
+  generatedDocs      GeneratedDoc[]
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 }
 
 model Role {
@@ -92,23 +93,24 @@ model GeneratedDoc {
 }
 
 model Page {
-  id          Int          @id @default(autoincrement())
-  title       String       @db.VarChar(255)
-  slug        String       @unique @db.VarChar(255)
-  contentMd   String       @db.LongText
-  type        String       @default("NOTE") @db.VarChar(80)
-  categoryId  Int?
-  category    Category?    @relation(fields: [categoryId], references: [id])
-  tags        TagsOnPages[]
-  outLinks    PageLink[]   @relation("source")
-  inLinks     PageLink[]   @relation("target")
-  revisions   Revision[]
-  rule        DetectionRule?
-  splCommand  SplCommand?
-  isPinned    Boolean      @default(false)
-  createdById Int?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           Int               @id @default(autoincrement())
+  title        String            @db.VarChar(255)
+  slug         String            @unique @db.VarChar(255)
+  contentMd    String            @db.LongText
+  type         String            @default("NOTE") @db.VarChar(80)
+  categoryId   Int?
+  category     Category?         @relation(fields: [categoryId], references: [id])
+  tags         TagsOnPages[]
+  outLinks     PageLink[]        @relation("source")
+  inLinks      PageLink[]        @relation("target")
+  revisions    Revision[]
+  rule         DetectionRule?
+  splCommand   SplCommand?
+  sysmonEvents PageSysmonEvent[]
+  isPinned     Boolean           @default(false)
+  createdById  Int?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 }
 
 model PageTypeDefinition {
@@ -168,18 +170,24 @@ model Revision {
 }
 
 model DetectionRule {
-  id              Int      @id @default(autoincrement())
-  pageId          Int      @unique
-  page            Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
-  status          String   @db.VarChar(40)
-  severity        String   @db.VarChar(20)
-  splQuery        String   @db.LongText
-  mitreTactics    String?  @db.Text
-  mitreTechniques String?  @db.Text
-  dataSource      String?  @db.VarChar(255)
-  falsePositives  String?  @db.Text
-  references      String?  @db.Text
-  testNotes       String?  @db.LongText
+  id              Int     @id @default(autoincrement())
+  pageId          Int     @unique
+  page            Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  status          String  @db.VarChar(40)
+  severity        String  @db.VarChar(20)
+  splQuery        String  @db.LongText
+  mitreTactics    String? @db.Text
+  mitreTechniques String? @db.Text
+  dataSource      String? @db.VarChar(255)
+  falsePositives  String? @db.Text
+  references      String? @db.Text
+  testNotes       String? @db.LongText
+  sigmaId         String? @db.VarChar(64)
+  sigmaYaml       String? @db.LongText
+
+  // Not @unique: adding a unique constraint would need --accept-data-loss on
+  // upgrade. Uniqueness is enforced in routes/rules.ts and routes/sigma.ts.
+  @@index([sigmaId])
 }
 
 model SplCommand {
@@ -204,15 +212,29 @@ model BackupLog {
 }
 
 model SysmonEvent {
-  id             Int      @id @default(autoincrement())
-  eventId        Int      @unique
-  name           String   @db.VarChar(120)
-  category       String   @db.VarChar(80)
-  description    String   @db.Text
-  keyFields      String?  @db.LongText
-  detectionTips  String?  @db.LongText
-  attackPatterns String?  @db.Text
-  detectionValue String   @default("medium") @db.VarChar(20)
-  isBuiltIn      Boolean  @default(true)
-  createdAt      DateTime @default(now())
+  id             Int               @id @default(autoincrement())
+  eventId        Int               @unique
+  name           String            @db.VarChar(120)
+  category       String            @db.VarChar(80)
+  description    String            @db.Text
+  keyFields      String?           @db.LongText
+  detectionTips  String?           @db.LongText
+  attackPatterns String?           @db.Text
+  detectionValue String            @default("medium") @db.VarChar(20)
+  isBuiltIn      Boolean           @default(true)
+  createdAt      DateTime          @default(now())
+  pages          PageSysmonEvent[]
+}
+
+// Which Sysmon events a page (detection rule, data source, ...) depends on.
+// source = "auto" (inferred from the SPL / Sigma logsource) or "manual".
+model PageSysmonEvent {
+  pageId        Int
+  sysmonEventId Int
+  source        String      @default("manual") @db.VarChar(10)
+  page          Page        @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  sysmonEvent   SysmonEvent @relation(fields: [sysmonEventId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, sysmonEventId])
+  @@index([sysmonEventId])
 }

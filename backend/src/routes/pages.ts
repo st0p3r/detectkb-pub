@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { generateUniqueSlug } from '../lib/slug';
 import { syncPageLinks } from '../lib/links';
+import { syncAutoSysmonLinks } from '../lib/sysmon-links';
 
 const router = Router();
 
@@ -10,6 +11,10 @@ const PAGE_INCLUDE = {
   category: true,
   rule: true,
   splCommand: true,
+  sysmonEvents: {
+    select: { source: true, sysmonEvent: { select: { id: true, eventId: true, name: true, category: true } } },
+    orderBy: { sysmonEvent: { eventId: 'asc' as const } },
+  },
 };
 
 router.get('/', async (req, res) => {
@@ -67,6 +72,7 @@ router.post('/', async (req, res) => {
   });
 
   await syncPageLinks(page.id, contentMd);
+  await syncAutoSysmonLinks(page.id);
 
   res.status(201).json(page);
 });
@@ -103,6 +109,7 @@ router.put('/:id', async (req, res) => {
   });
 
   await syncPageLinks(id, contentMd ?? existing.contentMd);
+  await syncAutoSysmonLinks(id);
   if (tagNames !== undefined) await pruneOrphanedTags();
 
   res.json(page);

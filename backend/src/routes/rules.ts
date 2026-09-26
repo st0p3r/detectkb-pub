@@ -1,7 +1,32 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
+import { parseSingleSigmaRule } from '../lib/sigma';
+import { syncAutoSysmonLinks } from '../lib/sysmon-links';
 
 const router = Router();
+
+/**
+ * Validates optional Sigma YAML from a request body. Returns the fields to
+ * store, `{}` when sigmaYaml was not sent, or an error message.
+ */
+async function sigmaFields(
+  sigmaYaml: unknown,
+  pageId: number
+): Promise<{ sigmaYaml?: string | null; sigmaId?: string } | string> {
+  if (sigmaYaml === undefined) return {};
+  if (sigmaYaml === null || String(sigmaYaml).trim() === '') return { sigmaYaml: null };
+  let doc;
+  try {
+    doc = parseSingleSigmaRule(String(sigmaYaml));
+  } catch (err) {
+    return (err as Error).message;
+  }
+  if (!doc.id) return { sigmaYaml: String(sigmaYaml) };
+  const sigmaId = String(doc.id);
+  const clash = await prisma.detectionRule.findFirst({ where: { sigmaId }, include: { page: true } });
+  if (clash && clash.pageId !== pageId) return `Sigma id ${sigmaId} is already used by "${clash.page.title}"`;
+  return { sigmaYaml: String(sigmaYaml), sigmaId };
+}
 
 const RULE_PAGE_SELECT = {
   id: true,
@@ -58,9 +83,12 @@ router.post('/', async (req, res) => {
     falsePositives,
     references,
     testNotes,
+    sigmaYaml,
   } = req.body;
 
   if (!pageId) return res.status(400).json({ error: 'pageId is required' });
+  const sigma = await sigmaFields(sigmaYaml, Number(pageId));
+  if (typeof sigma === 'string') return res.status(400).json({ error: sigma });
 
   const ruleData = {
     status,
@@ -72,6 +100,7 @@ router.post('/', async (req, res) => {
     falsePositives: falsePositives ?? null,
     references: references ?? null,
     testNotes: testNotes ?? null,
+    ...sigma,
   };
 
   const rule = await prisma.detectionRule.upsert({
@@ -80,6 +109,7 @@ router.post('/', async (req, res) => {
     update: ruleData,
     include: { page: { select: RULE_PAGE_SELECT } },
   });
+  await syncAutoSysmonLinks(rule.pageId);
 
   res.status(201).json(rule);
 });
@@ -102,7 +132,11 @@ router.put('/:id', async (req, res) => {
     falsePositives,
     references,
     testNotes,
+    sigmaYaml,
   } = req.body;
+
+  const sigma = await sigmaFields(sigmaYaml, existing.pageId);
+  if (typeof sigma === 'string') return res.status(400).json({ error: sigma });
 
   const rule = await prisma.detectionRule.update({
     where: { id },
@@ -116,9 +150,11 @@ router.put('/:id', async (req, res) => {
       ...(falsePositives !== undefined && { falsePositives }),
       ...(references !== undefined && { references }),
       ...(testNotes !== undefined && { testNotes }),
+      ...sigma,
     },
     include: { page: { select: RULE_PAGE_SELECT } },
   });
+  await syncAutoSysmonLinks(rule.pageId);
 
   res.json(rule);
 });
@@ -132,6 +168,7 @@ router.delete('/:id', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Rule not found' });
 
   await prisma.detectionRule.delete({ where: { id } });
+  await syncAutoSysmonLinks(existing.pageId);
   res.status(204).send();
 });
 

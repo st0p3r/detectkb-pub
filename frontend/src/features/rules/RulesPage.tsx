@@ -1,7 +1,10 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, PlusCircle, Search } from 'lucide-react';
-import { listRules, type RuleWithPage } from '@/lib/api';
+import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown } from 'lucide-react';
+import { apiErrorMessage, downloadSigmaRules, listRules, type RuleWithPage } from '@/lib/api';
+import { SigmaImportDialog } from '@/features/sigma/SigmaImportDialog';
+import { useAuth } from '@/features/auth/AuthContext';
+import { useToast } from '@/hooks/useToast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -46,12 +49,33 @@ export function RulesPage() {
   const [sortKey, setSortKey] = useState<'title' | 'status' | 'severity' | 'updatedAt'>('updatedAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
+  const [importOpen, setImportOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
   useEffect(() => {
     setLoading(true);
     listRules()
       .then(setRules)
       .finally(() => setLoading(false));
-  }, []);
+  }, [reloadKey]);
+
+  async function handleExport(skeletons: boolean) {
+    setExportMenuOpen(false);
+    try {
+      const count = await downloadSigmaRules({ skeletons });
+      toast(
+        count
+          ? `Exported ${count} rule${count === 1 ? '' : 's'} as Sigma`
+          : 'No rules have a Sigma source yet — use "All rules" to export skeletons',
+        count ? 'success' : 'info'
+      );
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Export failed'), 'error');
+    }
+  }
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = { draft: 0, testing: 0, production: 0, deprecated: 0 };
@@ -121,14 +145,56 @@ export function RulesPage() {
             </span>
           )}
         </div>
-        <button
-          onClick={() => navigate('/pages/new?type=RULE')}
-          className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-        >
-          <PlusCircle className="w-4 h-4" />
-          New Rule
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <button
+              onClick={() => setExportMenuOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={exportMenuOpen}
+              className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors"
+            >
+              <FileDown className="w-4 h-4" />
+              Export Sigma
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            {exportMenuOpen && (
+              <div role="menu" className="absolute right-0 mt-1 w-64 z-20 rounded-md border border-border bg-card shadow-lg py-1 text-sm">
+                <button role="menuitem" onClick={() => handleExport(false)} className="w-full text-left px-3 py-2 hover:bg-accent">
+                  Rules with a Sigma source
+                </button>
+                <button role="menuitem" onClick={() => handleExport(true)} className="w-full text-left px-3 py-2 hover:bg-accent">
+                  All rules
+                  <span className="block text-xs text-muted-foreground">Others as skeletons to complete</span>
+                </button>
+              </div>
+            )}
+          </div>
+          {hasPermission('rules:create') && (
+            <>
+              <button
+                onClick={() => setImportOpen(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <FileUp className="w-4 h-4" />
+                Import Sigma
+              </button>
+              <button
+                onClick={() => navigate('/pages/new?type=RULE')}
+                className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+              >
+                <PlusCircle className="w-4 h-4" />
+                New Rule
+              </button>
+            </>
+          )}
+        </div>
       </div>
+
+      <SigmaImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => setReloadKey((k) => k + 1)}
+      />
 
       {/* Status summary chips */}
       {!loading && rules.length > 0 && (

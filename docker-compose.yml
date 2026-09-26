@@ -29,6 +29,19 @@ services:
       retries: 10
       start_period: 30s
 
+  # pySigma conversion service (Sigma → SPL / KQL / EQL / Lucene); internal only
+  sigma:
+    build:
+      context: ./sigma
+    container_name: detectkb-sigma
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
   backend:
     build:
       context: ./backend
@@ -37,6 +50,9 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      sigma:
+        # Optional: the API works without it, only Sigma conversion is unavailable
+        condition: service_started
     environment:
       DATABASE_URL: mysql://${MYSQL_USER:-detectkb}:${MYSQL_PASSWORD:-detectkb}@mysql:3306/${MYSQL_DATABASE:-detectkb}
       PORT: 3001
@@ -46,6 +62,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-detectkb}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@detectkb.local}
       BACKUP_DIR: /backups
+      SIGMA_SERVICE_URL: http://sigma:8000
     volumes:
       - ./backups:/backups
     healthcheck:

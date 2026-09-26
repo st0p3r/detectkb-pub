@@ -4,13 +4,22 @@ import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import { BACKUP_DIR } from '../lib/config';
-import { authMiddleware } from '../middleware/auth';
+import { requirePermission } from '../middleware/auth';
+import { setManualSysmonLinks, syncAllSysmonLinks } from '../lib/sysmon-links';
+
+async function restoreManualSysmonLinks(
+  pageId: number,
+  links: { source: string; sysmonEvent: { eventId: number } }[] | undefined
+) {
+  const manual = (links ?? []).filter((l) => l.source === 'manual').map((l) => l.sysmonEvent.eventId);
+  if (manual.length) await setManualSysmonLinks(pageId, manual);
+}
 
 const router = Router();
 
-// Every backup endpoint (including list/download) exposes the full dataset,
-// so none of them are public.
-router.use(authMiddleware);
+// Listing/downloading backups exposes the full dataset, so it needs the same
+// permission as creating one.
+const canRead = requirePermission('backups:create');
 
 export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: number; downloadUrl: string }> {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -23,6 +32,7 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
         rule: true,
         splCommand: true,
         outLinks: true,
+        sysmonEvents: { select: { source: true, sysmonEvent: { select: { eventId: true } } } },
       },
     }),
     prisma.category.findMany(),
@@ -42,17 +52,17 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
   return { fileName, sizeBytes, downloadUrl: `/api/backup/download/${fileName}` };
 }
 
-router.post('/json', async (_req: Request, res: Response) => {
+router.post('/json', requirePermission('backups:create'), async (_req: Request, res: Response) => {
   const result = await runJsonBackup();
   res.json(result);
 });
 
-router.get('/list', async (_req: Request, res: Response) => {
+router.get('/list', canRead, async (_req: Request, res: Response) => {
   const logs = await prisma.backupLog.findMany({ orderBy: { createdAt: 'desc' } });
   res.json(logs);
 });
 
-router.get('/download/:fileName', (req: Request, res: Response) => {
+router.get('/download/:fileName', canRead, (req: Request, res: Response) => {
   const safe = req.params.fileName.replace(/[^a-zA-Z0-9\-_.]/g, '');
   const filePath = path.join(BACKUP_DIR, safe);
 
@@ -66,7 +76,7 @@ router.get('/download/:fileName', (req: Request, res: Response) => {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
-router.post('/restore/json', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/restore/json', requirePermission('backups:restore'), upload.single('file'), async (req: Request, res: Response) => {
   if (!req.file) {
     res.status(400).json({ error: 'No file uploaded' });
     return;
@@ -94,7 +104,10 @@ router.post('/restore/json', upload.single('file'), async (req: Request, res: Re
         falsePositives?: string;
         references?: string;
         testNotes?: string;
+        sigmaId?: string | null;
+        sigmaYaml?: string | null;
       } | null;
+      sysmonEvents?: { source: string; sysmonEvent: { eventId: number } }[];
       splCommand?: {
         command?: string;
         group?: string;
@@ -189,6 +202,8 @@ router.post('/restore/json', upload.single('file'), async (req: Request, res: Re
               falsePositives: p.rule.falsePositives,
               references: p.rule.references,
               testNotes: p.rule.testNotes,
+              sigmaId: p.rule.sigmaId ?? null,
+              sigmaYaml: p.rule.sigmaYaml ?? null,
             },
             update: {
               status: p.rule.status || 'draft',
@@ -200,6 +215,8 @@ router.post('/restore/json', upload.single('file'), async (req: Request, res: Re
               falsePositives: p.rule.falsePositives,
               references: p.rule.references,
               testNotes: p.rule.testNotes,
+              sigmaId: p.rule.sigmaId ?? null,
+              sigmaYaml: p.rule.sigmaYaml ?? null,
             },
           });
         }
@@ -229,6 +246,7 @@ router.post('/restore/json', upload.single('file'), async (req: Request, res: Re
           });
         }
 
+        await restoreManualSysmonLinks(existing.id, p.sysmonEvents);
         restored++;
       } else {
         const created = await prisma.page.create({
@@ -260,6 +278,8 @@ router.post('/restore/json', upload.single('file'), async (req: Request, res: Re
               falsePositives: p.rule.falsePositives,
               references: p.rule.references,
               testNotes: p.rule.testNotes,
+              sigmaId: p.rule.sigmaId ?? null,
+              sigmaYaml: p.rule.sigmaYaml ?? null,
             },
           });
         }
@@ -279,6 +299,7 @@ router.post('/restore/json', upload.single('file'), async (req: Request, res: Re
           });
         }
 
+        await restoreManualSysmonLinks(created.id, p.sysmonEvents);
         restored++;
       }
     } catch (e) {
@@ -287,10 +308,11 @@ router.post('/restore/json', upload.single('file'), async (req: Request, res: Re
     }
   }
 
+  await syncAllSysmonLinks();
   res.json({ restored, skipped, errors });
 });
 
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', requirePermission('backups:delete'), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const log = await prisma.backupLog.findUnique({ where: { id } });
 

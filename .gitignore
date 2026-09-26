@@ -12,3 +12,5 @@ frontend/dist/
 backend/generated/
 .claude/
 
+__pycache__/
+.venv/

@@ -5,6 +5,13 @@ A self-hosted web application for learning, documenting, and organizing detectio
 ## Features
 - Wiki-style pages with [[backlinks]] and Markdown editing
 - Structured detection rules with MITRE ATT&CK mapping and SPL queries
+- **Sigma**: import `.yml` rules (single or multi-document), export one or all rules, and convert
+  Sigma to SPL (Splunk), KQL (Defender XDR / Sentinel ASIM), EQL and Lucene (Elastic) via pySigma
+- **ATT&CK coverage heatmap** of your rules (ATT&CK Enterprise v19) with per-technique drill-down and
+  export as an [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) layer
+- **Sysmon ↔ rules ↔ data sources**: each Sysmon event lists the rules and data sources that depend
+  on it (e.g. "which rules need Event ID 10?"), inferred from the SPL / Sigma logsource or set manually
+- Role-based access (admin / editor / viewer) enforced by the API
 - SPL command cheat-sheet library with searchable cards
 - Global search (Cmd+K) across all content
 - Tag and category organization
@@ -57,13 +64,23 @@ docker compose up -d --build # http://localhost
 
 ## Local development without Docker
 
-Requires Node.js 20+ and a MySQL 8 server.
+Requires Node.js 20+, a MySQL 8 server and (for Sigma conversion) Python 3.11+.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d mysql   # optional: MySQL on :3306
 cp backend/.env.example backend/.env
 cd backend && npm install && npx prisma db push && npm run dev     # API on :3001
 cd frontend && npm install && npm run dev                          # UI on :5173
+cd sigma && python -m venv .venv && .venv/bin/pip install -r requirements.txt \
+  && .venv/bin/uvicorn app:app --port 8000                         # Sigma service on :8000
+```
+
+The Sigma service is optional: without it Sigma import/export still works, only query
+conversion is unavailable.
+
+To refresh the bundled ATT&CK dataset after a new MITRE release:
+```bash
+cd backend && node scripts/update-attack-data.js
 ```
 
 The database schema is managed with `prisma db push` (there are no migration files).
@@ -85,7 +102,22 @@ when running the backend directly on the host.
 | DATABASE_URL | — | Backend-only (host dev); built automatically in Docker |
 | BACKUP_DIR | ../backups (`/backups` in Docker) | Backup and generated-document directory |
 | CORS_ORIGIN | * | Allowed CORS origin for the API |
+| SIGMA_SERVICE_URL | http://localhost:8000 (`http://sigma:8000` in Docker) | pySigma conversion service |
 | PORT | 3001 | Backend port |
+
+## Users & permissions
+
+Every API endpoint except login and health requires a logged-in user; roles are re-checked on
+each request, so role changes and deactivations apply immediately.
+
+| Role | Can |
+|---|---|
+| viewer | Read pages, rules, tags, docs; convert Sigma; view coverage |
+| editor | Everything a viewer can, plus create/edit/delete content, import Sigma, create backups |
+| admin | Everything, plus users, audit log, custom page types, restore/delete backups |
+
+The default `admin` / `detectkb` password (and any password set by an admin) must be changed at
+first login. After 10 failed logins for the same user from one IP, login is blocked for 15 minutes.
 
 ## Backup & Restore
 - Click "Backup Now" in the Backups section to export a JSON snapshot

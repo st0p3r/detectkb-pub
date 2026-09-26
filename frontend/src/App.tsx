@@ -13,6 +13,8 @@ import { BackupPage } from '@/features/backup/BackupPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { FilteredPagesPage } from '@/features/pages/FilteredPagesPage';
 import { LoginPage } from '@/features/auth/LoginPage';
+import { ChangePasswordPage } from '@/features/auth/ChangePasswordPage';
+import { AttackCoveragePage } from '@/features/attack/AttackCoveragePage';
 import { AuthProvider } from '@/features/auth/AuthContext';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
 import { UserManagementPage } from '@/features/users/UserManagementPage';
@@ -44,6 +46,7 @@ export default function App() {
       <Routes>
         {/* Public route: login page (no sidebar layout) */}
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/change-password" element={<ChangePasswordPage />} />
 
         {/* Protected routes: ProtectedRoute acts as guard, Layout provides <Outlet /> */}
         <Route element={<ProtectedRoute />}>
@@ -58,6 +61,7 @@ export default function App() {
             <Route path="/pages/:slug" element={<PageViewPage />} />
             <Route path="/pages/:slug/edit" element={<PageEditorPage />} />
             <Route path="/rules" element={<RulesPage />} />
+            <Route path="/attack-coverage" element={<AttackCoveragePage />} />
             <Route path="/spl-library" element={<SplLibraryPage />} />
             <Route path="/data-sources" element={
               <FilteredPagesPage

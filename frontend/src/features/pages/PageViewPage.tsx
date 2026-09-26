@@ -3,7 +3,10 @@ import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download } from 'lucide-react';
-import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, type Page } from '@/lib/api';
+import { getPage, deletePage, updatePage, listPages, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, type Page } from '@/lib/api';
+import { SigmaPanel } from '@/features/sigma/SigmaPanel';
+import { useAuth } from '@/features/auth/AuthContext';
+import { useToast } from '@/hooks/useToast';
 import { TypeBadge } from '@/components/ui/TypeBadge';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
@@ -159,6 +162,38 @@ function RulePanel({ rule }: { rule: NonNullable<Page['rule']> }) {
           <p className="text-sm text-foreground/80 whitespace-pre-wrap">{rule.testNotes}</p>
         </CollapsibleSection>
       )}
+
+      {rule.sigmaYaml && (
+        <CollapsibleSection
+          label="Sigma Rule & Conversions"
+          isOpen={!!openSections['sigma']}
+          onToggle={() => toggleSection('sigma')}
+        >
+          <SigmaPanel sigmaYaml={rule.sigmaYaml} />
+        </CollapsibleSection>
+      )}
+    </div>
+  );
+}
+
+/** Sysmon events a rule / data source depends on, linking to the Sysmon reference. */
+function SysmonLinksBar({ links }: { links: NonNullable<Page['sysmonEvents']> }) {
+  if (!links.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-6 py-3 border-b border-border bg-muted/10">
+      <span className="text-xs font-medium text-muted-foreground mr-1">Sysmon events:</span>
+      {links.map(({ source, sysmonEvent: e }) => (
+        <Link
+          key={e.eventId}
+          to={`/sysmon-events?event=${e.eventId}`}
+          title={source === 'auto' ? 'Detected from the query / Sigma logsource' : 'Linked manually'}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent"
+        >
+          <span className="font-mono font-semibold">{e.eventId}</span>
+          {e.name}
+          {source === 'auto' && <span className="text-muted-foreground">·auto</span>}
+        </Link>
+      ))}
     </div>
   );
 }
@@ -344,6 +379,20 @@ export function PageViewPage() {
   const [deleting, setDeleting] = useState(false);
   const [pinning, setPinning] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
+
+  async function handleExportSigma() {
+    if (!page) return;
+    try {
+      const isSkeleton = await downloadSigmaRule(page.id, page.slug);
+      if (isSkeleton) {
+        toast('This rule has no Sigma source — exported a skeleton; complete its detection logic', 'info');
+      }
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Sigma export failed'), 'error');
+    }
+  }
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [allPages, setAllPages] = useState<{ title: string; slug: string }[]>([]);
   const [backlinks, setBacklinks] = useState<{ id: number; title: string; slug: string; type: string }[]>([]);
@@ -490,6 +539,19 @@ export function PageViewPage() {
             <Download className="w-3.5 h-3.5" />
             {exportingPdf ? 'Exporting…' : 'PDF'}
           </button>
+          {page.type === 'RULE' && page.rule && (
+            <button
+              onClick={handleExportSigma}
+              aria-label="Export as Sigma"
+              title="Export as Sigma YAML"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Sigma
+            </button>
+          )}
+          {hasPermission('pages:update') && (
+          <>
           <button
             onClick={() => navigate(`/pages/${page.slug}/edit`)}
             aria-label="Edit page"
@@ -513,6 +575,9 @@ export function PageViewPage() {
             )}
             {page.isPinned ? 'Unpin' : 'Pin'}
           </button>
+          </>
+          )}
+          {hasPermission('pages:delete') && (
           <button
             onClick={() => setShowDeleteConfirm(true)}
             disabled={deleting}
@@ -523,6 +588,7 @@ export function PageViewPage() {
             <Trash2 className="w-3.5 h-3.5" />
             Delete
           </button>
+          )}
         </div>
       </div>
 
@@ -538,6 +604,8 @@ export function PageViewPage() {
         {page.type === 'RULE' && page.rule && (
           <RulePanel rule={page.rule} />
         )}
+
+        <SysmonLinksBar links={page.sysmonEvents ?? []} />
 
         <div className="px-6 py-6">
           {page.contentMd ? (

@@ -6,7 +6,15 @@ interface AuthContextValue {
   roles: string[];
   permissions: string[];
   isAuthenticated: boolean;
-  login: (token: string, username: string, roles?: string[], permissions?: string[]) => void;
+  mustChangePassword: boolean;
+  login: (
+    token: string,
+    username: string,
+    roles?: string[],
+    permissions?: string[],
+    mustChangePassword?: boolean
+  ) => void;
+  passwordChanged: () => void;
   logout: () => void;
   hasPermission: (permission: string) => boolean;
   hasRole: (role: string) => boolean;
@@ -34,9 +42,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try { return JSON.parse(localStorage.getItem('authPermissions') || '[]'); } catch { return []; }
   });
 
+  const [mustChangePassword, setMustChangePassword] = useState<boolean>(
+    () => localStorage.getItem('authMustChangePassword') === 'true'
+  );
+
   const login = useCallback(
-    (newToken: string, newUsername: string, newRoles: string[] = [], newPermissions: string[] = []) => {
+    (
+      newToken: string,
+      newUsername: string,
+      newRoles: string[] = [],
+      newPermissions: string[] = [],
+      newMustChangePassword = false
+    ) => {
       localStorage.setItem('authToken', newToken);
+      localStorage.setItem('authMustChangePassword', String(newMustChangePassword));
+      setMustChangePassword(newMustChangePassword);
       localStorage.setItem('authUsername', newUsername);
       localStorage.setItem('authRoles', JSON.stringify(newRoles));
       localStorage.setItem('authPermissions', JSON.stringify(newPermissions));
@@ -48,7 +68,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const passwordChanged = useCallback(() => {
+    localStorage.removeItem('authMustChangePassword');
+    setMustChangePassword(false);
+  }, []);
+
   const logout = useCallback(() => {
+    localStorage.removeItem('authMustChangePassword');
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUsername');
     localStorage.removeItem('authRoles');
@@ -77,7 +103,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         roles,
         permissions,
         isAuthenticated: !!token,
+        mustChangePassword,
         login,
+        passwordChanged,
         logout,
         hasPermission,
         hasRole,

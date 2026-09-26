@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Users, Plus, Pencil, Shield, RefreshCw, KeyRound, X, Check } from 'lucide-react';
+import { Users, Plus, Shield, RefreshCw, KeyRound, X, Check } from 'lucide-react';
 import {
   listUsers, listRoles, createUser, updateUserRoles, toggleUser, resetUserPassword,
   type UserData, type RoleData,

@@ -17,22 +17,34 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Response interceptor: on 401 clear token and redirect to login
+// Response interceptor: on 401 clear token and redirect to login;
+// on a forced password change, send the user to the change-password screen.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status;
+    const path = window.location.pathname;
+    if (status === 401) {
       // Only redirect if this wasn't already a login attempt
       const isLoginEndpoint = error.config?.url?.includes('/api/auth/login');
-      if (!isLoginEndpoint) {
+      if (!isLoginEndpoint && path !== '/login') {
         localStorage.removeItem('authToken');
         localStorage.removeItem('authUsername');
         window.location.href = '/login';
       }
+    } else if (status === 403 && error.response?.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+      localStorage.setItem('authMustChangePassword', 'true');
+      if (path !== '/change-password') window.location.href = '/change-password';
     }
     return Promise.reject(error);
   }
 );
+
+/** Human-readable message from an API error. */
+export function apiErrorMessage(err: unknown, fallback = 'Something went wrong'): string {
+  const e = err as { response?: { data?: { error?: string } }; message?: string };
+  return e?.response?.data?.error || e?.message || fallback;
+}
 
 export async function getHealth() {
   const { data } = await api.get('/api/health');
@@ -53,6 +65,8 @@ export interface DetectionRuleData {
   falsePositives?: string;
   references?: string;
   testNotes?: string;
+  sigmaId?: string | null;
+  sigmaYaml?: string | null;
 }
 
 export interface RuleWithPage extends DetectionRuleData {
@@ -72,6 +86,12 @@ export interface Page {
   category: { id: number; name: string; color?: string } | null;
   rule?: DetectionRuleData | null;
   splCommand?: SplCommandData | null;
+  sysmonEvents?: PageSysmonLink[];
+}
+
+export interface PageSysmonLink {
+  source: 'auto' | 'manual';
+  sysmonEvent: { id: number; eventId: number; name: string; category: string };
 }
 
 export interface Category {
@@ -463,11 +483,143 @@ export interface SysmonEvent {
   detectionValue: string;
   isBuiltIn: boolean;
   createdAt: string;
+  rules: SysmonLinkedPage[];
+  dataSources: SysmonLinkedPage[];
+  otherPages: SysmonLinkedPage[];
+}
+
+export interface SysmonLinkedPage {
+  id: number;
+  title: string;
+  slug: string;
+  type: string;
+  source: 'auto' | 'manual';
+  status: string | null;
+  severity: string | null;
 }
 
 export async function listSysmonEvents(params?: { category?: string; q?: string }) {
   const { data } = await api.get('/api/sysmon-events', { params });
   return data as SysmonEvent[];
+}
+
+/** Sets the manually chosen Sysmon events of a page (auto-detected links are kept). */
+export async function setPageSysmonLinks(pageId: number, eventIds: number[]) {
+  const { data } = await api.put(`/api/sysmon-events/links/${pageId}`, { eventIds });
+  return data as PageSysmonLink[];
+}
+
+// --- Sigma ---
+
+export interface SigmaTarget {
+  id: string;
+  label: string;
+  language: string;
+}
+
+export interface SigmaConversion {
+  target: SigmaTarget;
+  queries: string[];
+  pipelineApplied: boolean;
+}
+
+export interface SigmaImportResult {
+  created: { title: string; slug: string }[];
+  updated: { title: string; slug: string }[];
+  skipped: { title: string; reason: string }[];
+  errors: { file: string; error: string }[];
+  warnings: string[];
+}
+
+export async function getSigmaTargets() {
+  const { data } = await api.get('/api/sigma/targets');
+  return data as { available: boolean; targets: SigmaTarget[]; error?: string };
+}
+
+export async function convertSigma(rule: string, target: string) {
+  const { data } = await api.post('/api/sigma/convert', { rule, target });
+  return data as SigmaConversion;
+}
+
+export async function importSigma(payload: {
+  files: { name: string; content: string }[];
+  overwrite?: boolean;
+  convertTo?: string | null;
+}) {
+  const { data } = await api.post('/api/sigma/import', payload);
+  return data as SigmaImportResult;
+}
+
+function saveBlob(data: BlobPart, fileName: string, type: string) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Downloads one rule as Sigma YAML; resolves to true when it was a generated skeleton. */
+export async function downloadSigmaRule(pageId: number, slug: string) {
+  const response = await api.get(`/api/sigma/export/${pageId}`, { responseType: 'text' });
+  saveBlob(response.data, `${slug}.yml`, 'application/yaml');
+  return response.headers['x-sigma-skeleton'] === 'true';
+}
+
+/** Downloads all rules as one multi-document Sigma YAML; resolves to the number of rules. */
+export async function downloadSigmaRules(params: { status?: string; skeletons?: boolean }) {
+  const response = await api.get('/api/sigma/export', {
+    params: { status: params.status || undefined, skeletons: params.skeletons ? '1' : undefined },
+    responseType: 'text',
+  });
+  saveBlob(response.data, 'detectkb-sigma-rules.yml', 'application/yaml');
+  return Number(response.headers['x-sigma-rule-count'] ?? 0);
+}
+
+// --- MITRE ATT&CK ---
+
+export interface AttackTactic {
+  id: string;
+  shortname: string;
+  name: string;
+}
+
+export interface AttackTechnique {
+  id: string;
+  name: string;
+  tactics: string[];
+}
+
+export interface CoveringRule {
+  pageId: number;
+  title: string;
+  slug: string;
+  status: string;
+  severity: string;
+}
+
+export interface AttackCoverage {
+  attackVersion: string | null;
+  tactics: AttackTactic[];
+  techniques: AttackTechnique[];
+  coverage: Record<string, CoveringRule[]>;
+  unknownTechniques: { id: string; rules: CoveringRule[] }[];
+  summary: { rulesAnalyzed: number; coveredTechniques: number; totalTechniques: number };
+}
+
+export async function getAttackCoverage(status?: string) {
+  const { data } = await api.get('/api/attack/coverage', { params: { status: status || undefined } });
+  return data as AttackCoverage;
+}
+
+export async function downloadNavigatorLayer(status?: string) {
+  const response = await api.get('/api/attack/navigator-layer', {
+    params: { status: status || undefined },
+    responseType: 'text',
+  });
+  saveBlob(response.data, 'detectkb-attack-layer.json', 'application/json');
 }
 
 // --- Activity / Audit ---

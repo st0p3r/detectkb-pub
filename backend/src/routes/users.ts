@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
-import { authMiddleware, requireRole } from '../middleware/auth';
+import { requireRole } from '../middleware/auth';
 
 const router = Router();
 
-router.use(authMiddleware);
 
 // GET /api/users — list all users (admin only)
 router.get('/', requireRole('admin'), async (req, res) => {
@@ -88,6 +87,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
       username,
       email,
       passwordHash,
+      mustChangePassword: true,
       firstName: firstName || null,
       lastName: lastName || null,
       userRoles: roleIds?.length
@@ -229,7 +229,8 @@ router.put('/:id/password', requireRole('admin'), async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
-  await prisma.user.update({ where: { id }, data: { passwordHash } });
+  // A password set by an admin is temporary: the user must pick their own.
+  await prisma.user.update({ where: { id }, data: { passwordHash, mustChangePassword: true } });
 
   await prisma.auditLog.create({
     data: {

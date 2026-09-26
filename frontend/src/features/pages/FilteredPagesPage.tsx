@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Eye, Pencil, Trash2, type LucideIcon } from 'lucide-react';
 import { listPages, deletePage, type Page, type PageType } from '@/lib/api';
-import { TypeBadge } from '@/components/ui/TypeBadge';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';

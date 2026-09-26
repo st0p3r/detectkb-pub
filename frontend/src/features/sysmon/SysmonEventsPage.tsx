@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Shield, ChevronDown, ChevronRight, Copy, Check, Search, Activity } from 'lucide-react';
-import { listSysmonEvents, type SysmonEvent } from '@/lib/api';
+import { Shield, ChevronDown, ChevronRight, Copy, Check, Search, Activity, Database } from 'lucide-react';
+import { listSysmonEvents, type SysmonEvent, type SysmonLinkedPage } from '@/lib/api';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { SeverityBadge } from '@/components/ui/SeverityBadge';
 
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Process:  { bg: 'bg-indigo-500/10',  text: 'text-indigo-400',  dot: '#6366f1' },
@@ -40,13 +43,55 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function EventCard({ event, index }: { event: SysmonEvent; index: number }) {
-  const [expanded, setExpanded] = useState(false);
+function LinkedPageList({ title, icon: Icon, pages, empty }: {
+  title: string;
+  icon: React.ElementType;
+  pages: SysmonLinkedPage[];
+  empty?: string;
+}) {
+  if (!pages.length && !empty) return null;
+  return (
+    <div>
+      <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+        <Icon className="w-3.5 h-3.5" /> {title} ({pages.length})
+      </h4>
+      {pages.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <ul className="space-y-1">
+          {pages.map((p) => (
+            <li key={p.id} className="flex items-center gap-2 flex-wrap text-sm">
+              <Link to={`/pages/${p.slug}`} className="text-primary hover:underline">{p.title}</Link>
+              {p.status && <StatusBadge status={p.status} />}
+              {p.severity && <SeverityBadge severity={p.severity} />}
+              {p.source === 'auto' && (
+                <span className="text-xs text-muted-foreground" title="Detected from the query / Sigma logsource">auto</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function EventCard({ event, index, initiallyExpanded }: { event: SysmonEvent; index: number; initiallyExpanded: boolean }) {
+  const [expanded, setExpanded] = useState(initiallyExpanded);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (initiallyExpanded) {
+      setExpanded(true);
+      ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [initiallyExpanded]);
+  const ruleCount = event.rules.length;
   const cat = CATEGORY_COLORS[event.category] ?? { bg: 'bg-slate-500/10', text: 'text-slate-400', dot: '#94a3b8' };
   const val = VALUE_COLORS[event.detectionValue] ?? VALUE_COLORS.medium;
 
   return (
     <div
+      ref={ref}
+      id={`event-${event.eventId}`}
       className={`bg-card rounded-xl border border-border/60 overflow-hidden transition-all duration-200 hover:border-border hover:shadow-md animate-fade-in-up stagger-${Math.min(index + 1, 6)}`}
     >
       <button
@@ -68,6 +113,17 @@ function EventCard({ event, index }: { event: SysmonEvent; index: number }) {
             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${val.chip}`}>
               {event.detectionValue}
             </span>
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-medium border ${ruleCount ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 'bg-muted text-muted-foreground border-border'}`}
+              title="Detection rules that depend on this event"
+            >
+              {ruleCount ? `${ruleCount} rule${ruleCount === 1 ? '' : 's'}` : 'no rules'}
+            </span>
+            {event.dataSources.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-sky-500/10 text-sky-500 border border-sky-500/20">
+                {event.dataSources.length} data source{event.dataSources.length === 1 ? '' : 's'}
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{event.description}</p>
         </div>
@@ -79,6 +135,15 @@ function EventCard({ event, index }: { event: SysmonEvent; index: number }) {
 
       {expanded && (
         <div className="border-t border-border/60 px-5 py-4 space-y-4 bg-muted/20">
+          <LinkedPageList
+            title="Detection rules using this event"
+            icon={Shield}
+            pages={event.rules}
+            empty="No detection rule depends on this event yet."
+          />
+          <LinkedPageList title="Data sources" icon={Database} pages={event.dataSources} />
+          <LinkedPageList title="Other pages" icon={Activity} pages={event.otherPages} />
+
           {event.keyFields && (
             <div>
               <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Key Fields</h4>
@@ -120,15 +185,21 @@ function EventCard({ event, index }: { event: SysmonEvent; index: number }) {
   );
 }
 
+type CoverageFilter = 'all' | 'covered' | 'uncovered';
+
 export function SysmonEventsPage() {
+  const [searchParams] = useSearchParams();
+  const focusEvent = Number(searchParams.get('event')) || null;
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [coverage, setCoverage] = useState<CoverageFilter>('all');
 
   const { data: events = [], isLoading } = useQuery({
     queryKey: ['sysmon-events'],
     queryFn: () => listSysmonEvents(),
-    staleTime: 5 * 60 * 1000,
+    staleTime: 30 * 1000,
   });
+  const coveredCount = events.filter((e) => e.rules.length > 0).length;
 
   const categories = Array.from(new Set(events.map((e) => e.category))).sort();
 
@@ -136,7 +207,9 @@ export function SysmonEventsPage() {
     const matchCat = !activeCategory || e.category === activeCategory;
     const q = search.toLowerCase();
     const matchSearch = !q || e.name.toLowerCase().includes(q) || e.description.toLowerCase().includes(q) || (e.attackPatterns ?? '').toLowerCase().includes(q) || (e.detectionTips ?? '').toLowerCase().includes(q);
-    return matchCat && matchSearch;
+    const matchCoverage =
+      coverage === 'all' || (coverage === 'covered' ? e.rules.length > 0 : e.rules.length === 0);
+    return matchCat && matchSearch && matchCoverage;
   });
 
   return (
@@ -148,7 +221,9 @@ export function SysmonEventsPage() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-foreground">Sysmon Event IDs</h1>
-          <p className="text-muted-foreground text-sm">All 29 Sysmon events — categories, detection tips, and MITRE mappings</p>
+          <p className="text-muted-foreground text-sm">
+            Categories, detection tips, MITRE mappings — and which of your rules and data sources depend on each event
+          </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <span className="px-3 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-sm font-medium border border-indigo-500/20">
@@ -168,6 +243,22 @@ export function SysmonEventsPage() {
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2.5 rounded-lg border border-border bg-card text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
           />
+        </div>
+        <div className="flex rounded-lg border border-border bg-card p-0.5 text-xs font-medium" role="group" aria-label="Rule coverage">
+          {([
+            ['all', 'All'],
+            ['covered', `With rules (${coveredCount})`],
+            ['uncovered', `No rules (${events.length - coveredCount})`],
+          ] as [CoverageFilter, string][]).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setCoverage(key)}
+              aria-pressed={coverage === key}
+              className={`px-3 py-2 rounded-md transition-colors ${coverage === key ? 'bg-indigo-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -211,7 +302,7 @@ export function SysmonEventsPage() {
       ) : (
         <div className="space-y-3">
           {filtered.map((event, i) => (
-            <EventCard key={event.id} event={event} index={i} />
+            <EventCard key={event.id} event={event} index={i} initiallyExpanded={event.eventId === focusEvent} />
           ))}
         </div>
       )}

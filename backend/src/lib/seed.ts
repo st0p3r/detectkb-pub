@@ -68,6 +68,7 @@ export async function seedDatabase() {
 
     // Try to load persisted hash from config.json (from old single-user system)
     let passwordHash: string | null = null;
+    let usesDefaultPassword = false;
     const configPath = path.join(process.cwd(), 'data', 'config.json');
     try {
       const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -81,6 +82,7 @@ export async function seedDatabase() {
         passwordHash = process.env.ADMIN_PASSWORD_HASH;
       } else {
         const plain = process.env.ADMIN_PASSWORD || 'detectkb';
+        usesDefaultPassword = plain === 'detectkb';
         passwordHash = await bcrypt.hash(plain, 10);
       }
     }
@@ -92,6 +94,8 @@ export async function seedDatabase() {
         email: adminEmail,
         passwordHash,
         isActive: true,
+        // The well-known default password must be replaced on first login
+        mustChangePassword: usesDefaultPassword,
       },
     });
 

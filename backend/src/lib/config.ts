@@ -11,6 +11,8 @@ export const JWT_SECRET = process.env.JWT_SECRET || DEV_JWT_SECRET;
 export const BACKUP_DIR = process.env.BACKUP_DIR || path.join(process.cwd(), '..', 'backups');
 export const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
+export const SIGMA_SERVICE_URL = (process.env.SIGMA_SERVICE_URL || 'http://localhost:8000').replace(/\/$/, '');
+
 if (NODE_ENV === 'production' && JWT_SECRET === DEV_JWT_SECRET) {
   console.warn('[config] WARNING: JWT_SECRET is not set — using the insecure development default.');
 }

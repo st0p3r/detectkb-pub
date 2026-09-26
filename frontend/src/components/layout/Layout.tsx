@@ -26,7 +26,7 @@ function LayoutInner({ darkMode, onToggleDark, collapsed }: LayoutProps & { coll
 
   return (
     <>
-      <div className={`flex-1 ${marginLeft} flex flex-col bg-[hsl(var(--background))] transition-all duration-200`}>
+      <div className={`flex-1 min-w-0 ${marginLeft} flex flex-col bg-[hsl(var(--background))] transition-all duration-200`}>
         <TopBar darkMode={darkMode} onToggleDark={onToggleDark} collapsed={collapsed} />
         <main className="flex-1 overflow-y-auto mt-14 p-6">
           <div key={location.pathname} className="animate-fade-in-up">

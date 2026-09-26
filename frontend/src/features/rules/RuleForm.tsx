@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import type { DetectionRuleData } from '@/lib/api';
+import { SigmaPanel } from '@/features/sigma/SigmaPanel';
 
 const STATUS_OPTIONS = [
   { value: 'draft', label: 'Draft', style: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
@@ -130,6 +131,20 @@ export function RuleForm({ value, onChange }: RuleFormProps) {
             <SplCopyButton text={value.splQuery ?? ''} />
           </div>
         </div>
+
+        {/* Sigma */}
+        <details className="group rounded-md border border-border" open={!!value.sigmaYaml}>
+          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium">
+            Sigma rule <span className="font-normal text-muted-foreground">(optional — source for SPL/KQL/EQL conversion and Sigma export)</span>
+          </summary>
+          <div className="px-3 pb-3">
+            <SigmaPanel
+              sigmaYaml={value.sigmaYaml ?? ''}
+              onChange={(yaml) => set('sigmaYaml', yaml)}
+              onUseAsSpl={(spl) => set('splQuery', spl)}
+            />
+          </div>
+        </details>
 
         {/* MITRE */}
         <div className="flex flex-wrap gap-4">

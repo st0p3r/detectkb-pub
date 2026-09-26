@@ -2,7 +2,7 @@ import { Router } from 'express';
 import path from 'path';
 import { promises as fsp } from 'fs';
 import { prisma } from '../lib/prisma';
-import { authMiddleware } from '../middleware/auth';
+import { guard } from '../middleware/auth';
 import {
   generateHTMLReport,
   generatePDFReport,
@@ -15,7 +15,7 @@ import {
 
 const router = Router();
 
-router.use(authMiddleware);
+router.use(guard('docs', { checkReads: true }));
 
 // POST /api/docs/html — generate HTML report
 router.post('/html', async (req, res) => {

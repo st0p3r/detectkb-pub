@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { HardDrive, Download, Trash2, Upload, AlertTriangle, RefreshCw } from 'lucide-react';
 import { BackupLog, createJsonBackup, listBackups, deleteBackup, restoreFromJson, downloadBackup } from '@/lib/api';
 import { useToast } from '@/hooks/useToast';
@@ -27,7 +27,7 @@ export function BackupPage() {
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
-  const fetchBackups = async () => {
+  const fetchBackups = useCallback(async () => {
     try {
       const data = await listBackups();
       setBackups(data);
@@ -36,11 +36,11 @@ export function BackupPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     fetchBackups();
-  }, []);
+  }, [fetchBackups]);
 
   const handleBackupNow = async () => {
     setBacking(true);
