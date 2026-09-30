@@ -5,6 +5,9 @@ import { apiErrorMessage, getGraphPaths, type GraphEdge, type GraphNode } from '
 import { NodePicker } from './NodePicker';
 import { useGroupStyle } from './useGroupStyle';
 import { cardText } from './nodeCard';
+import { cn } from '@/lib/utils';
+import { BasisBadge } from '@/components/ui/BasisBadge';
+import { LINK_BASIS } from '@/lib/linkBasis';
 
 interface PathViewProps {
   from: string | null;
@@ -56,9 +59,10 @@ export function PathView({ from, to, onChange, onExplore }: PathViewProps) {
   const [picked, setPicked] = useState(new Map<string, GraphNode>());
   const [status, setStatus] = useState('');
   const [links, setLinks] = useState(false);
+  const [strict, setStrict] = useState(false);
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['graph-paths', from, to, status, links],
-    queryFn: () => getGraphPaths(from!, to!, { status, links }),
+    queryKey: ['graph-paths', from, to, status, links, strict],
+    queryFn: () => getGraphPaths(from!, to!, { status, links, strict }),
     enabled: !!from && !!to,
   });
   useEffect(() => {
@@ -89,6 +93,10 @@ export function PathView({ from, to, onChange, onExplore }: PathViewProps) {
         <NodePicker label="To" value={pick(to)} onChange={choose('to')} />
         <div className="flex items-center gap-3 ml-auto">
           {isFetching && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
+          <label className="flex items-center gap-2 text-sm" title="Only official, declared and manual relationships — no inferred telemetry links or tool name matches">
+            <input type="checkbox" checked={strict} onChange={(e) => setStrict(e.target.checked)} className="w-4 h-4" />
+            Certain links only
+          </label>
           <label className="flex items-center gap-2 text-sm" title="Also step along [[wiki links]] and through concept, note and other pages">
             <input type="checkbox" checked={links} onChange={(e) => setLinks(e.target.checked)} className="w-4 h-4" />
             Use wiki links
@@ -136,7 +144,7 @@ export function PathView({ from, to, onChange, onExplore }: PathViewProps) {
           </div>
         ) : (
           <>
-            <p className="text-sm text-muted-foreground mb-4">
+            <p className="text-sm text-muted-foreground mb-4" title="Dashed steps are weaker evidence: inferred telemetry links and tool names found in a rule's text">
               {data.paths.length === 8 ? 'The first 8' : data.paths.length} shortest path{data.paths.length === 1 ? '' : 's'} ·{' '}
               {data.paths[0].length - 1} step{data.paths[0].length === 2 ? '' : 's'} · click a node to explore from it
             </p>
@@ -151,13 +159,19 @@ export function PathView({ from, to, onChange, onExplore }: PathViewProps) {
                     const end = j === 0 || j === path.length - 1;
                     return (
                       <React.Fragment key={id}>
-                        {prev && (
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground shrink-0">
-                            <span className="w-3 h-px bg-border" />
-                            {relationLabel(edgeOf.get([prev, id].sort().join('|')), prev, byId.get(prev)!, n)}
-                            <span className="w-3 h-px bg-border" />
-                          </span>
-                        )}
+                        {prev &&
+                          (() => {
+                            const edge = edgeOf.get([prev, id].sort().join('|'));
+                            const weak = edge?.basis === 'inferred' || edge?.basis === 'text-match';
+                            return (
+                              <span className="flex items-center gap-1 text-[11px] text-muted-foreground shrink-0" title={edge ? LINK_BASIS[edge.basis]?.hint : undefined}>
+                                <span className={cn('w-3 border-t', weak ? 'border-dashed border-amber-500' : 'border-border')} />
+                                {relationLabel(edge, prev, byId.get(prev)!, n)}
+                                {weak && <BasisBadge basis={edge!.basis} />}
+                                <span className={cn('w-3 border-t', weak ? 'border-dashed border-amber-500' : 'border-border')} />
+                              </span>
+                            );
+                          })()}
                         <button
                           onClick={() => onExplore(id)}
                           title={`${n.label} — explore from here`}

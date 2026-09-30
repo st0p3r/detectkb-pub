@@ -347,5 +347,10 @@ export function entryTechniques(data: Obj): string[] {
   return parseTechniqueIds(list(data.mitre).map(str).join(' '));
 }
 
+/** Matchers for every loaded reference entry (see matchText). */
+export async function loadReferenceMatchers() {
+  return buildMatchers(await prisma.referenceEntry.findMany({ select: { kind: true, key: true, name: true, data: true } }));
+}
+
 /** Internal helpers exposed for unit tests. */
 export const __test = { buildMatchers };

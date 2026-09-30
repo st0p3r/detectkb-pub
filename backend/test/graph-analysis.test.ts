@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { CLUSTER_MIN, findPaths, neighbourhood, type Graph, type GraphNode } from '../src/lib/graph';
-import { analyzeImpact, computeFlows, expandLost, otherDataSources, type RuleTelemetry } from '../src/lib/coverage-analysis';
+import { CLUSTER_MIN, findPaths, neighbourhood, type EdgeBasis, type Graph, type GraphNode } from '../src/lib/graph';
+import { alternatives, analyzeImpact, computeFlows, expandLost, otherDataSources, type RuleTelemetry } from '../src/lib/coverage-analysis';
 
 /** Edges default to wiki links; pass the kind as a third element */
-function graphOf(nodes: Partial<GraphNode>[], edges: ([string, string] | [string, string, string])[]): Graph {
+function graphOf(nodes: Partial<GraphNode>[], edges: ([string, string] | [string, string, string] | [string, string, string, string])[]): Graph {
   const map = new Map<string, GraphNode>();
   for (const n of nodes) map.set(n.id!, { label: n.id!, group: 'NOTE', degree: 0, ...n } as GraphNode);
   const adjacency = new Map<string, Set<string>>();
@@ -14,7 +14,7 @@ function graphOf(nodes: Partial<GraphNode>[], edges: ([string, string] | [string
     adjacency.get(b)!.add(a);
   }
   for (const [id, n] of map) n.degree = adjacency.get(id)?.size ?? 0;
-  return { nodes: map, edges: edges.map(([source, target, kind = 'link']) => ({ source, target, kind })), adjacency };
+  return { nodes: map, edges: edges.map(([source, target, kind = 'link', basis = 'declared']) => ({ source, target, kind, basis: basis as EdgeBasis })), adjacency };
 }
 
 describe('findPaths', () => {
@@ -159,6 +159,27 @@ describe('findPaths', () => {
     expect(new Set(paths.map((p) => p[1])).size).toBe(3);
   });
 
+  it('follows only certain relationships in strict mode', () => {
+    const g = graphOf(
+      [
+        { id: 'lolbas:certutil.exe', group: 'lolbas' },
+        { id: 'page:1', group: 'RULE' },
+        { id: 'page:2', group: 'RULE' },
+        { id: 'technique:T1105', group: 'technique' },
+      ],
+      [
+        ['page:1', 'lolbas:certutil.exe', 'reference', 'text-match'],
+        ['page:1', 'technique:T1105', 'technique'],
+        ['lolbas:certutil.exe', 'technique:T1105', 'tool-technique'],
+        ['page:2', 'technique:T1105', 'technique'],
+      ]
+    );
+    expect(findPaths(g, 'page:2', 'lolbas:certutil.exe')).toContainEqual(['page:2', 'technique:T1105', 'lolbas:certutil.exe']);
+    // The rule's text match to the tool is left out
+    expect(findPaths(g, 'page:1', 'lolbas:certutil.exe', { strict: true })).toEqual([['page:1', 'technique:T1105', 'lolbas:certutil.exe']]);
+    expect(findPaths(g, 'page:1', 'lolbas:certutil.exe')).toEqual([['page:1', 'lolbas:certutil.exe']]);
+  });
+
   it('treats log events like Sysmon events, and uses groups only as endpoints', () => {
     const g = graphOf(
       [
@@ -227,6 +248,7 @@ const rule = (pageId: number, sysmon: number[], techniques: string[], extra: Par
     techniques,
     sysmon,
     telemetry: [...sysmon.map((e) => `sysmon:${e}`), ...logs],
+    groups: [],
     ...rest,
   };
 };
@@ -279,6 +301,16 @@ describe('analyzeImpact', () => {
       ['T1003.001', 3, 1, 1],
       ['T1134', 2, 1, 0],
     ]);
+  });
+
+  it('counts a rule lost when an event it needs together with another is gone', () => {
+    const needsBoth = rule(8, [1, 11], ['T1105'], { groups: [['sysmon:1', 'sysmon:11']] });
+    const orSecurity = rule(9, [1, 11], ['T1105'], { groups: [['sysmon:1', 'sysmon:11']], logs: ['windows-security:4688'] });
+    const r2 = analyzeImpact([needsBoth, orSecurity], new Set(['sysmon:11']));
+    expect(Object.fromEntries(r2.rules.map((x) => [x.pageId, x.level]))).toEqual({ 8: 'lost', 9: 'partial' });
+    expect(alternatives(orSecurity)).toEqual([['sysmon:1', 'sysmon:11'], ['windows-security:4688']]);
+    // Without the group, losing one of two events only degrades the rule
+    expect(analyzeImpact([{ ...needsBoth, groups: [] }], new Set(['sysmon:11'])).rules[0].level).toBe('partial');
   });
 
   it('counts a technique uncovered when every rule is lost', () => {

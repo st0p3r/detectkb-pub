@@ -26,6 +26,19 @@ export interface RuleTelemetry {
   sysmon: number[];
   /** Every telemetry key the rule depends on: sysmon:N and log event keys */
   telemetry: string[];
+  /** Keys needed all at once ("Sysmon EventID 1 AND Sysmon EventID 11"), see alternatives() */
+  groups: string[][];
+}
+
+/**
+ * The ways a rule can be fed: each AND group is one alternative (all its keys
+ * are needed), every other key is an alternative of its own.
+ */
+export function alternatives(r: Pick<RuleTelemetry, 'telemetry' | 'groups'>): string[][] {
+  const known = new Set(r.telemetry);
+  const groups = r.groups.map((g) => g.filter((k) => known.has(k))).filter((g) => g.length);
+  const grouped = new Set(groups.flat());
+  return [...groups, ...r.telemetry.filter((k) => !grouped.has(k)).map((k) => [k])];
 }
 
 export interface TelemetryInfo {
@@ -60,6 +73,7 @@ const telemetryCache = kbCache(async (): Promise<TelemetryData> => {
             slug: true,
             sysmonEvents: { select: { sysmonEvent: { select: { eventId: true } } } },
             logEvents: { select: { logEvent: { select: { key: true } } } },
+            telemetryAll: { select: { keys: true } },
           },
         },
       },
@@ -90,6 +104,7 @@ const telemetryCache = kbCache(async (): Promise<TelemetryData> => {
         techniques: Array.from(new Set(parseTechniqueIds(r.mitreTechniques).map(resolveTechniqueId).filter((t): t is string => !!t))),
         sysmon,
         telemetry: [...sysmon.map((e) => `sysmon:${e}`), ...r.page.logEvents.map((l) => l.logEvent.key).sort()],
+        groups: r.page.telemetryAll.map((g) => (Array.isArray(g.keys) ? g.keys.map(String) : [])),
       };
     }),
   };
@@ -112,8 +127,8 @@ export async function loadTelemetryInfo(): Promise<Map<string, TelemetryInfo>> {
  * category:…") is what the links were derived from, so it doesn't count.
  */
 export function otherDataSources(dataSource: string | null, sourceFormat: string | null = null): string[] {
-  // ESCU names are all linked (unknown ones under "Other")
-  if (!dataSource || sourceFormat === 'escu') return [];
+  // ESCU names are all linked (unknown ones under "Other"), and so are Sentinel tables
+  if (!dataSource || sourceFormat === 'escu' || sourceFormat === 'sentinel') return [];
   return dataSource
     .split(/\s*[,;\n]\s*|\s+AND\s+/)
     .map((s) => s.trim().replace(/…$/, ''))
@@ -123,7 +138,7 @@ export function otherDataSources(dataSource: string | null, sourceFormat: string
 
 export type ImpactLevel = 'lost' | 'atRisk' | 'partial';
 
-export interface ImpactedRule extends Pick<RuleTelemetry, 'pageId' | 'title' | 'slug' | 'status' | 'severity' | 'techniques' | 'telemetry'> {
+export interface ImpactedRule extends Pick<RuleTelemetry, 'pageId' | 'title' | 'slug' | 'status' | 'severity' | 'techniques' | 'telemetry' | 'groups'> {
   level: ImpactLevel;
   /** Telemetry keys of the rule that are gone */
   lostEvents: string[];
@@ -152,12 +167,12 @@ export function expandLost(all: Iterable<string>, sources: string[], events: str
 }
 
 /**
- * What stops working if the given telemetry is no longer collected. A rule's
- * telemetry are alternatives (any of them can feed it). Per rule (deprecated
- * rules ignored):
- *  - lost: all its telemetry is gone and it names no other data source
- *  - atRisk: all its telemetry is gone, but it names data sources DetectKB couldn't map
- *  - partial: some of its telemetry is gone
+ * What stops working if the given telemetry is no longer collected. A rule is
+ * fed while any of its alternatives (see alternatives()) is complete. Per rule
+ * (deprecated rules ignored):
+ *  - lost: every alternative lost a key and it names no other data source
+ *  - atRisk: every alternative lost a key, but it names data sources DetectKB couldn't map
+ *  - partial: some alternatives lost a key, others still feed it
  * Per technique: uncovered when all its rules are lost, reduced otherwise.
  */
 export function analyzeImpact(rules: RuleTelemetry[], lostKeys: Set<string>) {
@@ -166,10 +181,12 @@ export function analyzeImpact(rules: RuleTelemetry[], lostKeys: Set<string>) {
   for (const r of active) {
     const lost = r.telemetry.filter((k) => lostKeys.has(k));
     if (!lost.length) continue;
-    const alternatives = otherDataSources(r.dataSource, r.sourceFormat);
-    const level: ImpactLevel = lost.length < r.telemetry.length ? 'partial' : alternatives.length ? 'atRisk' : 'lost';
-    const { pageId, title, slug, status, severity, techniques, telemetry } = r;
-    impacted.push({ pageId, title, slug, status, severity, techniques, telemetry, level, lostEvents: lost, alternatives });
+    const alts = alternatives(r);
+    const remaining = alts.filter((a) => !a.some((k) => lostKeys.has(k))).length;
+    const unmapped = otherDataSources(r.dataSource, r.sourceFormat);
+    const level: ImpactLevel = remaining > 0 ? 'partial' : unmapped.length ? 'atRisk' : 'lost';
+    const { pageId, title, slug, status, severity, techniques, telemetry, groups } = r;
+    impacted.push({ pageId, title, slug, status, severity, techniques, telemetry, groups, level, lostEvents: lost, alternatives: unmapped });
   }
 
   const byTechnique = new Map<string, TechniqueImpact>();

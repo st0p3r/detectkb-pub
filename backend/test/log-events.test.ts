@@ -112,6 +112,33 @@ describe('parseRuleTelemetry', () => {
     expect(r.unrecognised).toEqual([]);
   });
 
+  it('keeps "A AND B" entries as groups that need all their events', () => {
+    const content =
+      'name: x\ndata_source:\n  - Sysmon EventID 1 AND Sysmon EventID 11\n  - Windows Event Log Security 4688 AND Sysmon EventID 11\n  - CrowdStrike ProcessRollup2\nsearch: x';
+    const r = parseRuleTelemetry({ sourceFormat: 'escu', dataSource: null, sourceContent: content });
+    expect(r.groups).toEqual([
+      ['sysmon:1', 'sysmon:11'],
+      ['windows-security:4688', 'sysmon:11'],
+    ]);
+    expect(parseRuleTelemetry({ sourceFormat: null, dataSource: 'Windows Event Log Security 4624 AND Windows Event Log Security 4672' }).groups).toEqual([
+      ['windows-security:4624', 'windows-security:4672'],
+    ]);
+  });
+
+  it('marks links named by the rule as declared and derived ones as inferred', () => {
+    const basis = (r: ReturnType<typeof parseRuleTelemetry>) => Object.fromEntries(r.events.map((e) => [logEventKey(e), e.basis]));
+    expect(basis(parseRuleTelemetry({ sourceFormat: 'sentinel', dataSource: 'SecurityEvent, DeviceProcessEvents', nativeQuery: 'SecurityEvent | where EventID == 4688' }))).toEqual({
+      'windows-security:4688': 'inferred',
+      'mde:deviceprocessevents': 'declared',
+    });
+    // Named in the data source and found in the query: declared wins
+    expect(basis(parseRuleTelemetry({ sourceFormat: null, dataSource: 'Windows Event Log Security 4625', splQuery: 'EventCode=4625' }))).toEqual({
+      'windows-security:4625': 'declared',
+    });
+    const sigma = 'logsource:\n  product: windows\n  category: process_creation\ndetection:\n  sel:\n    Image: x\n  condition: sel';
+    expect(basis(parseRuleTelemetry({ sourceFormat: 'sigma', dataSource: null, sigmaYaml: sigma }))).toEqual({ 'windows-security:4688': 'inferred' });
+  });
+
   it('Elastic: products, narrowed to Security events the query filters on', () => {
     const r = parseRuleTelemetry({
       sourceFormat: 'elastic',
@@ -138,6 +165,8 @@ describe('parseRuleTelemetry', () => {
 describe('parseDataSourcePage', () => {
   it('reads products and Security events named on a data source page', () => {
     expect(keys(parseDataSourcePage('Elastic Defend', 'Endpoint telemetry'))).toEqual(['elastic-defend:*']);
+    expect(keys(parseDataSourcePage('PowerShell Operational Log', 'Script block logging'))).toEqual(['windows-powershell:*']);
+    expect(keys(parseDataSourcePage('Sysmon Operational Log', 'Process events'))).toEqual([]);
     expect(keys(parseDataSourcePage('Windows Security Event Log', 'Collect Event ID 4624 and EventID 4688.'))).toEqual([
       'windows-security:4624',
       'windows-security:4688',

@@ -16,6 +16,8 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { relativeTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import { BasisBadge } from '@/components/ui/BasisBadge';
+import { LINK_BASIS, basisChip } from '@/lib/linkBasis';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -157,11 +159,13 @@ function ReferencesBar({ pageId }: { pageId: number }) {
         <Link
           key={`${r.kind}:${r.key}`}
           to={`/attacker-tools?kind=${r.kind}&key=${encodeURIComponent(r.key)}`}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent"
+          title={LINK_BASIS['text-match'].hint}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-dashed border-border bg-background text-xs hover:bg-accent"
         >
           <span className="text-muted-foreground">{REFERENCE_LABELS[r.kind]}</span> {r.name}
         </Link>
       ))}
+      <BasisBadge basis="text-match" always className="ml-1" />
     </div>
   );
 }
@@ -172,18 +176,21 @@ function SysmonLinksBar({ links }: { links: NonNullable<Page['sysmonEvents']> })
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-6 py-3 border-b border-border bg-muted/10">
       <span className="text-xs font-medium text-muted-foreground mr-1">Sysmon events:</span>
-      {links.map(({ source, sysmonEvent: e }) => (
-        <Link
-          key={e.eventId}
-          to={`/sysmon-events?event=${e.eventId}`}
-          title={source === 'auto' ? 'Detected from the query / Sigma logsource' : 'Linked manually'}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent"
-        >
-          <span className="font-mono font-semibold">{e.eventId}</span>
-          {e.name}
-          {source === 'auto' && <span className="text-muted-foreground">·auto</span>}
-        </Link>
-      ))}
+      {links.map(({ source, basis, sysmonEvent: e }) => {
+        const b = source === 'manual' ? 'manual' : basis;
+        return (
+          <Link
+            key={e.eventId}
+            to={`/sysmon-events?event=${e.eventId}`}
+            title={LINK_BASIS[b]?.hint}
+            className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent', basisChip(b))}
+          >
+            <span className="font-mono font-semibold">{e.eventId}</span>
+            {e.name}
+            <BasisBadge basis={b} />
+          </Link>
+        );
+      })}
     </div>
   );
 }
@@ -197,10 +204,11 @@ function TelemetryBar({ page }: { page: Page }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5 px-6 py-3 border-b border-border bg-muted/10">
       {logs.length > 0 && <span className="text-xs font-medium text-muted-foreground mr-1">Log events:</span>}
-      {logs.map(({ logEvent: e }) => (
-        <Link key={e.key} to={`/log-sources?event=${encodeURIComponent(e.key)}`} title="Detected from the rule's data sources / logsource" className={chip}>
+      {logs.map(({ basis, logEvent: e }) => (
+        <Link key={e.key} to={`/log-sources?event=${encodeURIComponent(e.key)}`} title={LINK_BASIS[basis]?.hint} className={cn(chip, basisChip(basis))}>
           <span className="text-muted-foreground">{e.sourceLabel}</span>
           {e.code === '*' ? 'any event' : /^\d+$/.test(e.code) ? <span className="font-mono font-semibold">{e.code}</span> : e.name}
+          <BasisBadge basis={basis} />
         </Link>
       ))}
       {stories.length > 0 && <span className={cn('text-xs font-medium text-muted-foreground mr-1', logs.length > 0 && 'ml-3')}>Analytic stories:</span>}

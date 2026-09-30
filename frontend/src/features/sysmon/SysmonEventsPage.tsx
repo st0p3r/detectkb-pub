@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Shield, ChevronDown, ChevronRight, Copy, Check, Search, Activity, Database, Loader2 } from 'lucide-react';
 import { getSysmonEventPages, listSysmonEvents, type SysmonEvent, type SysmonLinkedPage } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { BasisBadge } from '@/components/ui/BasisBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
 
 const CATEGORY_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
@@ -69,9 +70,7 @@ function LinkedPageList({ title, icon: Icon, pages, empty }: {
               <Link to={`/pages/${p.slug}`} className="text-primary hover:underline">{p.title}</Link>
               {p.status && <StatusBadge status={p.status} />}
               {p.severity && <SeverityBadge severity={p.severity} />}
-              {p.source === 'auto' && (
-                <span className="text-xs text-muted-foreground" title="Detected from the query / Sigma logsource">auto</span>
-              )}
+              <BasisBadge basis={p.source === 'manual' ? 'manual' : p.basis} />
             </li>
           ))}
           {pages.length > shown.length && (

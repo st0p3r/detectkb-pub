@@ -78,33 +78,74 @@ export function eventIdsFromSigma(sigmaYaml: string): number[] {
   return Array.from(ids);
 }
 
-async function inferEventIds(pageId: number): Promise<number[]> {
-  const page = await prisma.page.findUnique({ where: { id: pageId }, include: { rule: true } });
-  if (!page) return [];
+export type SysmonBasis = 'declared' | 'inferred';
 
+/** Sysmon event IDs a Sigma rule names explicitly (service: sysmon with EventID filters). */
+function sigmaServiceIds(sigmaYaml: string): number[] {
   const ids = new Set<number>();
-  if (page.rule) {
-    const { splQuery, dataSource, sigmaYaml, nativeQuery } = page.rule;
-    eventIdsFromText(`${dataSource ?? ''}\n${splQuery}\n${nativeQuery ?? ''}`).forEach((id) => ids.add(id));
-    if (sigmaYaml) eventIdsFromSigma(sigmaYaml).forEach((id) => ids.add(id));
-  } else if (page.type === 'DATA_SOURCE') {
-    eventIdsFromText(`${page.title}\n${page.contentMd}`).forEach((id) => ids.add(id));
+  for (const { doc } of parseSigmaDocuments(sigmaYaml)) {
+    const logsource = (doc?.logsource ?? {}) as Record<string, unknown>;
+    if (String(logsource.service ?? '').toLowerCase() !== 'sysmon') continue;
+    for (const m of JSON.stringify(doc?.detection ?? {}).matchAll(/"EventID":\s*(\[[^\]]*\]|\d+)/g)) {
+      for (const n of m[1].match(/\d+/g) ?? []) ids.add(Number(n));
+    }
   }
   return Array.from(ids);
 }
 
+/**
+ * The Sysmon events a rule / data source page depends on, and why: declared
+ * when its data source field (or Sigma service: sysmon) names them, inferred
+ * when found in the query or implied by a Sigma category.
+ */
+export function inferSysmonLinks(page: {
+  title: string;
+  type: string;
+  contentMd: string;
+  rule: { splQuery: string; dataSource: string | null; sigmaYaml: string | null; nativeQuery: string | null } | null;
+}): Map<number, SysmonBasis> {
+  const out = new Map<number, SysmonBasis>();
+  const add = (ids: number[], basis: SysmonBasis) => {
+    for (const id of ids) if (out.get(id) !== 'declared') out.set(id, basis);
+  };
+  if (page.rule) {
+    const { splQuery, dataSource, sigmaYaml, nativeQuery } = page.rule;
+    add(eventIdsFromText(`${dataSource ?? ''}\n${splQuery}\n${nativeQuery ?? ''}`), 'inferred');
+    add(eventIdsFromText(dataSource ?? ''), 'declared');
+    if (sigmaYaml) {
+      add(eventIdsFromSigma(sigmaYaml), 'inferred');
+      add(sigmaServiceIds(sigmaYaml), 'declared');
+    }
+  } else if (page.type === 'DATA_SOURCE') {
+    add(eventIdsFromText(`${page.title}\n${page.contentMd}`), 'declared');
+  }
+  return out;
+}
+
+async function inferEventIds(pageId: number): Promise<Map<number, SysmonBasis>> {
+  const page = await prisma.page.findUnique({ where: { id: pageId }, include: { rule: true } });
+  return page ? inferSysmonLinks(page) : new Map();
+}
+
 /** Recomputes the automatically inferred Sysmon links of a page; manual links are kept. */
 export async function syncAutoSysmonLinks(pageId: number): Promise<void> {
-  const eventIds = await inferEventIds(pageId);
-  const events = eventIds.length
-    ? await prisma.sysmonEvent.findMany({ where: { eventId: { in: eventIds } }, select: { id: true } })
+  const inferred = await inferEventIds(pageId);
+  const events = inferred.size
+    ? await prisma.sysmonEvent.findMany({ where: { eventId: { in: Array.from(inferred.keys()) } }, select: { id: true, eventId: true } })
     : [];
-  const desired = new Set(events.map((e) => e.id));
+  const desired = new Map(events.map((e) => [e.id, inferred.get(e.eventId)!]));
 
   const existing = await prisma.pageSysmonEvent.findMany({ where: { pageId } });
   const stale = existing.filter((l) => l.source === 'auto' && !desired.has(l.sysmonEventId));
   const linked = new Set(existing.map((l) => l.sysmonEventId));
-  const missing = Array.from(desired).filter((id) => !linked.has(id));
+  const missing = Array.from(desired.keys()).filter((id) => !linked.has(id));
+  const rebased = existing.filter((l) => l.source === 'auto' && desired.has(l.sysmonEventId) && desired.get(l.sysmonEventId) !== l.basis);
+  for (const l of rebased) {
+    await prisma.pageSysmonEvent.update({
+      where: { pageId_sysmonEventId: { pageId, sysmonEventId: l.sysmonEventId } },
+      data: { basis: desired.get(l.sysmonEventId)! },
+    });
+  }
 
   if (stale.length) {
     await prisma.pageSysmonEvent.deleteMany({
@@ -113,7 +154,7 @@ export async function syncAutoSysmonLinks(pageId: number): Promise<void> {
   }
   if (missing.length) {
     await prisma.pageSysmonEvent.createMany({
-      data: missing.map((sysmonEventId) => ({ pageId, sysmonEventId, source: 'auto' })),
+      data: missing.map((sysmonEventId) => ({ pageId, sysmonEventId, source: 'auto', basis: desired.get(sysmonEventId)! })),
       skipDuplicates: true,
     });
   }
@@ -131,8 +172,8 @@ export async function setManualSysmonLinks(pageId: number, eventIds: number[]): 
     ...keep.map((sysmonEventId) =>
       prisma.pageSysmonEvent.upsert({
         where: { pageId_sysmonEventId: { pageId, sysmonEventId } },
-        create: { pageId, sysmonEventId, source: 'manual' },
-        update: { source: 'manual' },
+        create: { pageId, sysmonEventId, source: 'manual', basis: 'manual' },
+        update: { source: 'manual', basis: 'manual' },
       })
     ),
   ]);

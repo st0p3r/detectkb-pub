@@ -109,6 +109,7 @@ model Page {
   splCommand   SplCommand?
   sysmonEvents PageSysmonEvent[]
   logEvents    PageLogEvent[]
+  telemetryAll TelemetryGroup[]
   stories      RuleStory[]
   isPinned     Boolean           @default(false)
   createdById  Int?
@@ -250,6 +251,9 @@ model PageSysmonEvent {
   pageId        Int
   sysmonEventId Int
   source        String      @default("manual") @db.VarChar(10)
+  // Why the link exists: manual | declared (named in the rule's data source /
+  // Sigma service) | inferred (from the query or the Sigma category)
+  basis         String      @default("inferred") @db.VarChar(12)
   page          Page        @relation(fields: [pageId], references: [id], onDelete: Cascade)
   sysmonEvent   SysmonEvent @relation(fields: [sysmonEventId], references: [id], onDelete: Cascade)
 
@@ -279,11 +283,27 @@ model PageLogEvent {
   pageId     Int
   logEventId Int
   source     String   @default("auto") @db.VarChar(10)
+  // declared (named in the rule's data sources / tables / logsource service) or
+  // inferred (from EventID filters in the query, or a Sigma category mapping)
+  basis      String   @default("declared") @db.VarChar(12)
   page       Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
   logEvent   LogEvent @relation(fields: [logEventId], references: [id], onDelete: Cascade)
 
   @@id([pageId, logEventId])
   @@index([logEventId])
+}
+
+// Telemetry a rule needs all at once ("Sysmon EventID 1 AND Sysmon EventID 11"
+// in ESCU data_source): `keys` = telemetry keys (sysmon:1, windows-security:4688).
+// A rule is fed when any of its alternatives is; each key not in a group is an
+// alternative of its own.
+model TelemetryGroup {
+  id     Int  @id @default(autoincrement())
+  pageId Int
+  keys   Json
+  page   Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
 }
 
 // Splunk analytic stories: scenarios grouping ESCU detections. Rules link to
