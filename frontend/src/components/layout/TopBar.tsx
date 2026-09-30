@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getHealth } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Plus, Sun, Moon, Search } from 'lucide-react';
+import { UserMenu } from './UserMenu';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
@@ -88,6 +89,7 @@ export function TopBar({ darkMode, onToggleDark, collapsed = false }: TopBarProp
           <Plus className="w-4 h-4" />
           New Page
         </Button>
+        <UserMenu />
       </div>
     </header>
   );
