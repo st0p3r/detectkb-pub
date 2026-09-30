@@ -1,6 +1,7 @@
 import { prisma } from './prisma';
 import { REFERENCE_KINDS, ReferenceKind, fetchReferenceData } from './references';
 import { fetchStoryDetails } from './stories';
+import { fetchAtomicIndex } from './atomic';
 
 /**
  * Downloads reference datasets that were never loaded, and the details of
@@ -20,6 +21,15 @@ export function fetchMissingReferenceData(): void {
         console.log(`[references] Loaded ${count} ${REFERENCE_KINDS[kind].label} entries`);
       } catch (err) {
         console.warn(`[references] Could not download ${REFERENCE_KINDS[kind].label}: ${(err as Error).message}`);
+      }
+    }
+    // Atomic Red Team tests
+    if (!(await prisma.atomicTest.count())) {
+      try {
+        const { tests, techniques } = await fetchAtomicIndex();
+        console.log(`[references] Loaded ${tests} Atomic Red Team tests for ${techniques} techniques`);
+      } catch (err) {
+        console.warn(`[references] Could not download Atomic Red Team tests: ${(err as Error).message}`);
       }
     }
     // Descriptions of analytic stories that ESCU rules name
