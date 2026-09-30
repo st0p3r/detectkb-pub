@@ -16,6 +16,9 @@ import { PAGE_SIZES, DEFAULT_PAGE_SIZE, PaginationFooter } from '@/components/ui
 import { useDebounced } from '@/hooks/useDebounced';
 import { RuleImportDialog } from '@/features/rules/RuleImportDialog';
 import { RuleBulkBar } from '@/features/rules/RuleBulkBar';
+import { SaveViewButton } from '@/features/views/SaveViewButton';
+import { RulePreviewDrawer } from '@/features/rules/RulePreviewDrawer';
+import { useListKeyboard } from '@/hooks/useListKeyboard';
 import { SourceBadge } from '@/components/ui/SourceBadge';
 import { SOURCE_STYLES, sourceLabel } from '@/lib/ruleSource';
 import { useAuth } from '@/features/auth/AuthContext';
@@ -209,14 +212,61 @@ export function RulesPage() {
     });
   }
 
+  // Side preview (?preview=slug) and the keyboard-highlighted row
+  const previewSlug = params.get('preview');
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const setPreview = useCallback(
+    (slug: string | null) =>
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (slug) next.set('preview', slug);
+          else next.delete('preview');
+          return next;
+        },
+        { replace: true }
+      ),
+    [setParams]
+  );
+  // A new page of results: highlight the previewed rule if it's on it
   useEffect(() => {
-    if (!selectionCount) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !(e.target as HTMLElement).closest('input, textarea, [role=dialog], [role=toolbar]')) clearSelection();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [selectionCount, clearSelection]);
+    setActiveIndex(previewSlug ? rules.findIndex((r) => r.page.slug === previewSlug) : -1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the rows change
+  }, [data]);
+  function openPreview(index: number) {
+    setActiveIndex(index);
+    setPreview(rules[index].page.slug);
+  }
+  function moveTo(index: number) {
+    setActiveIndex(index);
+    // With the preview open, j / k browse rules in it
+    if (previewSlug) setPreview(rules[index].page.slug);
+  }
+  const sideCols = previewSlug ? ' hidden' : '';
+  useEffect(() => {
+    document.querySelector(`[data-row-index="${activeIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
+
+  useListKeyboard({
+    count: rules.length,
+    active: activeIndex,
+    setActive: moveTo,
+    onOpen: openPreview,
+    onOpenFull: (i) => navigate(`/pages/${rules[i].page.slug}`),
+    onEdit: hasPermission('pages:update') ? (i) => navigate(`/pages/${rules[i].page.slug}/edit`) : undefined,
+    onToggleSelect: (i) => toggleOne(rules[i].id!),
+    onEscape: () => {
+      if (previewSlug) {
+        setPreview(null);
+        return true;
+      }
+      if (selectionCount) {
+        clearSelection();
+        return true;
+      }
+      return false;
+    },
+  });
 
   const [density, setDensity] = useState(readDensity);
   const compact = density === 'compact';
@@ -271,11 +321,11 @@ export function RulesPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className={`max-w-6xl mx-auto transition-[padding] ${previewSlug ? 'lg:pr-[min(640px,55vw)] lg:max-w-none' : ''}`}>
       <Breadcrumbs items={[{ label: 'Detection Rules' }]} />
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div className="flex items-center gap-3">
           <Shield className="w-6 h-6 text-muted-foreground" />
           <h1 className="text-2xl font-semibold tracking-tight">Detection Rules</h1>
@@ -285,7 +335,14 @@ export function RulesPage() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 [&_button]:whitespace-nowrap">
+          <SaveViewButton
+            suggestedName={
+              [q && `“${q}”`, statusFilter !== 'all' && statusFilter, severityFilter !== 'all' && severityFilter, sourceFilter !== 'all' && sourceLabel(sourceFilter), technique, tactic]
+                .filter(Boolean)
+                .join(' · ') || 'Rules'
+            }
+          />
           <div className="relative">
             <button
               onClick={() => setExportMenuOpen((o) => !o)}
@@ -367,6 +424,7 @@ export function RulesPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search title, technique, data source, rule id..."
             aria-label="Search rules"
+            data-page-search
             className="w-full pl-8 pr-8 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
           {isFetching && data && (
@@ -501,9 +559,14 @@ export function RulesPage() {
               <col />
               <col className="w-28" />
               <col className="w-24" />
-              <col className="w-52" />
-              <col className="w-56" />
-              <col className="w-28" />
+              {/* With the preview open these columns are in the drawer; the title keeps its room */}
+              {!previewSlug && (
+                <>
+                  <col className="w-52" />
+                  <col className="w-56" />
+                  <col className="w-28" />
+                </>
+              )}
             </colgroup>
             <thead>
               <tr className="border-b border-border bg-muted/40">
@@ -530,9 +593,9 @@ export function RulesPage() {
                     Severity <SortIndicator col="severity" />
                   </button>
                 </th>
-                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>MITRE Techniques</th>
-                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>Data Source</th>
-                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground`}>
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground${sideCols}`}>MITRE Techniques</th>
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground${sideCols}`}>Data Source</th>
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground${sideCols}`}>
                   <button className={sortBtn} onClick={() => toggleSort('updatedAt')}>
                     Updated <SortIndicator col="updatedAt" />
                   </button>
@@ -540,7 +603,7 @@ export function RulesPage() {
               </tr>
             </thead>
             <tbody>
-              {rules.map((rule) => {
+              {rules.map((rule, rowIndex) => {
                 const techniques = splitChips(rule.mitreTechniques);
                 const shown = techniques.slice(0, compact ? 2 : 3);
                 const isSelected = allMatching || selected.has(rule.id!);
@@ -549,8 +612,12 @@ export function RulesPage() {
                 return (
                   <tr
                     key={rule.id}
+                    data-row-index={rowIndex}
+                    aria-current={rule.page.slug === previewSlug ? 'true' : undefined}
                     className={`border-b border-border last:border-0 transition-colors ${
                       isSelected ? 'bg-primary/5 hover:bg-primary/10' : 'hover:bg-muted/30'
+                    } ${rowIndex === activeIndex ? 'outline outline-2 -outline-offset-2 outline-primary/50' : ''} ${
+                      rule.page.slug === previewSlug ? 'bg-primary/10' : ''
                     }`}
                   >
                     <td className={`pl-4 pr-0 ${cellY}`}>
@@ -566,7 +633,13 @@ export function RulesPage() {
                         )}
                         <Link
                           to={`/pages/${rule.page.slug}`}
-                          title={rule.page.title}
+                          onClick={(e) => {
+                            // Plain click previews; Ctrl/⌘/middle click still opens the page
+                            if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+                            e.preventDefault();
+                            openPreview(rowIndex);
+                          }}
+                          title={`${rule.page.title} — click to preview, Ctrl+click to open`}
                           className={`font-medium text-primary hover:underline focus-visible:ring-2 focus-visible:ring-primary/50 outline-none ${compact ? 'truncate' : 'line-clamp-2'}`}
                         >
                           {rule.page.title}
@@ -594,7 +667,7 @@ export function RulesPage() {
                     <td className={`px-4 ${cellY}`}>
                       <SeverityBadge severity={rule.severity} />
                     </td>
-                    <td className={`px-4 ${cellY}`}>
+                    <td className={`px-4 ${cellY}${sideCols}`}>
                       {techniques.length > 0 ? (
                         <div className="flex flex-wrap items-center gap-1">
                           {shown.map((t) => (
@@ -617,7 +690,7 @@ export function RulesPage() {
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </td>
-                    <td className={`px-4 ${cellY}`}>
+                    <td className={`px-4 ${cellY}${sideCols}`}>
                       {rule.dataSource ? (
                         <span
                           className={`block font-mono text-xs text-foreground/80 ${compact ? 'truncate' : 'line-clamp-2 break-words'}`}
@@ -629,7 +702,7 @@ export function RulesPage() {
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </td>
-                    <td className={`px-4 ${cellY} text-muted-foreground text-xs whitespace-nowrap`} title={new Date(rule.page.updatedAt).toLocaleString()}>
+                    <td className={`px-4 ${cellY} text-muted-foreground text-xs whitespace-nowrap${sideCols}`} title={new Date(rule.page.updatedAt).toLocaleString()}>
                       {relativeTime(rule.page.updatedAt)}
                     </td>
                   </tr>
@@ -646,6 +719,16 @@ export function RulesPage() {
             onPageSizeChange={(n) => update({ size: n === DEFAULT_PAGE_SIZE ? null : String(n) })}
           />
         </div>
+      )}
+
+      {previewSlug && (
+        <RulePreviewDrawer
+          slug={previewSlug}
+          onClose={() => setPreview(null)}
+          onPrev={activeIndex > 0 ? () => moveTo(activeIndex - 1) : undefined}
+          onNext={activeIndex >= 0 && activeIndex < rules.length - 1 ? () => moveTo(activeIndex + 1) : undefined}
+          onTechnique={(t) => update({ technique: t })}
+        />
       )}
 
       {selectionCount > 0 && (

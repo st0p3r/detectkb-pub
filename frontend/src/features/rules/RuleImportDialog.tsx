@@ -2,12 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { FileUp, FolderUp, Loader2, X } from 'lucide-react';
+import { ArrowLeft, FileUp, FolderUp, Loader2, X } from 'lucide-react';
+import { ImportReview } from './ImportReview';
 import {
   SOURCE_FORMAT_LABELS,
   apiErrorMessage,
   getSigmaTargets,
   importRules,
+  previewRuleImport,
+  type ImportPreviewItem,
   type RuleSourceFormat,
   type SigmaImportResult,
 } from '@/lib/api';
@@ -36,10 +39,13 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
   });
   const [files, setFiles] = useState<{ name: string; content: string }[]>([]);
   const [pasted, setPasted] = useState('');
-  const [overwrite, setOverwrite] = useState(false);
+  // Review step: the preview, entries the user unticked, and whether to update changed rules
+  const [preview, setPreview] = useState<ImportPreviewItem[] | null>(null);
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [updateChanged, setUpdateChanged] = useState(true);
   const [convertTo, setConvertTo] = useState('splunk');
   const [statusMode, setStatusMode] = useState<'draft' | 'source'>('draft');
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; label: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<SigmaImportResult | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -52,6 +58,9 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
     setError(null);
     setResult(null);
     setProgress(null);
+    setPreview(null);
+    setExcluded(new Set());
+    setUpdateChanged(true);
   }, [open]);
 
   useEffect(() => {
@@ -78,21 +87,47 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
     setFiles((prev) => [...prev, ...read]);
   }
 
-  async function handleImport() {
-    const payload = [...files];
-    if (pasted.trim()) payload.push({ name: 'pasted.yml', content: pasted });
-    if (!payload.length) return;
+  const payload = () => {
+    const all = [...files];
+    if (pasted.trim()) all.push({ name: 'pasted.yml', content: pasted });
+    return all;
+  };
+
+  async function handlePreview() {
+    const all = payload();
+    if (!all.length) return;
     setError(null);
-    const total = Math.ceil(payload.length / CHUNK_SIZE);
+    const total = Math.ceil(all.length / CHUNK_SIZE);
+    const items: ImportPreviewItem[] = [];
+    try {
+      for (let i = 0; i < total; i++) {
+        setProgress({ done: i, total, label: 'Checking' });
+        items.push(...(await previewRuleImport(all.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE))).items);
+      }
+      setExcluded(new Set());
+      setPreview(items);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not read the files'));
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  async function handleImport() {
+    const all = payload();
+    if (!all.length) return;
+    setError(null);
+    const total = Math.ceil(all.length / CHUNK_SIZE);
     const merged: SigmaImportResult = { created: [], updated: [], skipped: [], errors: [], warnings: [] };
     try {
       for (let i = 0; i < total; i++) {
-        setProgress({ done: i, total });
+        setProgress({ done: i, total, label: 'Importing' });
         const res = await importRules({
-          files: payload.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
-          overwrite,
+          files: all.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+          overwrite: updateChanged,
           convertTo: convertTo === 'none' ? null : convertTo,
           status: statusMode,
+          skip: Array.from(excluded),
         });
         for (const key of Object.keys(merged) as (keyof SigmaImportResult)[]) {
           (merged[key] as unknown[]).push(...(res[key] as unknown[]));
@@ -108,19 +143,25 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
     }
   }
 
+  const count = (s: ImportPreviewItem['status']) => (preview ?? []).filter((i) => i.status === s && !excluded.has(i.where)).length;
+  const toCreate = count('new');
+  const toUpdate = updateChanged ? count('changed') : 0;
+  const importLabel = !toCreate && !toUpdate ? 'Nothing to import' : [`Import ${toCreate.toLocaleString()} new`, toUpdate ? `update ${toUpdate.toLocaleString()}` : ''].filter(Boolean).join(' · ');
+
   const serviceAvailable = targetInfo?.available !== false;
   const busy = progress !== null;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true" aria-labelledby="rule-import-title">
       <div className="absolute inset-0 bg-black/50" onClick={() => !busy && onClose()} />
-      <div className="relative z-10 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-card shadow-xl p-6">
+      <div className={`relative z-10 w-full ${preview ? 'max-w-4xl' : 'max-w-2xl'} mx-4 max-h-[90vh] overflow-y-auto rounded-lg border border-border bg-card shadow-xl p-6`}>
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 id="rule-import-title" className="text-lg font-semibold">Import detection rules</h2>
             <p className="text-sm text-muted-foreground">
               Sigma, Splunk ESCU and Microsoft Sentinel <code>.yml</code>, or Elastic detection-rules <code>.toml</code>.
-              The format is detected per file; a rule already imported (same source id) is skipped unless you update it.
+              The format is detected per file. Next you'll see which rules are new, which changed since they were imported, and
+              which are unchanged — before anything is saved.
             </p>
           </div>
           <button onClick={onClose} disabled={busy} aria-label="Close" className="p-1 rounded hover:bg-accent disabled:opacity-40">
@@ -130,6 +171,36 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
 
         {result ? (
           <ImportSummary result={result} onClose={onClose} error={error} />
+        ) : preview ? (
+          <div className="space-y-4">
+            <ImportReview
+              items={preview}
+              excluded={excluded}
+              onExcludedChange={setExcluded}
+              updateChanged={updateChanged}
+              onUpdateChangedChange={setUpdateChanged}
+              onNavigate={onClose}
+            />
+            {progress && <Progress progress={progress} />}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => setPreview(null)}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
+              >
+                <ArrowLeft className="w-4 h-4" /> Back
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={busy || (!toCreate && !toUpdate)}
+                className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+              >
+                {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+                {importLabel}
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="space-y-4">
             <div
@@ -227,10 +298,6 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
                 </select>
               </label>
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
-              Update rules that were already imported
-            </label>
 
             {!serviceAvailable && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -238,16 +305,7 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
               </p>
             )}
 
-            {progress && (
-              <div>
-                <div className="h-2 rounded bg-muted overflow-hidden">
-                  <div className="h-full bg-primary transition-all" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Importing batch {progress.done + 1} of {progress.total}…
-                </p>
-              </div>
-            )}
+            {progress && <Progress progress={progress} />}
             {error && <p className="text-sm text-destructive">{error}</p>}
 
             <div className="flex justify-end gap-2">
@@ -255,12 +313,12 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
                 Cancel
               </button>
               <button
-                onClick={handleImport}
+                onClick={handlePreview}
                 disabled={busy || (!files.length && !pasted.trim())}
                 className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
               >
                 {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-                Import
+                Review
               </button>
             </div>
           </div>
@@ -268,6 +326,19 @@ export function RuleImportDialog({ open, onClose, onImported }: RuleImportDialog
       </div>
     </div>,
     document.body
+  );
+}
+
+function Progress({ progress }: { progress: { done: number; total: number; label: string } }) {
+  return (
+    <div>
+      <div className="h-2 rounded bg-muted overflow-hidden">
+        <div className="h-full bg-primary transition-all" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {progress.label} batch {progress.done + 1} of {progress.total}…
+      </p>
+    </div>
   );
 }
 

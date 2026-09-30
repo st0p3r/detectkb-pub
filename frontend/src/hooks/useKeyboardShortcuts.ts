@@ -44,12 +44,18 @@ export function useKeyboardShortcuts({ onShowShortcuts, onCloseModal, currentPag
             navigate(`/pages/${currentPageSlug}/edit`);
           }
           break;
-        case '/':
+        case '/': {
           e.preventDefault();
-          window.dispatchEvent(
-            new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true })
-          );
+          // A list page's own search box first; otherwise the command palette
+          const pageSearch = document.querySelector<HTMLInputElement>('[data-page-search]');
+          if (pageSearch) {
+            pageSearch.focus();
+            pageSearch.select();
+          } else {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+          }
           break;
+        }
         case '?':
           e.preventDefault();
           onShowShortcuts();

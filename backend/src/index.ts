@@ -19,6 +19,7 @@ import pageTypesRouter from './routes/page-types';
 import sysmonEventsRouter from './routes/sysmon-events';
 import activityRouter from './routes/activity';
 import dashboardRouter from './routes/dashboard';
+import savedViewsRouter from './routes/saved-views';
 import { markDataChanged } from './lib/kb-cache';
 import sigmaRouter from './routes/sigma';
 import ruleImportRouter from './routes/rule-import';
@@ -52,7 +53,7 @@ app.use('/api', authMiddleware);
 // A successful write may change what the knowledge graph and the tool matches
 // are built from: mark those caches stale (lib/kb-cache). Writes that only
 // produce files or touch accounts don't count.
-const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|backup\/json$)/;
+const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$)/;
 app.use('/api', (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !WRITES_WITHOUT_KB_CHANGES.test(req.originalUrl.split('?')[0])) {
     res.on('finish', () => {
@@ -77,6 +78,7 @@ app.use('/api/references', referencesRouter);
 app.use('/api/graph', graphRouter);
 app.use('/api/attack', attackRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/saved-views', savedViewsRouter);
 
 // Routers that check permissions per route
 app.use('/api/backup', backupRouter);

@@ -21,7 +21,7 @@ export function GapsView({ onExplore }: GapsViewProps) {
   const techniques = (data?.techniques ?? []).filter((t) => !onlyUncovered || !t.rules);
 
   return (
-    <div className="flex-1 min-h-0 overflow-auto space-y-3 pb-4">
+    <div data-graph-export className="flex-1 min-h-0 overflow-auto space-y-3 pb-4">
       <div className="flex flex-wrap items-center gap-2">
         {['', ...TOOL_GROUPS].map((k) => (
           <button

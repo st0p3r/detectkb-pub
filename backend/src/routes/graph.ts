@@ -149,8 +149,10 @@ router.get('/chain', async (req, res) => {
   });
 });
 
-// GET /api/graph/path?from=lolbas:certutil.exe&to=technique:T1105 — shortest
-// paths between two nodes (tags and categories aren't used as stepping stones)
+// GET /api/graph/path?from=lolbas:certutil.exe&to=technique:T1105&status=production&links=1
+// — shortest paths between two nodes along the detection model's relationships
+// (see findPaths). `status`: rule statuses to pass through (default: all but
+// deprecated); `links=1`: also follow wiki links.
 router.get('/path', async (req, res) => {
   const graph = await getGraph();
   const from = String(req.query.from ?? '');
@@ -159,10 +161,22 @@ router.get('/path', async (req, res) => {
     res.status(404).json({ error: 'Unknown node' });
     return;
   }
-  const paths = findPaths(graph, from, to, { maxPaths: Math.min(Number(req.query.max) || 8, 20) });
+  const statuses =
+    typeof req.query.status === 'string' && req.query.status
+      ? req.query.status
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      : null;
+  const links = req.query.links === '1' || req.query.links === 'true';
+  const opts = { maxPaths: Math.min(Number(req.query.max) || 8, 20), statuses, links };
+  const paths = findPaths(graph, from, to, opts);
+  // Nothing along the model's relationships: would wiki links connect them?
+  const linksWouldHelp = !paths.length && !links && findPaths(graph, from, to, { ...opts, maxPaths: 1, links: true }).length > 0;
   const ids = new Set(paths.flat());
   res.json({
     paths,
+    linksWouldHelp,
     nodes: Array.from(ids, (id) => graph.nodes.get(id)!),
     edges: graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
   });

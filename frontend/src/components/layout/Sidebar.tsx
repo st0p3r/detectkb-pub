@@ -29,6 +29,7 @@ import {
 import { listCategories, createCategory, deleteCategory, type Category } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/features/auth/AuthContext';
+import { SavedViewsNav } from '@/features/views/SavedViewsNav';
 
 const DEFAULT_COLORS = [
   '#6366f1', '#22c55e', '#f59e0b', '#ef4444',
@@ -283,6 +284,8 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
 
         <SectionLabel label="Content" collapsed={collapsed} />
         <NavSection items={contentNavItems} collapsed={collapsed} />
+
+        <SavedViewsNav collapsed={collapsed} sectionLabel={<SectionLabel label="Saved views" collapsed={collapsed} />} />
 
         {/* Categories section */}
         {!collapsed && (

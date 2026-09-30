@@ -39,7 +39,8 @@ fi
 info()  { echo "${C_BLUE}==>${C_RESET} $*"; }
 ok()    { echo "${C_GREEN}✔${C_RESET} $*"; }
 warn()  { echo "${C_YELLOW}!${C_RESET} $*" >&2; }
-die()   { echo "${C_RED}✖ $*${C_RESET}" >&2; exit 1; }
+err()   { echo "${C_RED}✖ $*${C_RESET}" >&2; }
+die()   { err "$*"; exit 1; }
 
 usage() {
   cat <<EOF
@@ -135,6 +136,8 @@ locate_project() {
   fi
   cd "$PROJECT_DIR"
   ENV_FILE="$PROJECT_DIR/.env"
+  # docker-compose.yml sets `name: detectkb`, so this is the same from any folder
+  DB_VOLUME="detectkb_mysql_data"
 }
 
 # ── dependencies ────────────────────────────────────────────────────────────
@@ -210,6 +213,18 @@ write_env() {
       warn "--admin-user/--admin-password only apply on first start (empty database)."
     fi
   else
+    # MySQL applies MYSQL_USER / MYSQL_PASSWORD only when its volume is first
+    # created. A database left by an earlier install (the volume is named after
+    # the compose project, not this folder) would reject new random passwords.
+    if "${DOCKER[@]}" volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
+      err "A DetectKB database already exists (Docker volume '$DB_VOLUME'), but there is no .env here."
+      err "Its passwords are in the .env of the earlier install; new random ones would not match."
+      echo "  Either:" >&2
+      echo "    - copy the .env from the earlier install (or from a backup) to $ENV_FILE and run '$0' again, or" >&2
+      echo "    - start with an empty database — this DELETES all DetectKB data:" >&2
+      echo "        docker volume rm $DB_VOLUME   (with sudo if needed), then run '$0' again" >&2
+      exit 1
+    fi
     info "Generating .env with random secrets"
     GENERATED_ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(gen_secret 16)}"
     umask 077

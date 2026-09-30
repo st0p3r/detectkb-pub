@@ -93,7 +93,7 @@ export function WikiView({ onExplore }: { onExplore: (nodeId: string) => void })
         </p>
       )}
 
-      <div className="relative flex-1 min-h-[420px] rounded-lg border border-border bg-card overflow-hidden">
+      <div data-graph-export className="relative flex-1 min-h-[420px] rounded-lg border border-border bg-card overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center h-full gap-2 text-muted-foreground">
             <Loader2 className="w-5 h-5 animate-spin" /> Building graph…

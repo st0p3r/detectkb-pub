@@ -19,6 +19,7 @@ model User {
   userRoles          UserRole[]
   auditLogs          AuditLog[]
   generatedDocs      GeneratedDoc[]
+  savedViews         SavedView[]
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 }
@@ -272,4 +273,18 @@ model ReferenceDataset {
   source    String   @db.VarChar(500)
   count     Int
   fetchedAt DateTime @default(now())
+}
+
+// A user's saved list view: filters, sort and view state of /rules, /pages or
+// /graph, as the URL query string. Shown in the sidebar.
+model SavedView {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @db.VarChar(80)
+  path      String   @db.VarChar(40)
+  query     String   @db.VarChar(1000)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

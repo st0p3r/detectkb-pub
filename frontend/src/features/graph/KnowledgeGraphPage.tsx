@@ -10,6 +10,8 @@ import { PathView } from './PathView';
 import { ImpactView } from './ImpactView';
 import { FlowsView } from './FlowsView';
 import { GapsView } from './GapsView';
+import { SaveViewButton } from '@/features/views/SaveViewButton';
+import { ExportMenu } from './ExportMenu';
 
 type View = 'wiki' | 'explore' | 'chain' | 'paths' | 'impact' | 'flows' | 'gaps';
 
@@ -60,6 +62,10 @@ export default function KnowledgeGraphPage() {
           ))}
         </div>
         <span className="text-sm text-muted-foreground hidden 2xl:inline">{VIEWS.find((v) => v.id === view)?.hint}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <ExportMenu view={view} vector={view === 'flows'} />
+          <SaveViewButton suggestedName={`Graph · ${VIEWS.find((v) => v.id === view)?.label}${focus ? ` · ${focus.split(':').slice(1).join(':')}` : ''}`} />
+        </div>
       </div>
 
       {view === 'wiki' && <WikiView onExplore={explore} />}

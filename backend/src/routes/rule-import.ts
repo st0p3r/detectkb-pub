@@ -6,6 +6,7 @@ import { syncPageLinks } from '../lib/links';
 import { syncAutoSysmonLinks } from '../lib/sysmon-links';
 import { SigmaServiceError, convertSigma } from '../lib/sigma';
 import { FORMAT_LABELS, FORMAT_TAGS, ImportFormat, ImportedRule, parseRuleFile } from '../lib/rule-import';
+import { diffImportedRule } from '../lib/rule-import-diff';
 
 const router = Router();
 
@@ -29,15 +30,19 @@ async function findExisting(rule: ImportedRule) {
  *
  * Accepts Sigma / Splunk ESCU / Sentinel YAML and Elastic TOML (detected per file).
  * Imported rules are drafts by default: a vendor's "production" does not mean
- * the rule works on your data.
+ * the rule works on your data. With overwrite, rules the source hasn't changed
+ * are still skipped; `skip` lists entries (by `where`, as the preview names
+ * them) the user left out.
  */
 export async function importRules(req: Request, res: Response) {
-  const { files, overwrite = false, convertTo = 'splunk', status = 'draft' } = req.body as {
+  const { files, overwrite = false, convertTo = 'splunk', status = 'draft', skip = [] } = req.body as {
     files?: ImportFile[];
     overwrite?: boolean;
     convertTo?: string | null;
     status?: 'draft' | 'source';
+    skip?: string[];
   };
+  const skipSet = new Set(Array.isArray(skip) ? skip.map(String) : []);
   if (!Array.isArray(files) || files.length === 0) {
     res.status(400).json({ error: 'files is required' });
     return;
@@ -53,6 +58,7 @@ export async function importRules(req: Request, res: Response) {
 
   for (const file of files) {
     for (const entry of parseRuleFile(String(file.name ?? 'file'), String(file.content ?? ''))) {
+      if (skipSet.has(entry.where)) continue;
       if (!entry.rule) {
         errors.push({ file: entry.where, error: entry.error ?? 'Unknown error' });
         continue;
@@ -68,6 +74,10 @@ export async function importRules(req: Request, res: Response) {
         const existing = await findExisting(rule);
         if (existing && !overwrite) {
           skipped.push({ title: rule.title, reason: `already imported as "${existing.page.title}"` });
+          continue;
+        }
+        if (existing && !diffImportedRule(rule, existing).length) {
+          skipped.push({ title: rule.title, reason: 'unchanged' });
           continue;
         }
 
@@ -169,6 +179,87 @@ export async function importRules(req: Request, res: Response) {
   res.json({ created, updated, skipped, errors, warnings });
 }
 
+const PREVIEW_VALUE_MAX = 600;
+const clip = (v: string) => (v.length > PREVIEW_VALUE_MAX ? `${v.slice(0, PREVIEW_VALUE_MAX)}…` : v);
+
+/**
+ * POST /api/rules-import/preview { files } — what an import would do, without
+ * saving anything: each rule is new, changed (with the fields that differ),
+ * unchanged, repeated in the upload, or an error. New rules whose title
+ * matches an existing rule (e.g. the same detection from another source) are
+ * flagged as possible duplicates.
+ */
+export async function previewImport(req: Request, res: Response) {
+  const { files } = req.body as { files?: ImportFile[] };
+  if (!Array.isArray(files) || files.length === 0) {
+    res.status(400).json({ error: 'files is required' });
+    return;
+  }
+
+  type Item = {
+    where: string;
+    format?: ImportFormat;
+    title?: string;
+    status: 'new' | 'changed' | 'unchanged' | 'repeated' | 'error';
+    error?: string;
+    existing?: { title: string; slug: string; status: string };
+    changes?: { field: string; label: string; before: string; after: string }[];
+    similar?: { title: string; slug: string; sourceFormat: string | null }[];
+  };
+  const items: Item[] = [];
+  const seen = new Map<string, string>();
+
+  for (const file of files) {
+    for (const entry of parseRuleFile(String(file.name ?? 'file'), String(file.content ?? ''))) {
+      const rule = entry.rule;
+      if (!rule || !rule.title) {
+        items.push({ where: entry.where, status: 'error', error: entry.error ?? 'Rule has no title/name' });
+        continue;
+      }
+      const base = { where: entry.where, format: rule.format, title: rule.title };
+      const key = rule.externalId ? `${rule.format}:${rule.externalId}` : null;
+      if (key && seen.has(key)) {
+        items.push({ ...base, status: 'repeated', error: `same rule as ${seen.get(key)}` });
+        continue;
+      }
+      if (key) seen.set(key, entry.where);
+      const existing = await findExisting(rule);
+      if (!existing) {
+        items.push({ ...base, status: 'new' });
+        continue;
+      }
+      const changes = diffImportedRule(rule, existing);
+      items.push({
+        ...base,
+        status: changes.length ? 'changed' : 'unchanged',
+        existing: { title: existing.page.title, slug: existing.page.slug, status: existing.status },
+        changes: changes.map((c) => ({ ...c, before: clip(c.before), after: clip(c.after) })),
+      });
+    }
+  }
+
+  // Possible duplicates: a new rule titled like an existing rule
+  const fresh = items.filter((i) => i.status === 'new');
+  if (fresh.length) {
+    const same = await prisma.page.findMany({
+      where: { type: 'RULE', title: { in: Array.from(new Set(fresh.map((i) => i.title!))) } },
+      select: { title: true, slug: true, rule: { select: { sourceFormat: true } } },
+    });
+    const byTitle = new Map<string, Item['similar']>();
+    for (const p of same) {
+      const k = p.title.toLowerCase();
+      byTitle.set(k, [...(byTitle.get(k) ?? []), { title: p.title, slug: p.slug, sourceFormat: p.rule?.sourceFormat ?? null }]);
+    }
+    for (const i of fresh) {
+      const similar = byTitle.get(i.title!.toLowerCase());
+      if (similar) i.similar = similar;
+    }
+  }
+
+  res.json({ items });
+}
+
+router.post('/preview', requirePermission('rules:create'), previewImport);
 router.post('/', requirePermission('rules:create'), importRules);
 
 export default router;

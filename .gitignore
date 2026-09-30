@@ -14,3 +14,6 @@ backend/generated/
 
 __pycache__/
 .venv/
+
+# User manual: raw screenshots
+docs/user-manual/shots/

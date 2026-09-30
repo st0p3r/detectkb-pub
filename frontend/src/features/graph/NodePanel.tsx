@@ -23,7 +23,7 @@ export function NodePanel({ node, onClose, children, neighbours, onSelectNeighbo
   const rest = node.id.split(':').slice(1).join(':');
 
   return (
-    <div className="absolute top-3 right-3 w-80 max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-lg border border-border bg-card/95 backdrop-blur shadow-lg p-4 text-sm z-10">
+    <div data-export-ignore className="absolute top-3 right-3 w-80 max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-lg border border-border bg-card/95 backdrop-blur shadow-lg p-4 text-sm z-10">
       <div className="flex items-start justify-between gap-2 mb-2">
         <div>
           <div className="text-xs text-muted-foreground">

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { CLUSTER_MIN, findPaths, neighbourhood, type Graph, type GraphNode } from '../src/lib/graph';
 import { analyzeImpact, computeFlows, otherDataSources, type RuleTelemetry } from '../src/lib/coverage-analysis';
 
-function graphOf(nodes: Partial<GraphNode>[], edges: [string, string][]): Graph {
+/** Edges default to wiki links; pass the kind as a third element */
+function graphOf(nodes: Partial<GraphNode>[], edges: ([string, string] | [string, string, string])[]): Graph {
   const map = new Map<string, GraphNode>();
   for (const n of nodes) map.set(n.id!, { label: n.id!, group: 'NOTE', degree: 0, ...n } as GraphNode);
   const adjacency = new Map<string, Set<string>>();
@@ -13,7 +14,7 @@ function graphOf(nodes: Partial<GraphNode>[], edges: [string, string][]): Graph 
     adjacency.get(b)!.add(a);
   }
   for (const [id, n] of map) n.degree = adjacency.get(id)?.size ?? 0;
-  return { nodes: map, edges: edges.map(([source, target]) => ({ source, target, kind: 'link' })), adjacency };
+  return { nodes: map, edges: edges.map(([source, target, kind = 'link']) => ({ source, target, kind })), adjacency };
 }
 
 describe('findPaths', () => {
@@ -28,12 +29,12 @@ describe('findPaths', () => {
       { id: 'page:9', group: 'NOTE' },
     ],
     [
-      ['lolbas:certutil.exe', 'page:1'],
-      ['lolbas:certutil.exe', 'page:2'],
-      ['page:1', 'technique:T1105'],
-      ['page:2', 'technique:T1105'],
-      ['lolbas:certutil.exe', 'tag:windows'],
-      ['tag:windows', 'technique:T1105'],
+      ['page:1', 'lolbas:certutil.exe', 'reference'],
+      ['page:2', 'lolbas:certutil.exe', 'reference'],
+      ['page:1', 'technique:T1105', 'technique'],
+      ['page:2', 'technique:T1105', 'technique'],
+      ['lolbas:certutil.exe', 'tag:windows', 'tag'],
+      ['technique:T1105', 'tag:windows', 'tag'],
     ]
   );
 
@@ -54,6 +55,108 @@ describe('findPaths', () => {
     expect(findPaths(g, 'lolbas:certutil.exe', 'technique:T1105', { maxHops: 1 })).toEqual([]);
     expect(findPaths(g, 'page:9', 'page:1')).toEqual([]);
     expect(findPaths(g, 'page:1', 'nope')).toEqual([]);
+  });
+
+  it('skips deprecated rules unless their status is asked for', () => {
+    const d = graphOf(
+      [
+        { id: 'lolbas:certutil.exe', group: 'lolbas' },
+        { id: 'page:1', group: 'RULE', status: 'deprecated' },
+        { id: 'technique:T1105', group: 'technique' },
+      ],
+      [
+        ['page:1', 'lolbas:certutil.exe', 'reference'],
+        ['page:1', 'technique:T1105', 'technique'],
+      ]
+    );
+    expect(findPaths(d, 'lolbas:certutil.exe', 'technique:T1105')).toEqual([]);
+    expect(findPaths(d, 'lolbas:certutil.exe', 'technique:T1105', { statuses: ['production', 'deprecated'] })).toHaveLength(1);
+    // A deprecated rule may still be an endpoint
+    expect(findPaths(d, 'page:1', 'technique:T1105')).toEqual([['page:1', 'technique:T1105']]);
+  });
+
+  // rule 1 and rule 2 both use EID 1; a data source provides EID 1
+  const s = graphOf(
+    [
+      { id: 'page:1', group: 'RULE' },
+      { id: 'page:2', group: 'RULE' },
+      { id: 'page:5', group: 'DATA_SOURCE' },
+      { id: 'page:6', group: 'DATA_SOURCE' },
+      { id: 'sysmon:1', group: 'sysmon' },
+      { id: 'technique:T1059', group: 'technique' },
+    ],
+    [
+      ['page:1', 'sysmon:1', 'sysmon'],
+      ['page:2', 'sysmon:1', 'sysmon'],
+      ['page:5', 'sysmon:1', 'sysmon'],
+      ['page:6', 'sysmon:1', 'sysmon'],
+      ['page:2', 'technique:T1059', 'technique'],
+    ]
+  );
+
+  it('uses a Sysmon event only to join a rule and a data source', () => {
+    expect(findPaths(s, 'page:1', 'page:2')).toEqual([]);
+    expect(findPaths(s, 'page:1', 'technique:T1059')).toEqual([]);
+    expect(findPaths(s, 'page:5', 'page:6')).toEqual([]);
+    expect(findPaths(s, 'page:5', 'technique:T1059')).toEqual([['page:5', 'sysmon:1', 'page:2', 'technique:T1059']]);
+    // As an endpoint, the event connects to everything that uses it
+    expect(findPaths(s, 'sysmon:1', 'technique:T1059')).toEqual([['sysmon:1', 'page:2', 'technique:T1059']]);
+  });
+
+  it('follows wiki links only when asked, except from the picked nodes themselves', () => {
+    const w = graphOf(
+      [
+        { id: 'page:1', group: 'RULE' },
+        { id: 'page:3', group: 'CONCEPT' },
+        { id: 'page:4', group: 'RULE' },
+        { id: 'technique:T1003', group: 'technique' },
+      ],
+      [
+        ['page:1', 'page:3'],
+        ['page:3', 'page:4'],
+        ['page:4', 'technique:T1003', 'technique'],
+      ]
+    );
+    expect(findPaths(w, 'page:1', 'technique:T1003')).toEqual([]);
+    expect(findPaths(w, 'page:1', 'technique:T1003', { links: true })).toEqual([['page:1', 'page:3', 'page:4', 'technique:T1003']]);
+    // The concept's own link counts: it's the page the user picked
+    expect(findPaths(w, 'page:3', 'technique:T1003')).toEqual([['page:3', 'page:4', 'technique:T1003']]);
+  });
+
+  it('steps from a sub-technique to its parent', () => {
+    const t = graphOf(
+      [
+        { id: 'lolbas:rundll32.exe', group: 'lolbas' },
+        { id: 'technique:T1003', group: 'technique' },
+        { id: 'technique:T1003.001', group: 'technique' },
+      ],
+      [
+        ['lolbas:rundll32.exe', 'technique:T1003', 'tool-technique'],
+        ['technique:T1003.001', 'technique:T1003', 'subtechnique'],
+      ]
+    );
+    expect(findPaths(t, 'technique:T1003.001', 'lolbas:rundll32.exe')).toEqual([['technique:T1003.001', 'technique:T1003', 'lolbas:rundll32.exe']]);
+  });
+
+  it('prefers paths that differ from each other', () => {
+    // tool → rule r (1..3) → technique a|b → tool 2: 6 shortest paths, 3 disjoint in rules
+    const nodes: Partial<GraphNode>[] = [
+      { id: 'lolbas:a', group: 'lolbas' },
+      { id: 'lolbas:b', group: 'lolbas' },
+      { id: 'technique:T1', group: 'technique' },
+      { id: 'technique:T2', group: 'technique' },
+    ];
+    const edges: [string, string, string][] = [
+      ['lolbas:b', 'technique:T1', 'tool-technique'],
+      ['lolbas:b', 'technique:T2', 'tool-technique'],
+    ];
+    for (const r of [1, 2, 3]) {
+      nodes.push({ id: `page:${r}`, group: 'RULE' });
+      edges.push([`page:${r}`, 'lolbas:a', 'reference'], [`page:${r}`, 'technique:T1', 'technique'], [`page:${r}`, 'technique:T2', 'technique']);
+    }
+    const paths = findPaths(graphOf(nodes, edges), 'lolbas:a', 'lolbas:b', { maxPaths: 3 });
+    expect(paths).toHaveLength(3);
+    expect(new Set(paths.map((p) => p[1])).size).toBe(3);
   });
 });
 

@@ -170,7 +170,7 @@ export function ExploreView({ focusId, onFocusChange, onShowChain, onFindPaths }
         {loading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
       </div>
 
-      <div className="relative flex-1 min-h-[420px] rounded-lg border border-border bg-card overflow-hidden">
+      <div data-graph-export className="relative flex-1 min-h-[420px] rounded-lg border border-border bg-card overflow-hidden">
         {!focusId ? (
           <div className="flex flex-col items-center justify-center h-full gap-4 px-6 text-center">
             <p className="text-sm text-muted-foreground max-w-md">
