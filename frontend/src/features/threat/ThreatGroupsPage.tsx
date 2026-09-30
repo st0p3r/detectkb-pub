@@ -16,6 +16,7 @@ import {
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { useDebounced } from '@/hooks/useDebounced';
 import { cn } from '@/lib/utils';
+import { safeHref } from '@/lib/safeUrl';
 
 type Tab = 'groups' | 'software';
 type Sort = 'techniques' | 'coverage' | 'gaps' | 'name';
@@ -131,7 +132,7 @@ function ActorHeader({ id, name, aliases, description, url, node }: { id: string
           <Link to={`/graph?view=explore&focus=${node}`} className="inline-flex items-center gap-1 text-primary hover:underline">
             <Compass className="w-4 h-4" /> Explore
           </Link>
-          <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+          <a href={safeHref(url)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
             attack.mitre.org <ExternalLink className="w-3.5 h-3.5" />
           </a>
         </div>

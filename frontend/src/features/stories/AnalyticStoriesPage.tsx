@@ -10,6 +10,7 @@ import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
 import { useDebounced } from '@/hooks/useDebounced';
 import { cn } from '@/lib/utils';
+import { safeHref } from '@/lib/safeUrl';
 
 type Sort = 'rules' | 'name' | 'production';
 const STATUS_ORDER = ['production', 'testing', 'draft', 'deprecated'];
@@ -117,7 +118,7 @@ function StoryDetail({ id }: { id: number }) {
           <ul className="space-y-1">
             {data.references.map((u) => (
               <li key={u} className="text-sm truncate">
-                <a href={u} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                <a href={safeHref(u)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
                   {u} <ExternalLink className="w-3 h-3 flex-shrink-0" />
                 </a>
               </li>

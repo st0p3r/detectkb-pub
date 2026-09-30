@@ -28,7 +28,8 @@ function inlineMarkdown(raw: string): string {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/~~(.+?)~~/g, '<del>$1</del>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    // Only http(s) and in-page links: a javascript: URL would run when the report is opened
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => (/^(https?:\/\/|#)/i.test(url.trim()) ? `<a href="${url}">${text}</a>` : text))
     .replace(/\[\[([^\]]+)\]\]/g, '<span class="wiki-link">$1</span>');
   s = s.replace(/\x00C(\d+)\x00/g, (_, i) => `<code>${codes[parseInt(i)]}</code>`);
   return s;

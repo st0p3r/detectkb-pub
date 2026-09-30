@@ -24,12 +24,12 @@ export function ChangePasswordPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (newPassword.length < 6) return setError('New password must be at least 6 characters.');
+    if (newPassword.length < 10) return setError('New password must be at least 10 characters.');
     if (newPassword !== confirmPassword) return setError('Passwords do not match.');
     setLoading(true);
     try {
-      await api.put('/api/auth/password', { currentPassword, newPassword });
-      passwordChanged();
+      const res = await api.put<{ token?: string }>('/api/auth/password', { currentPassword, newPassword });
+      passwordChanged(res.data.token);
       navigate('/', { replace: true });
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not change password.'));

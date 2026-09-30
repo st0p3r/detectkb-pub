@@ -41,7 +41,19 @@ const app = express();
 
 // Behind nginx / the Docker network: trust only private-range proxies for req.ip
 app.set('trust proxy', 'loopback, linklocal, uniquelocal');
-app.use(cors({ origin: CORS_ORIGIN }));
+app.disable('x-powered-by');
+// Headers for API responses (nginx sets the page-level ones, including the CSP)
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+// Cross-origin access only when explicitly configured (comma-separated origins)
+if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN === '*' ? '*' : CORS_ORIGIN.split(',').map((o) => o.trim()) }));
+// Unauthenticated endpoints get a small body limit
+app.use('/api/auth', express.json({ limit: '10kb' }));
 // Reference datasets (LOLDrivers' drivers.json is ~20 MB) get a larger body limit
 app.use('/api/references/upload', express.json({ limit: '100mb' }));
 app.use(express.json({ limit: '25mb' }));
@@ -98,9 +110,15 @@ setInterval(() => {
   runJsonBackup().catch((err) => console.error('Scheduled backup failed:', err));
 }, 86400000);
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(err);
-  res.status(500).json({ error: err.message });
+app.use((err: Error & { status?: number; expose?: boolean }, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Client errors from body parsing etc. (e.g. 400 bad JSON, 413 too large) keep their status;
+  // anything else is logged and answered with a generic message so internals don't leak
+  if (err.status && err.status >= 400 && err.status < 500) {
+    res.status(err.status).json({ error: err.expose ? err.message : 'Bad request' });
+    return;
+  }
+  console.error(`${req.method} ${req.originalUrl}:`, err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // Seed and start

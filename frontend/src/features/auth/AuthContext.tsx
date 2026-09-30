@@ -14,7 +14,8 @@ interface AuthContextValue {
     permissions?: string[],
     mustChangePassword?: boolean
   ) => void;
-  passwordChanged: () => void;
+  /** After a password change: the server signed out other sessions and returned a new token. */
+  passwordChanged: (newToken?: string) => void;
   logout: () => void;
   hasPermission: (permission: string) => boolean;
   hasRole: (role: string) => boolean;
@@ -68,7 +69,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const passwordChanged = useCallback(() => {
+  const passwordChanged = useCallback((newToken?: string) => {
+    if (newToken) {
+      localStorage.setItem('authToken', newToken);
+      setToken(newToken);
+    }
     localStorage.removeItem('authMustChangePassword');
     setMustChangePassword(false);
   }, []);

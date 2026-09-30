@@ -18,6 +18,7 @@ import { relativeTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { BasisBadge } from '@/components/ui/BasisBadge';
 import { LINK_BASIS, basisChip } from '@/lib/linkBasis';
+import { safeHref } from '@/lib/safeUrl';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -119,7 +120,7 @@ function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: stri
             {rule.references.split('\n').filter(Boolean).map((ref, i) => (
               <li key={i}>
                 <a
-                  href={ref.trim()}
+                  href={safeHref(ref)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-primary hover:underline break-all"

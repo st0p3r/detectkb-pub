@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { requireRole } from '../middleware/auth';
+import { BCRYPT_ROUNDS, passwordProblem } from '../lib/auth-security';
 
 const router = Router();
 
@@ -64,12 +65,21 @@ router.post('/', requireRole('admin'), async (req, res) => {
     roleIds?: number[];
   };
 
-  if (!username || !email || !password) {
+  if (typeof username !== 'string' || typeof email !== 'string' || !username.trim() || !email.trim() || !password) {
     res.status(400).json({ error: 'username, email, and password are required' });
     return;
   }
-  if (password.length < 6) {
-    res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (!/^[A-Za-z0-9._@-]{2,120}$/.test(username)) {
+    res.status(400).json({ error: 'Username may only contain letters, digits and . _ @ -' });
+    return;
+  }
+  const problem = passwordProblem(password, username);
+  if (problem) {
+    res.status(400).json({ error: problem });
+    return;
+  }
+  if (roleIds !== undefined && (!Array.isArray(roleIds) || !roleIds.every(Number.isInteger))) {
+    res.status(400).json({ error: 'roleIds must be an array of role ids' });
     return;
   }
 
@@ -81,7 +91,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
     return;
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const user = await prisma.user.create({
     data: {
       username,
@@ -120,6 +130,15 @@ router.put('/:id', requireRole('admin'), async (req, res) => {
     email?: string;
     isActive?: boolean;
   };
+  const badString = [firstName, lastName, email].some((v) => v !== undefined && v !== null && typeof v !== 'string');
+  if (badString || (isActive !== undefined && typeof isActive !== 'boolean')) {
+    res.status(400).json({ error: 'Invalid user fields' });
+    return;
+  }
+  if (req.user?.userId === id && isActive === false) {
+    res.status(400).json({ error: 'Cannot disable your own account' });
+    return;
+  }
 
   const user = await prisma.user.update({
     where: { id },
@@ -154,9 +173,17 @@ router.put('/:id/roles', requireRole('admin'), async (req, res) => {
   const id = parseInt(req.params.id);
   const { roleIds } = req.body as { roleIds?: number[] };
 
-  if (!Array.isArray(roleIds)) {
-    res.status(400).json({ error: 'roleIds must be an array' });
+  if (!Array.isArray(roleIds) || !roleIds.every(Number.isInteger)) {
+    res.status(400).json({ error: 'roleIds must be an array of role ids' });
     return;
+  }
+  // An admin can't strip their own admin role and lock everyone out of user management
+  if (req.user?.userId === id) {
+    const adminRole = await prisma.role.findUnique({ where: { name: 'admin' } });
+    if (adminRole && !roleIds.includes(adminRole.id)) {
+      res.status(400).json({ error: 'You cannot remove your own admin role' });
+      return;
+    }
   }
 
   await prisma.userRole.deleteMany({ where: { userId: id } });
@@ -223,14 +250,24 @@ router.put('/:id/password', requireRole('admin'), async (req, res) => {
   const id = parseInt(req.params.id);
   const { newPassword } = req.body as { newPassword?: string };
 
-  if (!newPassword || newPassword.length < 6) {
-    res.status(400).json({ error: 'newPassword must be at least 6 characters' });
+  const target = await prisma.user.findUnique({ where: { id }, select: { username: true } });
+  if (!target) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  const problem = passwordProblem(newPassword, target.username);
+  if (problem) {
+    res.status(400).json({ error: problem });
     return;
   }
 
-  const passwordHash = await bcrypt.hash(newPassword, 10);
+  const passwordHash = await bcrypt.hash(newPassword as string, BCRYPT_ROUNDS);
   // A password set by an admin is temporary: the user must pick their own.
-  await prisma.user.update({ where: { id }, data: { passwordHash, mustChangePassword: true } });
+  // Existing sessions of that user end (e.g. after a suspected compromise).
+  await prisma.user.update({
+    where: { id },
+    data: { passwordHash, mustChangePassword: true, tokenVersion: { increment: 1 } },
+  });
 
   await prisma.auditLog.create({
     data: {

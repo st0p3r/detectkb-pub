@@ -22,9 +22,18 @@ declare global {
 // Endpoints a user who must change their password can still reach.
 const PASSWORD_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/auth/verify', '/api/users/me']);
 
-function verifyToken(token: string): { userId?: number } | null {
+export const JWT_ALGORITHM = 'HS256' as const;
+
+interface TokenPayload {
+  userId?: number;
+  /** User.tokenVersion when the token was issued */
+  tv?: number;
+}
+
+function verifyToken(token: string): TokenPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as { userId?: number };
+    const payload = jwt.verify(token, JWT_SECRET, { algorithms: [JWT_ALGORITHM] });
+    return typeof payload === 'object' ? (payload as TokenPayload) : null;
   } catch {
     return null;
   }
@@ -34,7 +43,7 @@ function verifyToken(token: string): { userId?: number } | null {
  * Roles and permissions are loaded from the database on every request (not
  * trusted from the JWT), so role changes and deactivations apply immediately.
  */
-async function loadUser(userId: number): Promise<AuthUser | null> {
+async function loadUser(userId: number, tokenVersion: number): Promise<AuthUser | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {
@@ -43,7 +52,7 @@ async function loadUser(userId: number): Promise<AuthUser | null> {
       },
     },
   });
-  if (!user || !user.isActive) return null;
+  if (!user || !user.isActive || user.tokenVersion !== tokenVersion) return null;
   return {
     userId: user.id,
     username: user.username,
@@ -60,7 +69,7 @@ async function authenticate(req: Request): Promise<AuthUser | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   const payload = verifyToken(authHeader.slice(7));
   if (!payload?.userId) return null;
-  return loadUser(payload.userId);
+  return loadUser(payload.userId, payload.tv ?? 0);
 }
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {

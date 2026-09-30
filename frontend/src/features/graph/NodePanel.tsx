@@ -4,6 +4,7 @@ import { ExternalLink, X } from 'lucide-react';
 import type { GraphNode } from '@/lib/api';
 import { usePageTypes } from '@/context/PageTypesContext';
 import { ENTITY_GROUPS, TOOL_GROUPS, isPageGroup } from './graphStyle';
+import { safeHref } from '@/lib/safeUrl';
 
 interface NodePanelProps {
   node: GraphNode;
@@ -52,7 +53,7 @@ export function NodePanel({ node, onClose, children, neighbours, onSelectNeighbo
           </Link>
         )}
         {node.url && (
-          <a href={node.url} target="_blank" rel="noreferrer" className={btn}>
+          <a href={safeHref(node.url)} target="_blank" rel="noreferrer" className={btn}>
             ATT&CK <ExternalLink className="w-3 h-3" />
           </a>
         )}

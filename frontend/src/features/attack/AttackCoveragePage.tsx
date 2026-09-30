@@ -21,6 +21,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
 import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
+import { safeHref } from '@/lib/safeUrl';
 
 const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: '', label: 'Active rules (not deprecated)' },
@@ -477,7 +478,7 @@ function TechniqueContextPanel({ id }: { id: string }) {
           <ul className="space-y-1.5">
             {data.mitigations.map((m) => (
               <li key={m.id} className="text-sm">
-                <a href={m.url} target="_blank" rel="noreferrer" className="font-medium hover:underline" title={m.description}>
+                <a href={safeHref(m.url)} target="_blank" rel="noreferrer" className="font-medium hover:underline" title={m.description}>
                   {m.name}
                 </a>{' '}
                 <span className="font-mono text-xs text-muted-foreground">
@@ -518,7 +519,7 @@ function TechniqueContextPanel({ id }: { id: string }) {
                 {list.map((c) => (
                   <a
                     key={c.name}
-                    href={c.url ?? d3.pageUrl}
+                    href={safeHref(c.url ?? d3.pageUrl)}
                     target="_blank"
                     rel="noreferrer"
                     title={c.artifact ? `Acts on: ${c.artifact}` : undefined}

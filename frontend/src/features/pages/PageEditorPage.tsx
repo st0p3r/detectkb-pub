@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MDEditor from '@uiw/react-md-editor';
+import rehypeSanitize from 'rehype-sanitize';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getPage,
@@ -438,6 +439,8 @@ export function PageEditorPage() {
                 onChange={(val) => setContentMd(val ?? '')}
                 height={480}
                 preview="live"
+                // The preview renders raw HTML; strip scripts, event handlers and javascript: links
+                previewOptions={{ rehypePlugins: [[rehypeSanitize]] }}
               />
             </div>
 
