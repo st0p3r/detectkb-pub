@@ -275,7 +275,7 @@ export async function importAtomicFiles(files: { name: string; content: string }
     tests.push(...parsed);
   }
   const unique = Array.from(new Map(tests.map((t) => [t.guid, t])).values());
-  const result = await saveAtomicTests(unique, index ? 'upload: index.yaml' : `upload: ${files.length} file(s)`, { replaceAll: index });
+  const result = await saveAtomicTests(unique, index ? 'upload: index.yaml' : `upload: ${files.length - skipped.length} file(s)`, { replaceAll: index });
   return { ...result, tests: unique.length, skipped };
 }
 

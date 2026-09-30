@@ -1372,6 +1372,125 @@ export async function fetchStoryDetails(all = false) {
   return data as { fetched: number; missing: string[] };
 }
 
+// ── Atomic Red Team ───────────────────────────────────────────────────────────
+
+/**
+ * How a rule relates to an atomic test of its technique: its telemetry is among
+ * what the test should produce, it reads an EDR product, it reads other
+ * telemetry, or it has no telemetry links.
+ */
+export type AtomicRuleMatch = 'telemetry' | 'edr' | 'other-telemetry' | 'unknown';
+
+export interface AtomicTestSummary {
+  guid: string;
+  techniqueId: string;
+  techniqueName: string | null;
+  testNumber: number;
+  name: string;
+  platforms: string[];
+  executor: string;
+  elevationRequired: boolean;
+  expectedTelemetry: string[];
+  rules: Record<AtomicRuleMatch, number>;
+}
+
+export interface AtomicTestDetail {
+  guid: string;
+  techniqueId: string;
+  techniqueName: string | null;
+  testNumber: number;
+  name: string;
+  description: string | null;
+  platforms: string[];
+  executor: string;
+  elevationRequired: boolean;
+  command: string | null;
+  cleanupCommand: string | null;
+  resolvedCommand: string | null;
+  resolvedCleanup: string | null;
+  inputArguments: { name: string; description: string; type: string; default: string }[];
+  dependencies: { description: string; prereqCommand: string; getPrereqCommand: string }[];
+  dependencyExecutor: string | null;
+  expectedTelemetry: { key: string; why: string; source: string; sourceLabel: string; label: string }[];
+  invoke: string;
+  fileUrl: string;
+  source: string;
+  updatedAt: string;
+  rules: {
+    pageId: number;
+    title: string;
+    slug: string;
+    status: string;
+    severity: string;
+    relation: 'exact' | 'parent';
+    match: AtomicRuleMatch;
+    sharedTelemetry: string[];
+  }[];
+  ruleCounts: Record<AtomicRuleMatch, number>;
+}
+
+export interface AtomicList {
+  repository: string;
+  indexUrl: string;
+  total: number;
+  techniques: number;
+  updatedAt: string | null;
+  source: string | null;
+  tests: AtomicTestSummary[];
+}
+
+export async function listAtomicTests(params: { q?: string; technique?: string; platform?: string; executor?: string; match?: string } = {}) {
+  const { data } = await api.get('/api/atomics', { params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)) });
+  return data as AtomicList;
+}
+
+export async function getAtomicTest(guid: string) {
+  const { data } = await api.get(`/api/atomics/${encodeURIComponent(guid)}`);
+  return data as AtomicTestDetail;
+}
+
+export async function getTechniqueAtomics(techniqueId: string) {
+  const { data } = await api.get(`/api/atomics/technique/${encodeURIComponent(techniqueId)}`);
+  return data as { techniqueId: string; tests: AtomicTestSummary[] };
+}
+
+export interface RuleAtomicTest {
+  guid: string;
+  techniqueId: string;
+  testNumber: number;
+  name: string;
+  platforms: string[];
+  executor: string;
+  relation: 'exact' | 'parent';
+  match: AtomicRuleMatch;
+  sharedTelemetry: string[];
+  invoke: string;
+}
+
+export async function getRuleAtomics(pageId: number) {
+  const { data } = await api.get(`/api/atomics/rule/${pageId}`);
+  return data as { pageId: number; techniques: string[]; tests: RuleAtomicTest[] };
+}
+
+export interface AtomicImportResult {
+  added: number;
+  updated: number;
+  removed: number;
+  techniques: number;
+  tests: number;
+  skipped?: string[];
+}
+
+export async function importAtomicFiles(files: { name: string; content: string }[]) {
+  const { data } = await api.post('/api/atomics/import', { files });
+  return data as AtomicImportResult;
+}
+
+export async function fetchAtomicIndex() {
+  const { data } = await api.post('/api/atomics/fetch');
+  return data as AtomicImportResult;
+}
+
 // ── Data health ───────────────────────────────────────────────────────────────
 
 export interface HealthCheck {

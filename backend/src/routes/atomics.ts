@@ -52,10 +52,28 @@ interface RuleForTest {
   sharedTelemetry: string[];
 }
 
+/** Active rules by technique ID, so a test only looks at the rules of its own technique and parent */
+const rulesByTechnique = (() => {
+  let cached: { rules: RuleTelemetry[]; index: Map<string, RuleTelemetry[]> } | null = null;
+  return (rules: RuleTelemetry[]) => {
+    if (cached?.rules !== rules) {
+      const index = new Map<string, RuleTelemetry[]>();
+      for (const r of rules) {
+        if (r.status === 'deprecated') continue;
+        for (const t of new Set(r.techniques)) index.set(t, [...(index.get(t) ?? []), r]);
+      }
+      cached = { rules, index };
+    }
+    return cached.index;
+  };
+})();
+
 function rulesForTest(rules: RuleTelemetry[], test: { techniqueId: string; platforms: string[]; expected: Set<string> }): RuleForTest[] {
   const out: RuleForTest[] = [];
-  for (const r of rules) {
-    if (r.status === 'deprecated') continue;
+  const index = rulesByTechnique(rules);
+  const id = resolveTechniqueId(test.techniqueId) ?? test.techniqueId;
+  const candidates = new Set([...(index.get(id) ?? []), ...(index.get(id.split('.')[0]) ?? [])]);
+  for (const r of candidates) {
     const relations = r.techniques.map((t) => techniqueRelation(t, test.techniqueId)).filter((x): x is RuleForTest['relation'] => !!x);
     if (!relations.length) continue;
     const relation = relations.includes('exact') ? 'exact' : relations[0];
