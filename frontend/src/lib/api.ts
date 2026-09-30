@@ -1026,9 +1026,9 @@ export interface DetectionChain {
   dataSources: { pageId: number; title: string; slug: string; sysmon: number[] }[];
 }
 
-export async function getGraphPaths(from: string, to: string) {
-  const { data } = await api.get('/api/graph/path', { params: { from, to } });
-  return data as { paths: string[][]; nodes: GraphNode[]; edges: GraphEdge[] };
+export async function getGraphPaths(from: string, to: string, opts: { status?: string; links?: boolean } = {}) {
+  const { data } = await api.get('/api/graph/path', { params: { from, to, status: opts.status || undefined, links: opts.links ? '1' : undefined } });
+  return data as { paths: string[][]; nodes: GraphNode[]; edges: GraphEdge[]; linksWouldHelp: boolean };
 }
 
 export interface ImpactedRule {

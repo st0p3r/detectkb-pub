@@ -28,7 +28,7 @@ export interface GraphNode {
 export interface GraphEdge {
   source: string;
   target: string;
-  kind: string; // link | technique | sysmon | tag | category | reference | tool-technique
+  kind: string; // link | technique | sysmon | tag | category | reference | tool-technique | subtechnique
 }
 
 export interface Graph {
@@ -140,6 +140,13 @@ async function buildGraph(): Promise<Graph> {
       techniqueNode(techId);
       edge(nid, `technique:${techId}`, 'tool-technique');
     }
+  }
+
+  // Sub-technique → its parent, when both are in the graph
+  for (const id of [...nodes.keys()]) {
+    if (!id.startsWith('technique:') || !id.includes('.')) continue;
+    const parent = id.slice(0, id.indexOf('.'));
+    if (nodes.has(parent)) edge(id, parent, 'subtechnique');
   }
 
   // Rule counts: techniques (rules mapped to that ID) and tools (rules mentioning it)
@@ -308,55 +315,147 @@ export function neighbourhood(graph: Graph, centerId: string, opts: { group?: st
   return { center, nodes, more, edges };
 }
 
-/** Tags and categories connect almost anything in two hops; paths avoid them. */
+/** Tags and categories connect almost anything in two hops; paths never pass through them. */
 const PATH_SKIP_GROUPS = new Set(['tag', 'category']);
+const TOOL_GROUPS = new Set(['lolbas', 'gtfobins', 'loldrivers']);
+/** Nodes a path may pass through, besides wiki pages when `links` is on */
+const PATH_STEP_GROUPS = new Set(['RULE', 'DATA_SOURCE', 'technique', 'sysmon', ...TOOL_GROUPS]);
+/** Relationships of the detection model; wiki links are opt-in, tags and categories never */
+const PATH_EDGE_KINDS = new Set(['technique', 'sysmon', 'reference', 'tool-technique', 'subtechnique']);
+
+export interface PathOptions {
+  maxPaths?: number;
+  maxHops?: number;
+  /** Rule statuses a path may pass through; default: all but deprecated */
+  statuses?: string[] | null;
+  /** Also step along wiki links and through non-rule pages */
+  links?: boolean;
+}
+
+const kindCache = new WeakMap<Graph, Map<string, string>>();
+const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+/** Relationship between two adjacent nodes */
+export function edgeKind(graph: Graph, a: string, b: string): string | undefined {
+  let kinds = kindCache.get(graph);
+  if (!kinds) {
+    kinds = new Map(graph.edges.map((e) => [pairKey(e.source, e.target), e.kind]));
+    kindCache.set(graph, kinds);
+  }
+  return kinds.get(pairKey(a, b));
+}
 
 /**
  * Shortest paths between two nodes (each a list of node IDs, from → to), at
- * most `maxPaths`, none longer than `maxHops` edges. Tag and category nodes
- * are not used as stepping stones. Empty when the nodes aren't connected.
+ * most `maxPaths`, none longer than `maxHops` edges. Only the detection model's
+ * relationships are followed: tool ↔ technique, rule ↔ technique, rule ↔ tool
+ * it mentions, rule ↔ Sysmon event ↔ data source, sub-technique ↔ parent.
+ * Along the way:
+ *  - tags and categories are never stepped through;
+ *  - wiki links and non-rule pages are used only with `links` (the picked
+ *    endpoints may always use any of their own links);
+ *  - rules must have one of `statuses` (default: not deprecated);
+ *  - a Sysmon event only joins a rule to a data source: two rules sharing an
+ *    event (or two sources providing it) isn't a relationship.
+ * Paths are picked to overlap as little as possible, then by fewest hub nodes.
+ * Empty when the nodes aren't connected this way.
  */
-export function findPaths(graph: Graph, from: string, to: string, opts: { maxPaths?: number; maxHops?: number } = {}): string[][] {
+export function findPaths(graph: Graph, from: string, to: string, opts: PathOptions = {}): string[][] {
   const maxPaths = opts.maxPaths ?? 8;
   const maxHops = opts.maxHops ?? 6;
   if (!graph.nodes.has(from) || !graph.nodes.has(to)) return [];
   if (from === to) return [[from]];
-  const passable = (id: string) => id === to || !PATH_SKIP_GROUPS.has(graph.nodes.get(id)!.group);
+  const group = (id: string) => graph.nodes.get(id)!.group;
+  const statusOk = (id: string) => {
+    const n = graph.nodes.get(id)!;
+    if (n.group !== 'RULE') return true;
+    const status = (n.status ?? '').toLowerCase();
+    return opts.statuses?.length ? opts.statuses.includes(status) : status !== 'deprecated';
+  };
+  const canStepThrough = (id: string) => {
+    const g = group(id);
+    if (PATH_SKIP_GROUPS.has(g)) return false;
+    if (!PATH_STEP_GROUPS.has(g) && !(opts.links && isPageGroup(g))) return false;
+    return statusOk(id);
+  };
+  const edgeOk = (a: string, b: string) => {
+    const kind = edgeKind(graph, a, b);
+    if (kind && PATH_EDGE_KINDS.has(kind)) return true;
+    // The endpoints the user picked may use any of their own relationships
+    if (a === from || b === to) return true;
+    return kind === 'link' && !!opts.links;
+  };
+  // A Sysmon event in the middle must join a rule and a data source: which side we came from
+  const sideOf = (id: string) => (group(id) === 'RULE' ? 'rule' : 'other');
 
-  // Breadth-first from `from`, recording every predecessor on a shortest path
-  const dist = new Map<string, number>([[from, 0]]);
-  const preds = new Map<string, string[]>();
-  let frontier = [from];
-  for (let d = 1; d <= maxHops && frontier.length && !dist.has(to); d++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      for (const nb of graph.adjacency.get(id) ?? []) {
-        if (!passable(nb)) continue;
-        const seen = dist.get(nb);
+  // Breadth-first over states: a Sysmon node remembers which side it was entered from
+  type State = string; // `${node}` or `${node}#rule` / `${node}#other` for Sysmon events
+  const nodeOf = (s: State) => (s.includes('#') ? s.slice(0, s.lastIndexOf('#')) : s);
+  const stateFor = (nb: string, cur: string): State => (nb !== to && group(nb) === 'sysmon' ? `${nb}#${sideOf(cur)}` : nb);
+  const dist = new Map<State, number>([[from, 0]]);
+  const preds = new Map<State, State[]>();
+  let frontier: State[] = [from];
+  let reached = false;
+  for (let d = 1; d <= maxHops && frontier.length && !reached; d++) {
+    const next: State[] = [];
+    for (const st of frontier) {
+      const cur = nodeOf(st);
+      const entered = st.includes('#') ? st.slice(st.lastIndexOf('#') + 1) : null;
+      for (const nb of graph.adjacency.get(cur) ?? []) {
+        if (nb !== to && !canStepThrough(nb)) continue;
+        if (!edgeOk(cur, nb)) continue;
+        // Leaving a Sysmon event: rule → event → rule (or source → event → source) is not a link
+        if (entered && sideOf(nb) === entered) continue;
+        const ns = stateFor(nb, cur);
+        const seen = dist.get(ns);
         if (seen === undefined) {
-          dist.set(nb, d);
-          preds.set(nb, [id]);
-          next.push(nb);
+          dist.set(ns, d);
+          preds.set(ns, [st]);
+          next.push(ns);
+          if (nb === to) reached = true;
         } else if (seen === d) {
-          preds.get(nb)!.push(id);
+          preds.get(ns)!.push(st);
         }
       }
     }
     frontier = next;
   }
-  if (!dist.has(to)) return [];
+  if (!reached) return [];
 
-  // Walk predecessors back from `to`; hub-light paths first (fewer, more specific links)
+  // Enumerate the shortest paths (bounded), hub-light first
   const degree = (id: string) => graph.nodes.get(id)!.degree;
-  const paths: string[][] = [];
-  const walk = (id: string, suffix: string[]) => {
-    if (paths.length >= maxPaths) return;
-    if (id === from) {
-      paths.push([from, ...suffix]);
+  const all: string[][] = [];
+  const LIMIT = 500;
+  const walk = (st: State, suffix: string[]) => {
+    if (all.length >= LIMIT) return;
+    const id = nodeOf(st);
+    if (suffix.includes(id)) return; // no node twice
+    if (st === from) {
+      all.push([from, ...suffix]);
       return;
     }
-    for (const p of [...(preds.get(id) ?? [])].sort((a, b) => degree(a) - degree(b))) walk(p, [id, ...suffix]);
+    for (const p of [...(preds.get(st) ?? [])].sort((a, b) => degree(nodeOf(a)) - degree(nodeOf(b)))) walk(p, [id, ...suffix]);
   };
   walk(to, []);
-  return paths;
+
+  // Pick paths that share as few intermediate nodes as possible with those already picked
+  const weight = (p: string[]) => p.slice(1, -1).reduce((n, id) => n + degree(id), 0);
+  const pool = [...all].sort((a, b) => weight(a) - weight(b));
+  const picked: string[][] = [];
+  const used = new Map<string, number>();
+  while (picked.length < maxPaths && pool.length) {
+    let best = 0;
+    let bestOverlap = Infinity;
+    for (let i = 0; i < pool.length; i++) {
+      const overlap = pool[i].slice(1, -1).reduce((n, id) => n + (used.get(id) ?? 0), 0);
+      if (overlap < bestOverlap) {
+        best = i;
+        bestOverlap = overlap;
+        if (overlap === 0) break;
+      }
+    }
+    const [p] = pool.splice(best, 1);
+    picked.push(p);
+    for (const id of p.slice(1, -1)) used.set(id, (used.get(id) ?? 0) + 1);
+  }
+  return picked;
 }
