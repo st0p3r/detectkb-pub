@@ -113,11 +113,11 @@ when running the backend directly on the host.
 | MYSQL_ROOT_PASSWORD / MYSQL_PASSWORD | — | MySQL credentials (URL-safe characters only) |
 | MYSQL_DATABASE / MYSQL_USER | detectkb | MySQL database and user |
 | NODE_ENV | production | `production` refuses destructive schema changes on start |
-| JWT_SECRET | insecure dev default | JWT signing secret — **always set in production** |
+| JWT_SECRET | — | JWT signing secret (32+ characters). In production a missing, short or example value is replaced by a random secret kept in `BACKUP_DIR/.secrets/jwt-secret` |
 | ADMIN_USERNAME / ADMIN_PASSWORD / ADMIN_EMAIL | admin / detectkb | Initial admin, created only when the database has no users |
 | DATABASE_URL | — | Backend-only (host dev); built automatically in Docker |
 | BACKUP_DIR | ../backups (`/backups` in Docker) | Backup and generated-document directory |
-| CORS_ORIGIN | * | Allowed CORS origin for the API |
+| CORS_ORIGIN | (none) | Origins allowed to call the API cross-origin, comma-separated. Not needed when the UI is served by the bundled nginx |
 | SIGMA_SERVICE_URL | http://localhost:8000 (`http://sigma:8000` in Docker) | pySigma conversion service |
 | REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers and analytic story details on first start |
 | D3FEND_FETCH | true | Look up D3FEND countermeasures on d3fend.mitre.org (cached 30 days per technique) |
@@ -211,7 +211,23 @@ each request, so role changes and deactivations apply immediately.
 | admin | Everything, plus users, audit log, custom page types, restore/delete backups |
 
 The default `admin` / `detectkb` password (and any password set by an admin) must be changed at
-first login. After 10 failed logins for the same user from one IP, login is blocked for 15 minutes.
+first login.
+
+### Security measures
+
+- **Login throttling**: failed logins are counted for 15 minutes: 10 for one user from one IP,
+  30 from one IP across all usernames (password spraying), 100 for one user across all IPs.
+  nginx overwrites `X-Forwarded-For`, so a client can't fake its IP to get around this.
+- **No username probing**: unknown, disabled and existing users get the same answer in the same time.
+- **Passwords**: at least 10 characters (at most 72 bytes, the bcrypt limit), not containing the
+  username and not one repeated character; stored as bcrypt hashes (cost 12, older hashes upgraded at login).
+- **Sessions**: JWTs are HS256-only and last 24 hours. Changing or resetting a password ends every
+  other session of that user; deactivating a user ends them immediately.
+- **Web headers** (nginx): a Content-Security-Policy that allows scripts only from DetectKB itself,
+  plus `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy` and `Permissions-Policy`.
+- **Content**: Markdown (including the editor preview) is sanitised, and links taken from
+  data (rule references, imported datasets) are only rendered when they are `http(s)`.
+- **Errors**: unexpected server errors return a generic message; details go to the backend log.
 
 ## Backup & Restore
 - Click "Backup Now" in the Backups section to export a JSON snapshot

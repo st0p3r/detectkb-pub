@@ -20,6 +20,7 @@ import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
 import { relativeTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import { safeHref } from '@/lib/safeUrl';
 
 const KINDS: { kind: ReferenceKind; blurb: string }[] = [
   { kind: 'lolbas', blurb: 'Windows binaries, scripts and libraries abused by attackers (Living Off The Land).' },
@@ -63,7 +64,7 @@ function LinkList({ urls }: { urls: string[] }) {
     <ul className="space-y-0.5 text-sm">
       {urls.map((u) => (
         <li key={u}>
-          <a href={u} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline break-all">
+          <a href={safeHref(u)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline break-all">
             {u} <ExternalLink className="w-3 h-3 flex-shrink-0" />
           </a>
         </li>
@@ -122,7 +123,7 @@ function Detail({ kind, entryKey }: { kind: ReferenceKind; entryKey: string }) {
                   <li key={i}>
                     <span className="text-muted-foreground">{x.type}: </span>
                     {/^https?:/.test(x.value) ? (
-                      <a href={x.value} target="_blank" rel="noreferrer" className="text-primary hover:underline break-all">{x.value}</a>
+                      <a href={safeHref(x.value)} target="_blank" rel="noreferrer" className="text-primary hover:underline break-all">{x.value}</a>
                     ) : (
                       x.value
                     )}

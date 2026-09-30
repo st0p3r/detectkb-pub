@@ -69,11 +69,14 @@ router.get('/list', canRead, async (_req: Request, res: Response) => {
   res.json(logs);
 });
 
+const BACKUP_FILE_NAME = /^detectkb-backup-[A-Za-z0-9_-]+\.json$/;
+
 router.get('/download/:fileName', canRead, (req: Request, res: Response) => {
-  const safe = req.params.fileName.replace(/[^a-zA-Z0-9\-_.]/g, '');
+  // Only files this router wrote: BACKUP_DIR also holds other state (e.g. .secrets/)
+  const safe = req.params.fileName;
   const filePath = path.join(BACKUP_DIR, safe);
 
-  if (!fs.existsSync(filePath)) {
+  if (!BACKUP_FILE_NAME.test(safe) || !fs.existsSync(filePath)) {
     res.status(404).json({ error: 'File not found' });
     return;
   }

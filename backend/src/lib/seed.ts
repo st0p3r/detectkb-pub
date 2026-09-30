@@ -1,3 +1,4 @@
+import { BCRYPT_ROUNDS } from './auth-security';
 import { prisma } from './prisma';
 import bcrypt from 'bcryptjs';
 import fs from 'fs';
@@ -116,7 +117,7 @@ export async function seedDatabase() {
       } else {
         const plain = process.env.ADMIN_PASSWORD || 'detectkb';
         usesDefaultPassword = plain === 'detectkb';
-        passwordHash = await bcrypt.hash(plain, 10);
+        passwordHash = await bcrypt.hash(plain, BCRYPT_ROUNDS);
       }
     }
 

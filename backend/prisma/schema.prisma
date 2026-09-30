@@ -16,6 +16,8 @@ model User {
   lastName           String?        @db.VarChar(100)
   isActive           Boolean        @default(true)
   mustChangePassword Boolean        @default(false)
+  // Bumped when the password changes: tokens issued before that stop working
+  tokenVersion       Int            @default(0)
   userRoles          UserRole[]
   auditLogs          AuditLog[]
   generatedDocs      GeneratedDoc[]

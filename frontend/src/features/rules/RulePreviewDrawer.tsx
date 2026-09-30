@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
 import { SourceBadge } from '@/components/ui/SourceBadge';
 import { RuleQueryTabs } from './RuleQueryTabs';
+import { safeHref } from '@/lib/safeUrl';
 
 interface RulePreviewDrawerProps {
   slug: string;
@@ -166,7 +167,7 @@ export function RulePreviewDrawer({ slug, onClose, onPrev, onNext, onTechnique }
                     .filter(Boolean)
                     .map((r) => (
                       <li key={r}>
-                        <a href={r.trim()} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline break-all">
+                        <a href={safeHref(r)} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline break-all">
                           {r.trim()}
                         </a>
                       </li>

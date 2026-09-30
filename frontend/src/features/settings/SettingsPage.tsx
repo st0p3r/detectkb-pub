@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
 type PasswordStatus = 'idle' | 'loading' | 'success' | 'error';
 
 export function SettingsPage() {
-  const { username, roles } = useAuth();
+  const { username, roles, passwordChanged } = useAuth();
   const isAdmin = roles.includes('admin');
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -22,8 +22,8 @@ export function SettingsPage() {
     e.preventDefault();
     setPasswordError('');
 
-    if (newPassword.length < 6) {
-      setPasswordError('New password must be at least 6 characters.');
+    if (newPassword.length < 10) {
+      setPasswordError('New password must be at least 10 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -33,7 +33,8 @@ export function SettingsPage() {
 
     setPasswordStatus('loading');
     try {
-      await api.put('/api/auth/password', { currentPassword, newPassword });
+      const res = await api.put<{ token?: string }>('/api/auth/password', { currentPassword, newPassword });
+      passwordChanged(res.data.token);
       setPasswordStatus('success');
       setCurrentPassword('');
       setNewPassword('');
@@ -165,7 +166,7 @@ export function SettingsPage() {
               onChange={(e) => setNewPassword(e.target.value)}
               required
               autoComplete="new-password"
-              minLength={6}
+              minLength={10}
               className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
