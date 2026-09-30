@@ -2,11 +2,16 @@
 export const ENTITY_GROUPS: Record<string, { label: string; color: string }> = {
   technique: { label: 'ATT&CK techniques', color: '#8b5cf6' },
   sysmon: { label: 'Sysmon events', color: '#6366f1' },
+  logevent: { label: 'Log events', color: '#0284c7' },
   lolbas: { label: 'LOLBAS', color: '#f97316' },
   gtfobins: { label: 'GTFOBins', color: '#16a34a' },
   loldrivers: { label: 'LOLDrivers', color: '#dc2626' },
   category: { label: 'Categories', color: '#14b8a6' },
   tag: { label: 'Tags', color: '#94a3b8' },
+  'threat-group': { label: 'Threat groups', color: '#be123c' },
+  software: { label: 'Malware & tools', color: '#b45309' },
+  mitigation: { label: 'Mitigations', color: '#059669' },
+  story: { label: 'Analytic stories', color: '#7c3aed' },
   more: { label: 'More', color: '#94a3b8' },
 };
 

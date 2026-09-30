@@ -66,6 +66,26 @@ export function NodePanel({ node, onClose, children, neighbours, onSelectNeighbo
             Tool reference
           </Link>
         )}
+        {node.group === 'logevent' && (
+          <Link to={`/log-sources?event=${encodeURIComponent(rest)}`} className={btn}>
+            Log source reference
+          </Link>
+        )}
+        {node.group === 'threat-group' && (
+          <Link to={`/threat-groups?group=${rest}`} className={btn}>
+            Coverage
+          </Link>
+        )}
+        {node.group === 'software' && (
+          <Link to={`/threat-groups?tab=software&software=${rest}`} className={btn}>
+            Coverage
+          </Link>
+        )}
+        {node.group === 'story' && (
+          <Link to={`/analytic-stories?story=${rest}`} className={btn}>
+            Story
+          </Link>
+        )}
       </div>
 
       {neighbours && neighbours.length > 0 && (

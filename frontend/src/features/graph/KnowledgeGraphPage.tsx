@@ -18,14 +18,23 @@ type View = 'wiki' | 'explore' | 'chain' | 'paths' | 'impact' | 'flows' | 'gaps'
 const VIEWS: { id: View; label: string; icon: React.ElementType; hint: string }[] = [
   { id: 'wiki', label: 'Wiki', icon: Share2, hint: 'Knowledge pages and their [[links]]' },
   { id: 'explore', label: 'Explore', icon: Compass, hint: 'Start from one node and expand step by step' },
-  { id: 'chain', label: 'Detection chain', icon: GitBranch, hint: 'Tactic → technique → rules → Sysmon events → data sources' },
+  { id: 'chain', label: 'Detection chain', icon: GitBranch, hint: 'Tactic → technique → rules → telemetry → data sources' },
   { id: 'paths', label: 'Paths', icon: Route, hint: 'How two nodes are connected' },
   { id: 'impact', label: 'Impact', icon: Unplug, hint: 'What stops working if a data source is lost' },
   { id: 'flows', label: 'Flows', icon: Waves, hint: 'Which telemetry feeds detections for each tactic' },
   { id: 'gaps', label: 'Tool gaps', icon: ShieldAlert, hint: 'Attacker tools and techniques no rule covers' },
 ];
 
-/** Knowledge graph with three views; the view and its focus live in the URL. */
+function impactParams({ sources, events, dataSource }: { sources: string[]; events: string[]; dataSource: number | null }) {
+  return {
+    view: 'impact',
+    ...(sources.length ? { sources: sources.join(',') } : {}),
+    ...(events.length ? { events: events.join(',') } : {}),
+    ...(dataSource ? { dataSource: String(dataSource) } : {}),
+  };
+}
+
+/** Knowledge graph with several views; the view and its focus live in the URL. */
 export default function KnowledgeGraphPage() {
   const [params, setParams] = useSearchParams();
   const view = (VIEWS.find((v) => v.id === params.get('view'))?.id ?? 'wiki') as View;
@@ -88,11 +97,11 @@ export default function KnowledgeGraphPage() {
       )}
       {view === 'impact' && (
         <ImpactView
-          events={list('sysmon').map(Number)}
+          sources={list('sources')}
+          // ?sysmon=1,10 is the older form of events=sysmon:1,sysmon:10 (saved views)
+          events={[...list('events'), ...list('sysmon').map((n) => `sysmon:${n}`)]}
           dataSource={Number(params.get('dataSource')) || null}
-          onChange={(events, ds) =>
-            go({ view: 'impact', ...(events.length ? { sysmon: events.join(',') } : {}), ...(ds ? { dataSource: String(ds) } : {}) })
-          }
+          onChange={({ sources, events, dataSource }) => go(impactParams({ sources, events, dataSource }))}
           onShowChain={showChain}
         />
       )}
@@ -100,7 +109,7 @@ export default function KnowledgeGraphPage() {
         <FlowsView
           tactic={params.get('tactic')}
           onTacticChange={(t) => go(t ? { view: 'flows', tactic: t } : { view: 'flows' })}
-          onShowImpact={(eventId) => go({ view: 'impact', sysmon: String(eventId) })}
+          onShowImpact={({ sources = [], events = [] }) => go(impactParams({ sources, events, dataSource: null }))}
           onShowChain={showChain}
         />
       )}

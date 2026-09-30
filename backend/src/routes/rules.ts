@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { parseSingleSigmaRule } from '../lib/sigma';
-import { syncAutoSysmonLinks } from '../lib/sysmon-links';
+import { syncDerivedLinks } from '../lib/derived-links';
 import {
   RULE_LIST_SELECT,
   RULE_SEVERITIES,
@@ -237,7 +237,7 @@ router.post('/', async (req, res) => {
     update: ruleData,
     include: { page: { select: RULE_PAGE_SELECT } },
   });
-  await syncAutoSysmonLinks(rule.pageId);
+  await syncDerivedLinks(rule.pageId);
 
   res.status(201).json(rule);
 });
@@ -286,7 +286,7 @@ router.put('/:id', async (req, res) => {
     },
     include: { page: { select: RULE_PAGE_SELECT } },
   });
-  await syncAutoSysmonLinks(rule.pageId);
+  await syncDerivedLinks(rule.pageId);
 
   res.json(rule);
 });
@@ -300,7 +300,7 @@ router.delete('/:id', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Rule not found' });
 
   await prisma.detectionRule.delete({ where: { id } });
-  await syncAutoSysmonLinks(existing.pageId);
+  await syncDerivedLinks(existing.pageId);
   res.status(204).send();
 });
 

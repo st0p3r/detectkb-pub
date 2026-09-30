@@ -1,46 +1,72 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Loader2, ShieldOff, Unplug } from 'lucide-react';
-import { apiErrorMessage, getImpact, listPages, listSysmonEvents, type ImpactedRule } from '@/lib/api';
+import { AlertTriangle, Loader2, ShieldOff, Unplug, X } from 'lucide-react';
+import { apiErrorMessage, getImpact, listLogEvents, listLogSources, listPages, listSysmonEvents, type ImpactedRule } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { cn } from '@/lib/utils';
 
-interface ImpactViewProps {
-  events: number[];
+export interface ImpactSelection {
+  /** Whole log sources: sysmon, windows-security, … */
+  sources: string[];
+  /** Single events (telemetry keys): sysmon:10, windows-security:4688, … */
+  events: string[];
   dataSource: number | null;
-  onChange: (events: number[], dataSource: number | null) => void;
+}
+
+interface ImpactViewProps extends ImpactSelection {
+  onChange: (next: ImpactSelection) => void;
   onShowChain: (technique: string) => void;
 }
 
 const LEVELS: Record<ImpactedRule['level'], { label: string; hint: string; chip: string }> = {
-  lost: { label: 'Lost', hint: 'Every Sysmon event it uses is gone and it lists no other source', chip: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30' },
+  lost: { label: 'Lost', hint: 'All the telemetry it reads is gone and it names no other data source', chip: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30' },
   atRisk: {
     label: 'At risk',
-    hint: 'Every Sysmon event it uses is gone; other sources it lists may still feed it',
+    hint: 'All the telemetry DetectKB knows it reads is gone; other data sources it names may still feed it',
     chip: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30',
   },
-  partial: { label: 'Partial', hint: 'Some of its Sysmon events are gone', chip: 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/30' },
+  partial: { label: 'Partial', hint: 'Some of the telemetry it reads is gone, the rest still feeds it', chip: 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/30' },
 };
 
 const LIST_STEP = 50;
+const toggle = (list: string[], item: string) => (list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
+
+/** Events of one log source to pick from (Sysmon from its own reference). */
+function useSourceEvents(source: string) {
+  const sysmon = useQuery({ queryKey: ['sysmon-events'], queryFn: () => listSysmonEvents(), enabled: source === 'sysmon' });
+  const logs = useQuery({ queryKey: ['log-events', source], queryFn: () => listLogEvents(source), enabled: !!source && source !== 'sysmon' });
+  if (source === 'sysmon') {
+    return (sysmon.data ?? []).filter((e) => e.ruleCount > 0).map((e) => ({ key: `sysmon:${e.eventId}`, code: String(e.eventId), name: e.name, rules: e.ruleCount }));
+  }
+  return (logs.data ?? []).filter((e) => e.rules > 0).map((e) => ({ key: e.key, code: e.code === '*' ? 'any' : e.code, name: e.name, rules: e.rules }));
+}
 
 /** "What if we stop collecting …?" — rules and techniques that depend on some telemetry. */
-export function ImpactView({ events, dataSource, onChange, onShowChain }: ImpactViewProps) {
-  const { data: sysmon = [] } = useQuery({ queryKey: ['sysmon-events'], queryFn: () => listSysmonEvents() });
-  const { data: sources = [] } = useQuery({ queryKey: ['pages', 'DATA_SOURCE'], queryFn: () => listPages({ type: 'DATA_SOURCE' }) });
-  const hasSelection = events.length > 0 || !!dataSource;
+export function ImpactView({ sources, events, dataSource, onChange, onShowChain }: ImpactViewProps) {
+  const { data: logSources = [] } = useQuery({ queryKey: ['log-sources'], queryFn: listLogSources });
+  const { data: dsPages = [] } = useQuery({ queryKey: ['pages', 'DATA_SOURCE'], queryFn: () => listPages({ type: 'DATA_SOURCE' }) });
+  const [eventSource, setEventSource] = useState('sysmon');
+  const sourceEvents = useSourceEvents(eventSource);
+  const hasSelection = sources.length > 0 || events.length > 0 || !!dataSource;
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['graph-impact', events, dataSource],
-    queryFn: () => getImpact({ sysmon: events, dataSource: dataSource ?? undefined }),
+    queryKey: ['graph-impact', sources, events, dataSource],
+    queryFn: () => getImpact({ sources, events, dataSource: dataSource ?? undefined }),
     enabled: hasSelection,
   });
   const [level, setLevel] = useState<ImpactedRule['level'] | 'all'>('all');
   const [shown, setShown] = useState(LIST_STEP);
 
-  const toggle = (id: number) => onChange(events.includes(id) ? events.filter((e) => e !== id) : [...events, id].sort((a, b) => a - b), dataSource);
+  const set = (next: Partial<ImpactSelection>) => onChange({ sources, events, dataSource, ...next });
+  const lostKeys = new Set(data?.events ?? []);
   const rules = (data?.rules ?? []).filter((r) => level === 'all' || r.level === level);
-  const covered = sysmon.filter((e) => e.ruleCount > 0);
+  const label = (key: string) => data?.labels[key] ?? key;
+  const sourceName = (key: string) => logSources.find((s) => s.key === key)?.label ?? key;
+  const chip = (on: boolean, implied = false) =>
+    cn(
+      'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors',
+      on ? 'bg-red-500 text-white border-red-500' : implied ? 'border-red-400 text-red-600 dark:text-red-400' : 'border-border hover:bg-accent'
+    );
 
   return (
     <div data-graph-export className="flex-1 min-h-0 overflow-auto space-y-4 pb-4">
@@ -50,54 +76,99 @@ export function ImpactView({ events, dataSource, onChange, onShowChain }: Impact
           <span className="text-sm font-medium">If we stop collecting…</span>
           <select
             value={dataSource ?? ''}
-            onChange={(e) => onChange(events, e.target.value ? Number(e.target.value) : null)}
+            onChange={(e) => set({ dataSource: e.target.value ? Number(e.target.value) : null })}
             aria-label="Data source"
             className="px-2.5 py-1.5 rounded-md border border-border bg-background text-sm"
           >
-            <option value="">a data source (all its Sysmon events)…</option>
-            {sources.map((s) => (
+            <option value="">a data source page (all its events)…</option>
+            {dsPages.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.title}
               </option>
             ))}
           </select>
-          <span className="text-xs text-muted-foreground">and / or these Sysmon events:</span>
           {hasSelection && (
-            <button onClick={() => onChange([], null)} className="text-xs text-primary hover:underline ml-auto">
+            <button onClick={() => onChange({ sources: [], events: [], dataSource: null })} className="text-xs text-primary hover:underline ml-auto">
               Clear
             </button>
           )}
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {covered.map((e) => {
-            const on = events.includes(e.eventId) || !!data?.events.includes(e.eventId);
-            return (
-              <button
-                key={e.eventId}
-                onClick={() => toggle(e.eventId)}
-                aria-pressed={events.includes(e.eventId)}
-                title={`${e.name} — ${e.ruleCount} rules`}
-                className={cn(
-                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs transition-colors',
-                  events.includes(e.eventId)
-                    ? 'bg-red-500 text-white border-red-500'
-                    : on
-                      ? 'border-red-400 text-red-600 dark:text-red-400'
-                      : 'border-border hover:bg-accent'
-                )}
-              >
-                <span className="font-semibold tabular-nums">{e.eventId}</span>
-                <span className="max-w-[10rem] truncate">{e.name}</span>
-                <span className="opacity-70 tabular-nums">{e.ruleCount}</span>
-              </button>
-            );
-          })}
+
+        <div>
+          <div className="text-xs text-muted-foreground mb-1.5">…whole log sources:</div>
+          <div className="flex flex-wrap gap-1.5">
+            {logSources
+              .filter((s) => s.rules > 0)
+              .map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => set({ sources: toggle(sources, s.key) })}
+                  aria-pressed={sources.includes(s.key)}
+                  title={`${s.label} — ${s.rules} rules`}
+                  className={chip(sources.includes(s.key))}
+                >
+                  <span className="max-w-[12rem] truncate">{s.label}</span>
+                  <span className="opacity-70 tabular-nums">{s.rules}</span>
+                </button>
+              ))}
+          </div>
         </div>
+
+        <div>
+          <div className="flex flex-wrap items-center gap-2 mb-1.5 text-xs text-muted-foreground">
+            …or single events of
+            <select
+              value={eventSource}
+              onChange={(e) => setEventSource(e.target.value)}
+              aria-label="Log source for single events"
+              className="px-2 py-1 rounded-md border border-border bg-background text-xs text-foreground"
+            >
+              {logSources
+                .filter((s) => s.rules > 0)
+                .map((s) => (
+                  <option key={s.key} value={s.key}>
+                    {s.label}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {sourceEvents.map((e) => (
+              <button
+                key={e.key}
+                onClick={() => set({ events: toggle(events, e.key) })}
+                aria-pressed={events.includes(e.key)}
+                title={`${e.name} — ${e.rules} rules`}
+                className={chip(events.includes(e.key), lostKeys.has(e.key))}
+              >
+                <span className="font-semibold tabular-nums">{e.code}</span>
+                <span className="max-w-[10rem] truncate">{e.name}</span>
+                <span className="opacity-70 tabular-nums">{e.rules}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {(sources.length > 0 || events.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-border text-xs">
+            <span className="text-muted-foreground">Selected:</span>
+            {sources.map((s) => (
+              <button key={s} onClick={() => set({ sources: toggle(sources, s) })} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400">
+                {sourceName(s)} (all) <X className="w-3 h-3" />
+              </button>
+            ))}
+            {events.map((e) => (
+              <button key={e} onClick={() => set({ events: toggle(events, e) })} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400">
+                {label(e)} <X className="w-3 h-3" />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {!hasSelection ? (
         <div className="rounded-lg border border-border bg-card p-10 text-center text-sm text-muted-foreground">
-          Pick a data source or Sysmon events above to see which rules and ATT&CK techniques depend on them.
+          Pick log sources, single events or a data source page above to see which rules and ATT&CK techniques depend on them.
         </div>
       ) : isLoading ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground px-1">
@@ -113,17 +184,17 @@ export function ImpactView({ events, dataSource, onChange, onShowChain }: Impact
               ['Rules at risk', data.counts.atRisk, 'text-amber-600 dark:text-amber-400', LEVELS.atRisk.hint],
               ['Rules degraded', data.counts.partial, 'text-foreground', LEVELS.partial.hint],
               ['Techniques left uncovered', data.uncovered.length, 'text-red-600 dark:text-red-400', 'Every rule for the technique is lost'],
-              ['Techniques weakened', data.reduced.length, 'text-amber-600 dark:text-amber-400', 'Some of the technique\'s rules are lost or at risk'],
-            ].map(([label, value, color, hint]) => (
-              <div key={label as string} className="rounded-lg border border-border bg-card p-4" title={hint as string}>
+              ['Techniques weakened', data.reduced.length, 'text-amber-600 dark:text-amber-400', "Some of the technique's rules are lost or at risk"],
+            ].map(([title, value, color, hint]) => (
+              <div key={title as string} className="rounded-lg border border-border bg-card p-4" title={hint as string}>
                 <div className={cn('text-2xl font-bold tabular-nums', color as string)}>{(value as number).toLocaleString()}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{title}</div>
               </div>
             ))}
           </div>
           <p className="text-xs text-muted-foreground px-1">
-            Of {data.counts.activeRules.toLocaleString()} active rules · Sysmon events {data.events.join(', ')} · rules without Sysmon links
-            aren't affected
+            Of {data.counts.activeRules.toLocaleString()} active rules · {data.events.length} event{data.events.length === 1 ? '' : 's'} lost · a rule is
+            lost only when all the telemetry it reads is gone; rules without telemetry links aren't affected
           </p>
 
           {data.uncovered.length > 0 && (
@@ -195,26 +266,33 @@ export function ImpactView({ events, dataSource, onChange, onShowChain }: Impact
               <p className="text-sm text-muted-foreground">None.</p>
             ) : (
               <ul className="divide-y divide-border">
-                {rules.slice(0, shown).map((r) => (
-                  <li key={r.pageId} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
-                    <span className={cn('px-1.5 py-px rounded border text-[11px] font-medium', LEVELS[r.level].chip)} title={LEVELS[r.level].hint}>
-                      {LEVELS[r.level].label}
-                    </span>
-                    <Link to={`/pages/${r.slug}`} className="text-primary hover:underline min-w-0 truncate max-w-[28rem]">
-                      {r.title}
-                    </Link>
-                    <StatusBadge status={r.status} />
-                    <span className="text-xs text-muted-foreground">
-                      loses EID {r.lostEvents.join(', ')}
-                      {r.level === 'partial' && ` · keeps ${r.sysmon.filter((e) => !r.lostEvents.includes(e)).join(', ')}`}
-                    </span>
-                    {r.alternatives.length > 0 && (
-                      <span className="text-xs text-amber-600 dark:text-amber-400 truncate max-w-[22rem]" title={r.alternatives.join(', ')}>
-                        also lists: {r.alternatives.join(', ')}
+                {rules.slice(0, shown).map((r) => {
+                  const kept = r.telemetry.filter((k) => !r.lostEvents.includes(k));
+                  return (
+                    <li key={r.pageId} className="flex flex-wrap items-center gap-2 py-1.5 text-sm">
+                      <span className={cn('px-1.5 py-px rounded border text-[11px] font-medium', LEVELS[r.level].chip)} title={LEVELS[r.level].hint}>
+                        {LEVELS[r.level].label}
                       </span>
-                    )}
-                  </li>
-                ))}
+                      <Link to={`/pages/${r.slug}`} className="text-primary hover:underline min-w-0 truncate max-w-[28rem]">
+                        {r.title}
+                      </Link>
+                      <StatusBadge status={r.status} />
+                      <span className="text-xs text-muted-foreground truncate max-w-[26rem]" title={r.lostEvents.map(label).join(', ')}>
+                        loses {r.lostEvents.map(label).join(', ')}
+                      </span>
+                      {kept.length > 0 && (
+                        <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate max-w-[22rem]" title={kept.map(label).join(', ')}>
+                          keeps {kept.map(label).join(', ')}
+                        </span>
+                      )}
+                      {r.alternatives.length > 0 && (
+                        <span className="text-xs text-amber-600 dark:text-amber-400 truncate max-w-[22rem]" title={r.alternatives.join(', ')}>
+                          also names: {r.alternatives.join(', ')}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
             {rules.length > shown && (

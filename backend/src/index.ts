@@ -20,6 +20,9 @@ import sysmonEventsRouter from './routes/sysmon-events';
 import activityRouter from './routes/activity';
 import dashboardRouter from './routes/dashboard';
 import savedViewsRouter from './routes/saved-views';
+import logSourcesRouter from './routes/log-sources';
+import threatIntelRouter from './routes/threat-intel';
+import storiesRouter from './routes/stories';
 import { markDataChanged } from './lib/kb-cache';
 import sigmaRouter from './routes/sigma';
 import ruleImportRouter from './routes/rule-import';
@@ -28,7 +31,7 @@ import graphRouter from './routes/graph';
 import attackRouter from './routes/attack';
 import { authMiddleware, guard, requirePermission } from './middleware/auth';
 import { seedDatabase } from './lib/seed';
-import { syncAllSysmonLinks } from './lib/sysmon-links';
+import { syncAllDerivedLinks } from './lib/derived-links';
 import { fetchMissingReferenceData } from './lib/reference-bootstrap';
 
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -72,6 +75,9 @@ app.use('/api/links', linksRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/page-types', pageTypesRouter);
 app.use('/api/sysmon-events', guard('rules'), sysmonEventsRouter);
+app.use('/api/log-sources', guard('rules'), logSourcesRouter);
+app.use('/api/threat-intel', threatIntelRouter);
+app.use('/api/stories', guard('rules'), storiesRouter);
 app.use('/api/sigma', sigmaRouter);
 app.use('/api/rules-import', ruleImportRouter);
 app.use('/api/references', referencesRouter);
@@ -97,7 +103,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 // Seed and start
 seedDatabase()
-  .then(() => syncAllSysmonLinks())
+  .then(() => syncAllDerivedLinks())
   .then(() => {
     app.listen(PORT, () => {
       console.log(`DetectKB backend running on http://localhost:${PORT}`);

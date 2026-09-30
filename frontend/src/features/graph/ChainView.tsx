@@ -7,10 +7,10 @@ import { cn } from '@/lib/utils';
 import { ENTITY_GROUPS } from './graphStyle';
 
 // Column geometry (px)
-const COLS = { tactic: 0, technique: 150, rule: 400, sysmon: 740, ds: 950 };
-const WIDTH = { tactic: 120, technique: 210, rule: 300, sysmon: 170, ds: 180 };
+const COLS = { tactic: 0, technique: 150, rule: 400, tel: 740, ds: 975 };
+const WIDTH = { tactic: 120, technique: 210, rule: 300, tel: 195, ds: 180 };
 const TOTAL_WIDTH = COLS.ds + WIDTH.ds;
-const ROW = { rule: 54, technique: 50, sysmon: 44, ds: 44, tactic: 44 };
+const ROW = { rule: 54, technique: 50, tel: 44, ds: 44, tactic: 44 };
 const HEAD = 36;
 const RULE_PAGE = 40;
 
@@ -22,7 +22,7 @@ const STATUS_DOT: Record<string, string> = {
   deprecated: 'bg-red-500',
 };
 
-type ItemId = string; // tactic:TA0006 | technique:T1003 | rule:12 | sysmon:10 | ds:4
+type ItemId = string; // tactic:TA0006 | technique:T1003 | rule:12 | tel:sysmon:10 | tel:windows-security:4688 | ds:4
 
 /**
  * Places items of one column at the average y of the items they connect to
@@ -77,35 +77,35 @@ function layout(chain: DetectionChain, rules: ChainRule[]) {
   tacticPos.forEach((v, k) => y.set(k, v));
   for (const ta of tacticIds) for (const te of techIds) edges.push([ta, te]);
 
-  // Rules ↔ Sysmon events
-  const sysIds = chain.sysmon.map((s) => `sysmon:${s.eventId}`);
-  const sysPos = placeColumn(
-    sysIds,
+  // Rules ↔ telemetry (Sysmon and log events)
+  const telIds = chain.telemetry.map((t) => `tel:${t.key}`);
+  const telPos = placeColumn(
+    telIds,
     (id) => {
-      const eid = Number(id.split(':')[1]);
-      const c = avg(rules.filter((r) => r.sysmon.includes(eid)).map((r) => center(`rule:${r.pageId}`, ROW.rule)));
-      return c === null ? null : c - ROW.sysmon / 2;
+      const key = id.slice(4);
+      const c = avg(rules.filter((r) => r.telemetry.includes(key)).map((r) => center(`rule:${r.pageId}`, ROW.rule)));
+      return c === null ? null : c - ROW.tel / 2;
     },
-    ROW.sysmon,
+    ROW.tel,
     HEAD
   );
-  sysPos.forEach((v, k) => y.set(k, v));
-  for (const r of rules) for (const e of r.sysmon) edges.push([`rule:${r.pageId}`, `sysmon:${e}`]);
+  telPos.forEach((v, k) => y.set(k, v));
+  for (const r of rules) for (const k of r.telemetry) edges.push([`rule:${r.pageId}`, `tel:${k}`]);
 
-  // Sysmon events ↔ data sources
+  // Telemetry ↔ data sources
   const dsIds = chain.dataSources.map((d) => `ds:${d.pageId}`);
   const dsPos = placeColumn(
     dsIds,
     (id) => {
       const d = chain.dataSources.find((x) => `ds:${x.pageId}` === id)!;
-      const c = avg(d.sysmon.filter((e) => y.has(`sysmon:${e}`)).map((e) => center(`sysmon:${e}`, ROW.sysmon)));
+      const c = avg(d.telemetry.filter((k) => y.has(`tel:${k}`)).map((k) => center(`tel:${k}`, ROW.tel)));
       return c === null ? null : c - ROW.ds / 2;
     },
     ROW.ds,
     HEAD
   );
   dsPos.forEach((v, k) => y.set(k, v));
-  for (const d of chain.dataSources) for (const e of d.sysmon) if (y.has(`sysmon:${e}`)) edges.push([`sysmon:${e}`, `ds:${d.pageId}`]);
+  for (const d of chain.dataSources) for (const k of d.telemetry) if (y.has(`tel:${k}`)) edges.push([`tel:${k}`, `ds:${d.pageId}`]);
 
   const height = Math.max(...Array.from(y.values()).map((v) => v + 90), 300);
   return { y, edges, height };
@@ -149,7 +149,7 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
       .sort(
         (a, b) =>
           Math.min(...a.techniques.map((t) => order.get(t) ?? 99)) - Math.min(...b.techniques.map((t) => order.get(t) ?? 99)) ||
-          (a.sysmon[0] ?? 999) - (b.sysmon[0] ?? 999) ||
+          (a.telemetry[0] ?? '~').localeCompare(b.telemetry[0] ?? '~', 'en', { numeric: true }) ||
           (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) ||
           a.title.localeCompare(b.title)
       );
@@ -167,7 +167,7 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
       adj.set(a, [...(adj.get(a) ?? []), b]);
       adj.set(b, [...(adj.get(b) ?? []), a]);
     }
-    const order = ['tactic', 'technique', 'rule', 'sysmon', 'ds'];
+    const order = ['tactic', 'technique', 'rule', 'tel', 'ds'];
     const set = new Set([focus]);
     // Walk outwards in both directions, only moving away from the focus column
     const walk = (id: ItemId, dir: 1 | -1) => {
@@ -243,7 +243,7 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
         {chain && (
           <span className="text-sm text-muted-foreground">
             <span className="font-mono">{chain.technique.id}</span> {chain.technique.name} · {rules.length} rule{rules.length === 1 ? '' : 's'} ·{' '}
-            {chain.sysmon.length} Sysmon event{chain.sysmon.length === 1 ? '' : 's'}
+            {chain.telemetry.length} telemetry event{chain.telemetry.length === 1 ? '' : 's'}
           </span>
         )}
       </div>
@@ -257,9 +257,9 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
         {error ? <p className="p-6 text-destructive text-sm">{String((error as Error).message)}</p> : null}
         {chain && geo && (
           <div data-graph-export className="relative m-4" style={{ width: TOTAL_WIDTH, height: geo.height }} onClick={(e) => e.target === e.currentTarget && setPinned(null)}>
-            {(['tactic', 'technique', 'rule', 'sysmon', 'ds'] as const).map((k) => (
+            {(['tactic', 'technique', 'rule', 'tel', 'ds'] as const).map((k) => (
               <div key={k} className="absolute top-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" style={{ left: COLS[k], width: WIDTH[k] }}>
-                {{ tactic: 'Tactic', technique: 'Technique', rule: 'Detection rules', sysmon: 'Sysmon events', ds: 'Data sources' }[k]}
+                {{ tactic: 'Tactic', technique: 'Technique', rule: 'Detection rules', tel: 'Telemetry', ds: 'Data sources' }[k]}
               </div>
             ))}
 
@@ -311,7 +311,7 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
                 <div className="flex items-center gap-1 mt-0.5 text-[10px] text-muted-foreground truncate">
                   <span>{r.severity}</span>
                   {r.sourceFormat && <span>· {r.sourceFormat}</span>}
-                  {!r.sysmon.length && r.dataSource && <span className="truncate">· {r.dataSource}</span>}
+                  {!r.telemetry.length && r.dataSource && <span className="truncate">· {r.dataSource}</span>}
                   {r.tools.slice(0, 2).map((tool) => (
                     <span key={`${tool.kind}:${tool.key}`} className="px-1 rounded border" style={{ borderColor: ENTITY_GROUPS[tool.kind].color, color: ENTITY_GROUPS[tool.kind].color }}>
                       {tool.name}
@@ -321,15 +321,23 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
                 </div>
               </div>
             ))}
-            {chain.sysmon.map((s) => (
-              <div key={s.eventId} {...itemProps(`sysmon:${s.eventId}`)}>
-                <div className="flex justify-between">
-                  <span className="font-mono font-semibold" style={{ color: ENTITY_GROUPS.sysmon.color }}>EID {s.eventId}</span>
-                  <span className="tabular-nums text-muted-foreground">{s.ruleCount}</span>
+            {chain.telemetry.map((t) => {
+              // "Windows Security 4688 · Process creation" → source line + event line
+              const sep = t.label.indexOf(' · ');
+              const head = sep > 0 ? t.label.slice(0, sep) : t.sourceLabel;
+              const detail = sep > 0 ? t.label.slice(sep + 3) : t.label;
+              return (
+                <div key={t.key} {...itemProps(`tel:${t.key}`)} title={t.label}>
+                  <div className="flex justify-between gap-1">
+                    <span className="font-semibold truncate" style={{ color: (t.source === 'sysmon' ? ENTITY_GROUPS.sysmon : ENTITY_GROUPS.logevent).color }}>
+                      {head}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">{t.ruleCount}</span>
+                  </div>
+                  <div className="truncate">{detail}</div>
                 </div>
-                <div className="truncate">{s.name}</div>
-              </div>
-            ))}
+              );
+            })}
             {chain.dataSources.map((d) => (
               <div key={d.pageId} {...itemProps(`ds:${d.pageId}`)}>
                 <Link to={`/pages/${d.slug}`} onClick={(e) => e.stopPropagation()} className="font-medium hover:underline line-clamp-2">
@@ -343,9 +351,9 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
                 No rules cover this technique yet.
               </p>
             )}
-            {!chain.sysmon.length && rules.length > 0 && (
-              <p className="absolute text-xs text-muted-foreground" style={{ top: HEAD, left: COLS.sysmon, width: WIDTH.sysmon + WIDTH.ds }}>
-                None of these rules is linked to a Sysmon event.
+            {!chain.telemetry.length && rules.length > 0 && (
+              <p className="absolute text-xs text-muted-foreground" style={{ top: HEAD, left: COLS.tel, width: WIDTH.tel + WIDTH.ds }}>
+                None of these rules is linked to telemetry.
               </p>
             )}
             {rules.length > RULE_PAGE && (

@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { generateUniqueSlug } from '../lib/slug';
 import { resolveWikiLinks, syncPageLinks } from '../lib/links';
-import { syncAutoSysmonLinks } from '../lib/sysmon-links';
+import { syncDerivedLinks } from '../lib/derived-links';
 
 const router = Router();
 
@@ -16,6 +16,11 @@ const PAGE_INCLUDE = {
     select: { source: true, sysmonEvent: { select: { id: true, eventId: true, name: true, category: true } } },
     orderBy: { sysmonEvent: { eventId: 'asc' as const } },
   },
+  logEvents: {
+    select: { logEvent: { select: { key: true, source: true, sourceLabel: true, code: true, name: true } } },
+    orderBy: { logEvent: { key: 'asc' as const } },
+  },
+  stories: { select: { story: { select: { id: true, name: true } } }, orderBy: { story: { name: 'asc' as const } } },
 };
 
 // What page lists show: no markdown, queries or imported source files (those
@@ -143,7 +148,7 @@ router.post('/', async (req, res) => {
   });
 
   await syncPageLinks(page.id, contentMd);
-  await syncAutoSysmonLinks(page.id);
+  await syncDerivedLinks(page.id);
 
   res.status(201).json(page);
 });
@@ -180,7 +185,7 @@ router.put('/:id', async (req, res) => {
   });
 
   await syncPageLinks(id, contentMd ?? existing.contentMd);
-  await syncAutoSysmonLinks(id);
+  await syncDerivedLinks(id);
   if (tagNames !== undefined) await pruneOrphanedTags();
 
   res.json(page);

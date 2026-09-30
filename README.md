@@ -15,9 +15,18 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
   export as an [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) layer
 - **Sysmon ↔ rules ↔ data sources**: each Sysmon event lists the rules and data sources that depend
   on it (e.g. "which rules need Event ID 10?"), inferred from the SPL / Sigma logsource or set manually
+- **Log sources beyond Sysmon**: Windows Security / System / PowerShell / Defender events, Sysmon for
+  Linux, auditd, EDR (CrowdStrike, Defender XDR, Elastic Defend, SentinelOne) and cloud logs, derived
+  from each rule's data sources, Sigma logsource or Sentinel tables. Impact analysis ("what if we
+  stop collecting Windows Security 4688?"), the Flows view and the detection chain use all of them
+- **Threat groups and software**: ATT&CK groups, malware and tools with the coverage of the
+  techniques each one uses (e.g. "how well do we detect APT34?"), highlighted on the ATT&CK matrix
+- **Mitigations and D3FEND**: ATT&CK mitigations and D3FEND countermeasures on every technique
+- **Splunk analytic stories**: the scenarios ESCU rules belong to, with their rules and techniques
 - **Attacker tools**: LOLBAS, GTFOBins and LOLDrivers references, each linked to the rules that
   mention the binary, driver file or driver hash
-- **Knowledge graph** of pages, wiki links, ATT&CK techniques, Sysmon events and attacker tools
+- **Knowledge graph** of pages, wiki links, ATT&CK techniques, telemetry, attacker tools, threat
+  groups, software, mitigations and analytic stories
 - Role-based access (admin / editor / viewer) enforced by the API
 - SPL command cheat-sheet library with searchable cards
 - Global search (Cmd+K) across all content
@@ -85,7 +94,7 @@ cd sigma && python -m venv .venv && .venv/bin/pip install -r requirements.txt \
 The Sigma service is optional: without it Sigma import/export still works, only query
 conversion is unavailable.
 
-To refresh the bundled ATT&CK dataset after a new MITRE release:
+To refresh the bundled ATT&CK dataset (techniques, groups, software, mitigations) after a new MITRE release:
 ```bash
 cd backend && node scripts/update-attack-data.js
 ```
@@ -110,7 +119,8 @@ when running the backend directly on the host.
 | BACKUP_DIR | ../backups (`/backups` in Docker) | Backup and generated-document directory |
 | CORS_ORIGIN | * | Allowed CORS origin for the API |
 | SIGMA_SERVICE_URL | http://localhost:8000 (`http://sigma:8000` in Docker) | pySigma conversion service |
-| REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers on first start |
+| REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers and analytic story details on first start |
+| D3FEND_FETCH | true | Look up D3FEND countermeasures on d3fend.mitre.org (cached 30 days per technique) |
 | PORT | 3001 | Backend port |
 
 ## Importing rules
@@ -134,6 +144,22 @@ LOLBAS and GTFOBins are GPL-3.0 and LOLDrivers is Apache-2.0, so their data is *
 the backend downloads it from the official APIs on first start (`lolbas.json`, `api.json`,
 `drivers.json`). On a server without internet access, download those files elsewhere and use
 **Attacker Tools → Upload file**; **Update from source** refreshes them.
+
+## Threat intelligence data
+
+- **ATT&CK groups, software and mitigations** are bundled with the ATT&CK techniques
+  (`backend/src/data/attack-cti.json`, from MITRE's STIX bundle; see `update-attack-data.js`).
+- **Analytic stories**: ESCU rules name their stories (`analytic_story`), so importing ESCU rules
+  creates them. Their descriptions come from the `stories/` folder of `splunk/security_content`:
+  downloaded on first start, with **Analytic Stories → Download descriptions**, or uploaded with
+  **Upload story files** on an offline server.
+- **D3FEND** countermeasures are looked up on d3fend.mitre.org when a technique is opened and cached
+  in the database. Offline servers show a link to the D3FEND page instead (`D3FEND_FETCH=false`
+  skips the lookup).
+- **Log sources** are derived from the rules themselves (ESCU `data_source`, Elastic
+  `Data Source:` tags, Sentinel tables and `EventID` filters, Sigma logsource), recomputed when a
+  rule is saved or imported. To steer a hand-written rule, name its telemetry in the rule's
+  *Data source* field, e.g. `Windows Event Log Security 4688, Powershell Script Block Logging 4104`.
 
 ## How correctness is checked
 

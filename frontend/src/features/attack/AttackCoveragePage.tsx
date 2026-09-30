@@ -1,12 +1,18 @@
 import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Download, ExternalLink, Grid3x3, Loader2, X } from 'lucide-react';
+import { AlertTriangle, Download, ExternalLink, Grid3x3, Loader2, ShieldCheck, Skull, X } from 'lucide-react';
 import {
   apiErrorMessage,
   downloadNavigatorLayer,
   getAttackCoverage,
+  getD3fend,
+  getSoftware,
+  getTechniqueContext,
   getTechniqueRules,
+  getThreatGroup,
+  listThreatGroups,
+  type ActorCoverage,
   type AttackTechnique,
   type CoveringRule,
 } from '@/lib/api';
@@ -45,8 +51,26 @@ interface ParentCell {
   count: number;
 }
 
+/** The techniques (as parent IDs) a group (G…) or software (S…) uses. */
+function useActor(actor: string | null, status: string) {
+  const isGroup = actor?.startsWith('G');
+  const { data } = useQuery({
+    queryKey: ['attack-actor', actor, status],
+    queryFn: async (): Promise<{ id: string; name: string; coverage: ActorCoverage }> =>
+      isGroup ? getThreatGroup(actor!, status) : getSoftware(actor!, status),
+    enabled: !!actor && /^[GS]\d{4}$/.test(actor),
+  });
+  return useMemo(() => {
+    if (!data) return null;
+    const parents = new Set(data.coverage.techniques.map((t) => t.id.split('.')[0]));
+    return { id: data.id, name: data.name, coverage: data.coverage, parents };
+  }, [data]);
+}
+
 export function AttackCoveragePage() {
   const { toast } = useToast();
+  const [params, setParams] = useSearchParams();
+  const actorId = params.get('actor');
   const [status, setStatus] = useState('');
   const [onlyCovered, setOnlyCovered] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -56,6 +80,9 @@ export function AttackCoveragePage() {
     queryKey: ['attack-coverage', status],
     queryFn: () => getAttackCoverage(status),
   });
+  const actor = useActor(actorId, status);
+  const { data: groups = [] } = useQuery({ queryKey: ['threat-groups', '', ''], queryFn: () => listThreatGroups() });
+  const setActor = (id: string | null) => setParams(id ? { actor: id } : {});
 
   // tactic shortname → parent technique cells
   const columns = useMemo(() => {
@@ -130,6 +157,21 @@ export function AttackCoveragePage() {
                 {f.label}
               </option>
             ))}
+          </select>
+          <select
+            value={actorId?.startsWith('G') ? actorId : ''}
+            onChange={(e) => setActor(e.target.value || null)}
+            aria-label="Highlight a threat group"
+            className="px-3 py-2 rounded-md border border-border bg-background text-sm max-w-[14rem]"
+          >
+            <option value="">Highlight a threat group…</option>
+            {[...groups]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.id})
+                </option>
+              ))}
           </select>
           <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm cursor-pointer">
             <input type="checkbox" checked={onlyCovered} onChange={(e) => setOnlyCovered(e.target.checked)} />
@@ -220,6 +262,24 @@ export function AttackCoveragePage() {
             </details>
           )}
 
+          {actor && (
+            <div className="flex flex-wrap items-center gap-3 mb-4 rounded-md border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-sm">
+              <Skull className="w-4 h-4 text-rose-500" />
+              <span>
+                Techniques used by{' '}
+                <Link to={`/threat-groups?${actor.id.startsWith('G') ? 'group' : 'tab=software&software'}=${actor.id}`} className="font-medium text-primary hover:underline">
+                  {actor.name}
+                </Link>{' '}
+                <span className="font-mono text-xs text-muted-foreground">{actor.id}</span>: {actor.coverage.covered} of {actor.coverage.total} covered (
+                {actor.coverage.pct}%){actor.coverage.parentOnly > 0 && `, ${actor.coverage.parentOnly} only through the parent technique`}. Other
+                techniques are dimmed; red outlines are the gaps.
+              </span>
+              <button onClick={() => setActor(null)} className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                <X className="w-3.5 h-3.5" /> Clear
+              </button>
+            </div>
+          )}
+
           {/* Legend */}
           <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-muted-foreground">
             <span>Rules per technique (incl. sub-techniques):</span>
@@ -252,14 +312,18 @@ export function AttackCoveragePage() {
                   <div className="space-y-1">
                     {cells
                       .filter((c) => !onlyCovered || c.count > 0)
-                      .map((c) => (
+                      .map((c) => {
+                        const used = actor?.parents.has(c.technique.id);
+                        return (
                         <button
                           key={c.technique.id}
                           onClick={() => setSelected(c.technique.id === selected ? null : c.technique.id)}
-                          title={`${c.technique.id} ${c.technique.name} — ${c.count} rule${c.count === 1 ? '' : 's'}`}
+                          title={`${c.technique.id} ${c.technique.name} — ${c.count} rule${c.count === 1 ? '' : 's'}${used ? ` · used by ${actor!.name}` : ''}`}
                           className={cn(
                             'w-full text-left px-1.5 py-1 rounded border text-[11px] leading-tight transition-shadow hover:ring-2 hover:ring-primary/40',
                             heatClass(c.count),
+                            actor && !used && 'opacity-20',
+                            used && !c.count && 'ring-2 ring-red-500',
                             selected === c.technique.id && 'ring-2 ring-primary'
                           )}
                         >
@@ -269,7 +333,8 @@ export function AttackCoveragePage() {
                           </span>
                           <span className="block truncate">{c.technique.name}</span>
                         </button>
-                      ))}
+                        );
+                      })}
                   </div>
                 </div>
               ))}
@@ -352,6 +417,8 @@ function TechniqueDetail({ cell, status, onClose }: {
           )}
         </div>
 
+        <TechniqueContextPanel id={technique.id} />
+
         {subs.length > 0 && (
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
@@ -377,6 +444,138 @@ function TechniqueDetail({ cell, status, onClose }: {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+const SECTION = 'text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2';
+const PREVIEW = 24;
+
+/** Mitigations, D3FEND countermeasures and the groups / software using a technique. */
+function TechniqueContextPanel({ id }: { id: string }) {
+  const { data } = useQuery({ queryKey: ['technique-context', id], queryFn: () => getTechniqueContext(id), staleTime: 60 * 60 * 1000 });
+  const { data: d3, isLoading: d3Loading } = useQuery({ queryKey: ['d3fend', id], queryFn: () => getD3fend(id), staleTime: 60 * 60 * 1000 });
+  const [allGroups, setAllGroups] = useState(false);
+  const [allSoftware, setAllSoftware] = useState(false);
+  if (!data) return null;
+  const d3ByTactic = new Map<string, NonNullable<typeof d3>['countermeasures']>();
+  for (const c of d3?.countermeasures ?? []) d3ByTactic.set(c.tactic ?? 'Other', [...(d3ByTactic.get(c.tactic ?? 'Other') ?? []), c]);
+  const groups = allGroups ? data.groups : data.groups.slice(0, PREVIEW);
+  const software = allSoftware ? data.software : data.software.slice(0, PREVIEW);
+  const via = (v: string[]) => (v.length === 1 && v[0] === id ? '' : ` · via ${v.join(', ')}`);
+  return (
+    <div className="grid md:grid-cols-2 gap-5 pt-2 border-t border-border">
+      <div>
+        <h3 className={SECTION}>
+          <ShieldCheck className="inline w-3.5 h-3.5 mr-1 -mt-0.5" />
+          ATT&CK mitigations ({data.mitigations.length})
+        </h3>
+        {data.mitigations.length === 0 ? (
+          <p className="text-sm text-muted-foreground">None listed.</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {data.mitigations.map((m) => (
+              <li key={m.id} className="text-sm">
+                <a href={m.url} target="_blank" rel="noreferrer" className="font-medium hover:underline" title={m.description}>
+                  {m.name}
+                </a>{' '}
+                <span className="font-mono text-xs text-muted-foreground">
+                  {m.id}
+                  {via(m.via)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <h3 className={SECTION}>D3FEND countermeasures</h3>
+        {d3Loading ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Asking D3FEND…
+          </p>
+        ) : !d3?.available ? (
+          <p className="text-sm text-muted-foreground">
+            {d3?.error ?? 'Not available'} ·{' '}
+            <a href={d3?.pageUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+              open on d3fend.mitre.org
+            </a>
+          </p>
+        ) : d3.countermeasures.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            D3FEND maps no countermeasure to {id}.{' '}
+            <a href={d3.pageUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+              d3fend.mitre.org
+            </a>
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {Array.from(d3ByTactic).map(([tactic, list]) => (
+              <div key={tactic} className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="w-16 font-semibold text-muted-foreground">{tactic}</span>
+                {list.map((c) => (
+                  <a
+                    key={c.name}
+                    href={c.url ?? d3.pageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={c.artifact ? `Acts on: ${c.artifact}` : undefined}
+                    className="px-2 py-0.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10"
+                  >
+                    {c.name}
+                  </a>
+                ))}
+              </div>
+            ))}
+            <a href={d3.pageUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              d3fend.mitre.org <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h3 className={SECTION}>
+          <Skull className="inline w-3.5 h-3.5 mr-1 -mt-0.5" />
+          Threat groups using it ({data.groups.length})
+        </h3>
+        <div className="flex flex-wrap gap-1.5">
+          {groups.map((g) => (
+            <Link key={g.id} to={`/threat-groups?group=${g.id}`} title={`${g.id}${via(g.via)}`} className="px-2 py-0.5 rounded-full border border-border text-xs hover:bg-accent">
+              {g.name}
+            </Link>
+          ))}
+          {data.groups.length > groups.length && (
+            <button onClick={() => setAllGroups(true)} className="text-xs text-primary hover:underline">
+              +{data.groups.length - groups.length} more
+            </button>
+          )}
+          {!data.groups.length && <span className="text-sm text-muted-foreground">None known.</span>}
+        </div>
+      </div>
+
+      <div>
+        <h3 className={SECTION}>Malware & tools using it ({data.software.length})</h3>
+        <div className="flex flex-wrap gap-1.5">
+          {software.map((sw) => (
+            <Link
+              key={sw.id}
+              to={`/threat-groups?tab=software&software=${sw.id}`}
+              title={`${sw.id} · ${sw.type}${via(sw.via)}`}
+              className="px-2 py-0.5 rounded-full border border-border text-xs hover:bg-accent"
+            >
+              {sw.name}
+            </Link>
+          ))}
+          {data.software.length > software.length && (
+            <button onClick={() => setAllSoftware(true)} className="text-xs text-primary hover:underline">
+              +{data.software.length - software.length} more
+            </button>
+          )}
+          {!data.software.length && <span className="text-sm text-muted-foreground">None known.</span>}
+        </div>
       </div>
     </div>
   );

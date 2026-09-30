@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CLUSTER_MIN, findPaths, neighbourhood, type Graph, type GraphNode } from '../src/lib/graph';
-import { analyzeImpact, computeFlows, otherDataSources, type RuleTelemetry } from '../src/lib/coverage-analysis';
+import { analyzeImpact, computeFlows, expandLost, otherDataSources, type RuleTelemetry } from '../src/lib/coverage-analysis';
 
 /** Edges default to wiki links; pass the kind as a third element */
 function graphOf(nodes: Partial<GraphNode>[], edges: ([string, string] | [string, string, string])[]): Graph {
@@ -158,6 +158,33 @@ describe('findPaths', () => {
     expect(paths).toHaveLength(3);
     expect(new Set(paths.map((p) => p[1])).size).toBe(3);
   });
+
+  it('treats log events like Sysmon events, and uses groups only as endpoints', () => {
+    const g = graphOf(
+      [
+        { id: 'page:1', group: 'RULE' },
+        { id: 'page:2', group: 'RULE' },
+        { id: 'page:5', group: 'DATA_SOURCE' },
+        { id: 'log:windows-security:4688', group: 'logevent' },
+        { id: 'technique:T1059', group: 'technique' },
+        { id: 'technique:T1105', group: 'technique' },
+        { id: 'group:G0049', group: 'threat-group' },
+      ],
+      [
+        ['page:1', 'log:windows-security:4688', 'telemetry'],
+        ['page:2', 'log:windows-security:4688', 'telemetry'],
+        ['page:5', 'log:windows-security:4688', 'telemetry'],
+        ['page:2', 'technique:T1059', 'technique'],
+        ['group:G0049', 'technique:T1059', 'group-technique'],
+        ['group:G0049', 'technique:T1105', 'group-technique'],
+      ]
+    );
+    expect(findPaths(g, 'page:1', 'technique:T1059')).toEqual([]);
+    expect(findPaths(g, 'page:5', 'technique:T1059')).toEqual([['page:5', 'log:windows-security:4688', 'page:2', 'technique:T1059']]);
+    expect(findPaths(g, 'group:G0049', 'page:2')).toEqual([['group:G0049', 'technique:T1059', 'page:2']]);
+    // A group is not a bridge between two techniques
+    expect(findPaths(g, 'technique:T1105', 'page:2')).toEqual([]);
+  });
 });
 
 describe('neighbourhood clusters', () => {
@@ -186,79 +213,119 @@ describe('neighbourhood clusters', () => {
   });
 });
 
-const rule = (pageId: number, sysmon: number[], techniques: string[], extra: Partial<RuleTelemetry> = {}): RuleTelemetry => ({
-  pageId,
-  title: `Rule ${pageId}`,
-  slug: `rule-${pageId}`,
-  status: 'production',
-  severity: 'high',
-  sourceFormat: null,
-  dataSource: null,
-  techniques,
-  sysmon,
-  ...extra,
-});
+/** A rule reading these Sysmon events and log event keys */
+const rule = (pageId: number, sysmon: number[], techniques: string[], extra: Partial<RuleTelemetry> & { logs?: string[] } = {}): RuleTelemetry => {
+  const { logs = [], ...rest } = extra;
+  return {
+    pageId,
+    title: `Rule ${pageId}`,
+    slug: `rule-${pageId}`,
+    status: 'production',
+    severity: 'high',
+    sourceFormat: null,
+    dataSource: null,
+    techniques,
+    sysmon,
+    telemetry: [...sysmon.map((e) => `sysmon:${e}`), ...logs],
+    ...rest,
+  };
+};
 
 describe('otherDataSources', () => {
-  it('keeps non-Sysmon sources and drops Sigma logsources', () => {
-    expect(otherDataSources('Sysmon EventID 1, Windows Event Log Security 4688')).toEqual(['Windows Event Log Security 4688']);
+  it('keeps only names DetectKB could not map', () => {
+    expect(otherDataSources('Sysmon EventID 1, Windows Event Log Security 4688')).toEqual([]);
     expect(otherDataSources('product:windows category:process_access')).toEqual([]);
-    expect(otherDataSources('Elastic Defend, Sysmon')).toEqual(['Elastic Defend']);
+    expect(otherDataSources('Elastic Defend, Sysmon, Winlogbeat')).toEqual(['Winlogbeat']);
+    expect(otherDataSources('Some vendor feed')).toEqual(['Some vendor feed']);
+    // ESCU names are all linked (unknown ones under "Other")
+    expect(otherDataSources('Some vendor feed', 'escu')).toEqual([]);
     expect(otherDataSources(null)).toEqual([]);
+  });
+});
+
+describe('expandLost', () => {
+  it('takes every key of a lost source plus the listed events', () => {
+    const all = ['sysmon:1', 'sysmon:10', 'windows-security:4688', 'windows-security:*', 'crowdstrike:processrollup2'];
+    expect(Array.from(expandLost(all, ['windows-security'], ['sysmon:10'])).sort()).toEqual([
+      'sysmon:10',
+      'windows-security:*',
+      'windows-security:4688',
+    ]);
   });
 });
 
 describe('analyzeImpact', () => {
   const rules = [
     rule(1, [10], ['T1003.001']), // only EID 10 → lost
-    rule(2, [10], ['T1003.001'], { dataSource: 'Sysmon EventID 10, Windows Security 4656' }), // → at risk
+    rule(2, [10], ['T1003.001'], { dataSource: 'Sysmon EventID 10, Some vendor feed' }), // unmapped source → at risk
     rule(3, [1, 10], ['T1003.001', 'T1059']), // → partial
     rule(4, [1], ['T1059']), // unaffected
     rule(5, [10], ['T1055'], { status: 'deprecated' }), // ignored
     rule(6, [10], ['T1134']), // T1134's only rule → technique uncovered
+    rule(7, [10], ['T1134'], { logs: ['windows-security:4656'] }), // Security 4656 still feeds it → partial
   ];
-  const r = analyzeImpact(rules, new Set([10]));
+  const r = analyzeImpact(rules, new Set(['sysmon:10']));
 
   it('classifies rules', () => {
-    expect(Object.fromEntries(r.rules.map((x) => [x.pageId, x.level]))).toEqual({ 1: 'lost', 6: 'lost', 2: 'atRisk', 3: 'partial' });
-    expect(r.counts).toEqual({ activeRules: 5, lost: 2, atRisk: 1, partial: 1 });
-    expect(r.rules.find((x) => x.pageId === 2)!.alternatives).toEqual(['Windows Security 4656']);
+    expect(Object.fromEntries(r.rules.map((x) => [x.pageId, x.level]))).toEqual({ 1: 'lost', 6: 'lost', 2: 'atRisk', 3: 'partial', 7: 'partial' });
+    expect(r.counts).toEqual({ activeRules: 6, lost: 2, atRisk: 1, partial: 2 });
+    expect(r.rules.find((x) => x.pageId === 2)!.alternatives).toEqual(['Some vendor feed']);
+    expect(r.rules.find((x) => x.pageId === 7)!.lostEvents).toEqual(['sysmon:10']);
   });
 
   it('finds techniques left without rules, and reduced ones', () => {
-    expect(r.uncovered.map((t) => t.id)).toEqual(['T1134']);
-    expect(r.reduced.map((t) => [t.id, t.rules, t.lost, t.atRisk])).toEqual([['T1003.001', 3, 1, 1]]);
+    expect(r.uncovered.map((t) => t.id)).toEqual([]);
+    expect(r.reduced.map((t) => [t.id, t.rules, t.lost, t.atRisk])).toEqual([
+      ['T1003.001', 3, 1, 1],
+      ['T1134', 2, 1, 0],
+    ]);
+  });
+
+  it('counts a technique uncovered when every rule is lost', () => {
+    const both = analyzeImpact(rules, new Set(['sysmon:10', 'windows-security:4656']));
+    expect(both.uncovered.map((t) => t.id)).toEqual(['T1134']);
   });
 });
 
 describe('computeFlows', () => {
   const rules = [
     rule(1, [10], ['T1003.001']), // credential access
-    rule(2, [1, 10], ['T1003.001']),
-    rule(3, [], ['T1059']), // execution, no Sysmon link
+    rule(2, [1, 10], ['T1003.001'], { logs: ['windows-security:4688'] }),
+    rule(3, [], ['T1059']), // execution, no telemetry link
+    rule(4, [], ['T1059'], { logs: ['windows-security:4688'] }),
   ];
+  const link = (f: ReturnType<typeof computeFlows>, s: string, t: string) => f.links.find((l) => l.source === s && l.target === t)?.rules;
 
-  it('counts rules per event → tactic', () => {
+  it('counts rules per log source → tactic, each rule once per source', () => {
     const f = computeFlows(rules);
-    const link = (s: string, t: string) => f.links.find((l) => l.source === s && l.target === t)?.rules;
-    expect(link('sysmon:10', 'tactic:credential-access')).toBe(2);
-    expect(link('sysmon:1', 'tactic:credential-access')).toBe(1);
-    expect(link('sysmon:none', 'tactic:execution')).toBe(1);
-    expect(f.sources.map((s) => s.id)).toEqual(['sysmon:1', 'sysmon:10', 'sysmon:none']);
+    expect(link(f, 'src:sysmon', 'tactic:credential-access')).toBe(2);
+    expect(link(f, 'src:windows-security', 'tactic:credential-access')).toBe(1);
+    expect(link(f, 'src:windows-security', 'tactic:execution')).toBe(1);
+    expect(link(f, 'none', 'tactic:execution')).toBe(1);
+    expect(f.sources.map((s) => [s.id, s.kind, s.key, s.rules])).toEqual([
+      ['src:sysmon', 'source', 'sysmon', 2],
+      ['src:windows-security', 'source', 'windows-security', 2],
+      ['none', 'none', null, 1],
+    ]);
     expect(f.targets.find((t) => t.id === 'tactic:credential-access')!.rules).toBe(2);
-    expect(f.rules).toBe(3);
+    expect(f.rules).toBe(4);
   });
 
-  it('can leave out rules without a Sysmon link', () => {
-    const f = computeFlows(rules, { withoutSysmon: false });
-    expect(f.sources.map((s) => s.id)).toEqual(['sysmon:1', 'sysmon:10']);
-    expect(f.targets.map((t) => t.id)).toEqual(['tactic:credential-access']);
-    expect(f.rules).toBe(2);
+  it('shows single events, merging small ones per source', () => {
+    const f = computeFlows(rules, { groupBy: 'event', minRules: 2 });
+    expect(f.sources.map((s) => s.id)).toEqual(['ev:sysmon:10', 'ev:windows-security:4688', 'other:sysmon', 'none']);
+    expect(link(f, 'other:sysmon', 'tactic:credential-access')).toBe(1);
+  });
+
+  it('can leave out rules without telemetry', () => {
+    const f = computeFlows(rules, { withoutTelemetry: false });
+    expect(f.sources.map((s) => s.id)).toEqual(['src:sysmon', 'src:windows-security']);
+    expect(f.rules).toBe(3);
   });
 
   it('drills into a tactic as parent techniques', () => {
     const f = computeFlows(rules, { tactic: 'credential-access' });
     expect(f.targets.map((t) => t.id)).toEqual(['technique:T1003']);
-    expect(f.sources.map((s) => s.id)).toEqual(['sysmon:1', 'sysmon:10']);
+    expect(f.sources.map((s) => s.id)).toEqual(['src:sysmon', 'src:windows-security']);
   });
 });

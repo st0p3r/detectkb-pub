@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma';
 import { requirePermission } from '../middleware/auth';
 import { generateUniqueSlug } from '../lib/slug';
 import { syncPageLinks } from '../lib/links';
-import { syncAutoSysmonLinks } from '../lib/sysmon-links';
+import { syncDerivedLinks } from '../lib/derived-links';
 import { SigmaServiceError, convertSigma } from '../lib/sigma';
 import { FORMAT_LABELS, FORMAT_TAGS, ImportFormat, ImportedRule, parseRuleFile } from '../lib/rule-import';
 import { diffImportedRule } from '../lib/rule-import-diff';
@@ -146,7 +146,7 @@ export async function importRules(req: Request, res: Response) {
           created.push({ title: page.title, slug: page.slug, format: rule.format });
         }
         await syncPageLinks(page.id, rule.contentMd);
-        await syncAutoSysmonLinks(page.id);
+        await syncDerivedLinks(page.id);
       } catch (err) {
         console.error(`[import] ${entry.where}:`, err);
         errors.push({ file: entry.where, error: `Could not save "${rule.title}": ${(err as Error).message.split('\n').pop()?.trim()}` });

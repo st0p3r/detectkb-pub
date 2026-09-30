@@ -34,6 +34,9 @@ const DocumentationPage = named(() => import('@/features/docs/DocumentationPage'
 const CustomTypesPage = named(() => import('@/features/settings/CustomTypesPage'), 'CustomTypesPage');
 const SysmonEventsPage = named(() => import('@/features/sysmon/SysmonEventsPage'), 'SysmonEventsPage');
 const ActivityPage = named(() => import('@/features/activity/ActivityPage'), 'ActivityPage');
+const LogSourcesPage = named(() => import('@/features/logs/LogSourcesPage'), 'LogSourcesPage');
+const ThreatGroupsPage = named(() => import('@/features/threat/ThreatGroupsPage'), 'ThreatGroupsPage');
+const AnalyticStoriesPage = named(() => import('@/features/stories/AnalyticStoriesPage'), 'AnalyticStoriesPage');
 const KnowledgeGraphPage = lazy(() => import('@/features/graph/KnowledgeGraphPage'));
 
 export default function App() {
@@ -100,6 +103,9 @@ export default function App() {
             <Route path="/settings/types" element={<CustomTypesPage />} />
             <Route path="/docs" element={<DocumentationPage />} />
             <Route path="/sysmon-events" element={<SysmonEventsPage />} />
+            <Route path="/log-sources" element={<LogSourcesPage />} />
+            <Route path="/threat-groups" element={<ThreatGroupsPage />} />
+            <Route path="/analytic-stories" element={<AnalyticStoriesPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/broken-links" element={<BrokenLinksPage />} />
             <Route path="/backups" element={<BackupPage />} />

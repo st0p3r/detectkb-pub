@@ -5,7 +5,9 @@ import path from 'path';
 import multer from 'multer';
 import { BACKUP_DIR } from '../lib/config';
 import { requirePermission } from '../middleware/auth';
-import { setManualSysmonLinks, syncAllSysmonLinks } from '../lib/sysmon-links';
+import { setManualSysmonLinks } from '../lib/sysmon-links';
+import { syncAllDerivedLinks } from '../lib/derived-links';
+import { saveStoryDetails } from '../lib/stories';
 
 async function restoreManualSysmonLinks(
   pageId: number,
@@ -38,8 +40,13 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
     prisma.category.findMany(),
     prisma.tag.findMany(),
   ]);
+  // Story details come from uploaded / downloaded files; the rule links are rebuilt on restore
+  const analyticStories = await prisma.analyticStory.findMany({
+    where: { description: { not: null } },
+    select: { name: true, externalId: true, description: true, narrative: true, references: true, category: true, usecase: true, detailsFrom: true },
+  });
 
-  const backup = { version: 1, exportedAt: new Date().toISOString(), pages, categories, tags };
+  const backup = { version: 1, exportedAt: new Date().toISOString(), pages, categories, tags, analyticStories };
   const timestamp = Date.now();
   const fileName = `detectkb-backup-${timestamp}.json`;
   const filePath = path.join(BACKUP_DIR, fileName);
@@ -83,6 +90,16 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
   }
 
   let backup: {
+    analyticStories?: {
+      name: string;
+      externalId?: string | null;
+      description?: string | null;
+      narrative?: string | null;
+      references?: unknown;
+      category?: string | null;
+      usecase?: string | null;
+      detailsFrom?: string | null;
+    }[];
     categories?: { name: string; color?: string; parentId?: number | null }[];
     tags?: { name: string }[];
     pages?: {
@@ -328,7 +345,26 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
     }
   }
 
-  await syncAllSysmonLinks();
+  for (const st of backup.analyticStories || []) {
+    try {
+      await saveStoryDetails(
+        {
+          name: st.name,
+          externalId: st.externalId ?? null,
+          description: st.description ?? null,
+          narrative: st.narrative ?? null,
+          references: Array.isArray(st.references) ? st.references.map(String) : [],
+          category: st.category ?? null,
+          usecase: st.usecase ?? null,
+        },
+        st.detailsFrom ?? 'backup'
+      );
+    } catch (e) {
+      errors.push(`Analytic story "${st.name}": ${(e as Error).message}`);
+    }
+  }
+
+  await syncAllDerivedLinks();
   res.json({ restored, skipped, errors });
 });
 
