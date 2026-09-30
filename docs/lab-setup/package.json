@@ -1,0 +1,12 @@
+{
+  "name": "detectkb-lab-setup",
+  "private": true,
+  "description": "Builds the lab setup guide (docs/lab-setup/DetectKB-Lab-Setup.docx)",
+  "scripts": {
+    "build": "node build.js",
+    "diagrams": "node scripts/diagrams.cjs"
+  },
+  "dependencies": {
+    "docx": "^9.8.1"
+  }
+}

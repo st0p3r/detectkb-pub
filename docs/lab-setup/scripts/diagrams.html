@@ -1,0 +1,53 @@
+<!doctype html><html dir="rtl"><head><meta charset="utf-8"><style>
+body{margin:0;font-family:Vazirmatn,sans-serif;background:#fff;color:#1B2533}
+.d{width:820px;padding:28px;box-sizing:border-box}
+.zone{border:2px dashed #0B6E79;border-radius:14px;padding:18px 18px 14px;position:relative;background:#F4FAFA}
+.zone.prod{border-color:#8A94A3;background:#F6F7F9}
+.ztitle{position:absolute;top:-14px;right:18px;background:#fff;padding:0 10px;font-weight:700;color:#0B6E79;font-size:17px}
+.zone.prod .ztitle{color:#5B6878}
+.row{display:flex;gap:16px;justify-content:center}
+.box{border:1.5px solid #C9D2DC;border-radius:10px;background:#fff;padding:10px 12px;text-align:center;min-width:150px;flex:1}
+.box b{display:block;font-size:17px;direction:ltr}
+.box small{display:block;color:#5B6878;font-size:13px;line-height:1.6}
+.box.splunk{border-color:#0B6E79;border-width:2px}
+.box.dkb{border-color:#4F46E5;border-width:2px}
+.arrow{font-size:14px;color:#0B6E79;text-align:center;margin:8px 0;direction:rtl}
+.lbl{direction:ltr;display:inline-block;background:#E6F2F3;border-radius:6px;padding:0 6px;font-size:13px;color:#0B6E79}
+.red{color:#A2520C}.redb{background:#FBEFE3;color:#A2520C}
+.flow{display:flex;flex-direction:column;gap:10px}
+.step{display:flex;gap:12px;align-items:center}
+.num{flex:none;width:34px;height:34px;border-radius:50%;background:#0B6E79;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px}
+.stxt{border:1.5px solid #C9D2DC;border-radius:10px;padding:8px 12px;flex:1;font-size:16px;line-height:1.8;background:#fff}
+.stxt .who{font-weight:700;color:#4F46E5}
+</style></head><body>
+<div class="d" id="topology">
+  <div class="zone prod" style="margin-bottom:26px">
+    <div class="ztitle">شبکه‌ی سازمان</div>
+    <div class="row"><div class="box dkb"><b>DetectKB</b><small>سرور فعلی DetectKB</small></div>
+    <div class="box"><b>Admin / Analyst</b><small>مرورگر و RDP با VPN یا جامپ‌سرور</small></div></div>
+  </div>
+  <div class="arrow" style="margin-bottom:26px">▲▼ فقط پورت‌های مجاز در فایروال: <span class="lbl">DetectKB → Splunk :8089</span> &nbsp; <span class="lbl">Runner → DetectKB :443</span> &nbsp; <span class="lbl">Admin → Splunk :8000 / RDP</span></div>
+  <div class="zone">
+    <div class="ztitle">vSphere — Port group ایزوله‌ی LAB-ATTACK (بدون مسیر به production)</div>
+    <div class="row" style="margin-bottom:14px">
+      <div class="box splunk"><b>SPLUNK-LAB</b><small>Ubuntu 22.04 · 8 vCPU · 16 GB<br>Splunk Enterprise + CIM + ESCU<br>دریافت لاگ روی 9997</small></div>
+    </div>
+    <div class="arrow">▲ لاگ‌ها با Universal Forwarder <span class="lbl">:9997</span></div>
+    <div class="row">
+      <div class="box"><b>WIN-VICTIM</b><small>Windows 11 / Server 2022<br>Sysmon · Audit · UF<br>Invoke-AtomicRedTeam · Runner</small></div>
+      <div class="box"><b>DC-LAB</b> <small>(اختیاری)<br>Windows Server 2022 · AD DS<br>Sysmon · Audit · UF</small></div>
+      <div class="box"><b>LNX-VICTIM</b> <small>(اختیاری)<br>Ubuntu 22.04 · auditd<br>Sysmon for Linux · UF · pwsh</small></div>
+    </div>
+  </div>
+</div>
+<div class="d" id="flow">
+  <div class="flow">
+    <div class="step"><div class="num">۱</div><div class="stxt"><span class="who">کاربر در DetectKB:</span> روی قانون «این قانون را تست کن» را می‌زند؛ DetectKB تست Atomic مرتبط را در <b>صف</b> می‌گذارد.</div></div>
+    <div class="step"><div class="num">۲</div><div class="stxt"><span class="who">Runner روی WIN-VICTIM:</span> هر ۳۰ ثانیه از DetectKB می‌پرسد «کاری هست؟» <span class="lbl">HTTPS :443 → DetectKB</span> — DetectKB هیچ‌وقت به ماشین قربانی وصل نمی‌شود.</div></div>
+    <div class="step"><div class="num">۳</div><div class="stxt"><span class="who">Runner:</span> تست را با <span class="lbl">Invoke-AtomicTest</span> اجرا می‌کند و زمان شروع/پایان را به DetectKB گزارش می‌دهد؛ بعد Cleanup.</div></div>
+    <div class="step"><div class="num">۴</div><div class="stxt"><span class="who">لاگ‌ها:</span> Sysmon و Event Logها با Forwarder به SPLUNK-LAB می‌روند <span class="lbl">:9997</span></div></div>
+    <div class="step"><div class="num">۵</div><div class="stxt"><span class="who">DetectKB:</span> چند دقیقه بعد، کوئری همان قانون را در همان بازه‌ی زمانی با REST API روی Splunk اجرا می‌کند <span class="lbl">HTTPS :8089 · توکن فقط‌خواندنی</span></div></div>
+    <div class="step"><div class="num">۶</div><div class="stxt"><span class="who">نتیجه:</span> نتیجه داشت ← <b style="color:#0a7a3d">Detected ✅</b> · نداشت ← <b class="red">Not detected ❌</b>؛ در DetectKB ثبت می‌شود و قانون وضعیت <b>Validated</b> می‌گیرد.</div></div>
+  </div>
+</div>
+</body></html>
