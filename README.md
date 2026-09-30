@@ -2,6 +2,8 @@
 
 A self-hosted web application for learning, documenting, and organizing detection content.
 
+A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manual`](docs/user-manual/): [PDF](docs/user-manual/DetectKB-User-Manual.pdf) · [Word](docs/user-manual/DetectKB-User-Manual.docx).
+
 ## Features
 - Wiki-style pages with [[backlinks]] and Markdown editing
 - Structured detection rules with MITRE ATT&CK mapping and SPL queries

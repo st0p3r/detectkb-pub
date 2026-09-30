@@ -1,0 +1,12 @@
+{
+  "name": "detectkb-user-manual",
+  "private": true,
+  "description": "Builds the DetectKB user manual (docs/user-manual/DetectKB-User-Manual.docx)",
+  "scripts": {
+    "build": "node build.js",
+    "screenshots": "node scripts/capture.cjs"
+  },
+  "dependencies": {
+    "docx": "^9.8.1"
+  }
+}
