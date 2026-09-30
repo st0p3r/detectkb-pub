@@ -29,6 +29,7 @@ import {
   Skull,
   BookMarked,
   HeartPulse,
+  FlaskConical,
 } from 'lucide-react';
 import { listCategories, createCategory, deleteCategory, type Category } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -180,6 +181,7 @@ const contentNavItems = [
   { to: '/log-sources', icon: ScrollText, label: 'Log Sources' },
   { to: '/threat-groups', icon: Skull, label: 'Threat Groups' },
   { to: '/analytic-stories', icon: BookMarked, label: 'Analytic Stories' },
+  { to: '/atomic-tests', icon: FlaskConical, label: 'Atomic Red Team' },
   { to: '/attacker-tools', icon: Crosshair, label: 'Attacker Tools' },
   { to: '/data-sources', icon: Database, label: 'Data Sources' },
   { to: '/concepts', icon: Lightbulb, label: 'Concepts' },

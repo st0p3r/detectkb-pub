@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { BasisBadge } from '@/components/ui/BasisBadge';
 import { LINK_BASIS, basisChip } from '@/lib/linkBasis';
 import { safeHref } from '@/lib/safeUrl';
+import { RuleAtomics } from '@/features/atomics/AtomicSections';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -132,6 +133,14 @@ function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: stri
           </ul>
         </CollapsibleSection>
       )}
+
+      <CollapsibleSection
+        label="Atomic Red Team tests"
+        isOpen={!!openSections['atomics']}
+        onToggle={() => toggleSection('atomics')}
+      >
+        <RuleAtomics pageId={rule.pageId} />
+      </CollapsibleSection>
 
       {rule.testNotes && (
         <CollapsibleSection

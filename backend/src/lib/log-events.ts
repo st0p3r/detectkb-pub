@@ -202,6 +202,14 @@ function event(source: string, code: string, name?: string, sourceLabel?: string
     basis,
   };
 }
+/** Labels for a log event key ("windows-system:104") that no page may use yet. */
+export function describeLogEventKey(key: string): { source: string; sourceLabel: string; label: string } {
+  const i = key.indexOf(':');
+  const e = event(key.slice(0, i), key.slice(i + 1));
+  const label = e.code === '*' ? `${e.sourceLabel} (any event)` : /^\d+$/.test(e.code) ? `${e.sourceLabel} ${e.code} · ${e.name}` : `${e.sourceLabel} · ${e.name}`;
+  return { source: e.source, sourceLabel: e.sourceLabel, label };
+}
+
 /** A Security event found in a query's EventID filter */
 const inferredSecurity = (id: string) => event('windows-security', id, undefined, undefined, 'inferred');
 

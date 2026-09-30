@@ -375,3 +375,29 @@ model SavedView {
 
   @@index([userId])
 }
+
+// Atomic Red Team tests (redcanaryco/atomic-red-team, atomics/<T>/<T>.yaml),
+// imported from the index or uploaded files. Reference data: re-importable, not
+// part of backups. expectedTelemetry is inferred by DetectKB from the command.
+model AtomicTest {
+  id                 Int      @id @default(autoincrement())
+  guid               String   @unique @db.VarChar(64)
+  techniqueId        String   @db.VarChar(20)
+  // Position within the technique's file (Invoke-AtomicTest -TestNumbers)
+  testNumber         Int
+  name               String   @db.VarChar(500)
+  description        String?  @db.Text
+  platforms          Json
+  executor           String   @db.VarChar(40)
+  elevationRequired  Boolean  @default(false)
+  command            String?  @db.LongText
+  cleanupCommand     String?  @db.LongText
+  inputArguments     Json?
+  dependencies       Json?
+  dependencyExecutor String?  @db.VarChar(40)
+  expectedTelemetry  Json
+  source             String   @db.VarChar(500)
+  updatedAt          DateTime @updatedAt
+
+  @@index([techniqueId])
+}

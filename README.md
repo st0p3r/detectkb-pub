@@ -23,6 +23,8 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
   techniques each one uses (e.g. "how well do we detect APT34?"), highlighted on the ATT&CK matrix
 - **Mitigations and D3FEND**: ATT&CK mitigations and D3FEND countermeasures on every technique
 - **Splunk analytic stories**: the scenarios ESCU rules belong to, with their rules and techniques
+- **Atomic Red Team**: the tests for every technique, the telemetry each should produce and the
+  rules expected to fire, with the `Invoke-AtomicTest` line to run it in a lab
 - **Attacker tools**: LOLBAS, GTFOBins and LOLDrivers references, each linked to the rules that
   mention the binary, driver file or driver hash
 - **Knowledge graph** of pages, wiki links, ATT&CK techniques, telemetry, attacker tools, threat
@@ -119,7 +121,7 @@ when running the backend directly on the host.
 | BACKUP_DIR | ../backups (`/backups` in Docker) | Backup and generated-document directory |
 | CORS_ORIGIN | (none) | Origins allowed to call the API cross-origin, comma-separated. Not needed when the UI is served by the bundled nginx |
 | SIGMA_SERVICE_URL | http://localhost:8000 (`http://sigma:8000` in Docker) | pySigma conversion service |
-| REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers and analytic story details on first start |
+| REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers, Atomic Red Team tests and analytic story details on first start |
 | D3FEND_FETCH | true | Look up D3FEND countermeasures on d3fend.mitre.org (cached 30 days per technique) |
 | PORT | 3001 | Backend port |
 
@@ -153,6 +155,16 @@ the backend downloads it from the official APIs on first start (`lolbas.json`, `
   creates them. Their descriptions come from the `stories/` folder of `splunk/security_content`:
   downloaded on first start, with **Analytic Stories → Download descriptions**, or uploaded with
   **Upload story files** on an offline server.
+- **Atomic Red Team** tests come from `atomics/Indexes/index.yaml` of `redcanaryco/atomic-red-team`:
+  downloaded on first start or with **Atomic Red Team → Download from GitHub**; an offline server
+  takes the index or the technique files (`atomics/T*/T*.yaml`) through **Upload files**.
+  DetectKB does not run tests. For each one it infers the telemetry it should produce (process
+  creation, 4104 for PowerShell, and e.g. Sysmon 10 for lsass access, 13 for registry writes, 4698
+  for scheduled tasks), always labelled *inferred*, and sorts the rules of the test's technique into:
+  *sees its telemetry* (one of the rule's inputs, including AND groups, is among what the test
+  produces), *needs the EDR* (the rule reads an EDR product), *other telemetry* and *no telemetry
+  links*. A rule tagged with a parent technique counts for its sub-techniques' tests, not the other
+  way round. Only running the test in a lab proves that a rule fires.
 - **D3FEND** countermeasures are looked up on d3fend.mitre.org when a technique is opened and cached
   in the database. Offline servers show a link to the D3FEND page instead (`D3FEND_FETCH=false`
   skips the lookup).

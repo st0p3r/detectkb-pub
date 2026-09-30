@@ -22,6 +22,7 @@ import { SeverityBadge } from '@/components/ui/SeverityBadge';
 import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
 import { safeHref } from '@/lib/safeUrl';
+import { TechniqueAtomics } from '@/features/atomics/AtomicSections';
 
 const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: '', label: 'Active rules (not deprecated)' },
@@ -419,6 +420,10 @@ function TechniqueDetail({ cell, status, onClose }: {
         </div>
 
         <TechniqueContextPanel id={technique.id} />
+
+        <div className="pt-2 border-t border-border">
+          <TechniqueAtomics id={technique.id} className={SECTION} />
+        </div>
 
         {subs.length > 0 && (
           <div>
