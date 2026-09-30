@@ -17,6 +17,10 @@ export interface RuleListQuery {
   technique?: string;
   tactic?: string;
   dataSource?: string;
+  /** Analytic story ID */
+  story?: number;
+  /** Telemetry key (sysmon:1, windows-security:4688) or a whole source (sysmon, windows-security) */
+  telemetry?: string;
   sort: SortKey;
   dir: 'asc' | 'desc';
   page: number;
@@ -38,6 +42,8 @@ export function parseRuleListQuery(query: Record<string, unknown>): RuleListQuer
     technique: str(query.technique),
     tactic: str(query.tactic),
     dataSource: str(query.dataSource),
+    story: Number(query.story) || undefined,
+    telemetry: str(query.telemetry),
     sort,
     dir,
     page,
@@ -55,6 +61,8 @@ export function ruleWhere(f: RuleListQuery, omit?: 'status'): Prisma.DetectionRu
   if (f.technique) and.push({ mitreTechniques: { contains: f.technique } });
   if (f.tactic) and.push({ mitreTactics: { contains: f.tactic } });
   if (f.dataSource) and.push({ dataSource: { contains: f.dataSource } });
+  if (f.story) and.push({ page: { stories: { some: { storyId: f.story } } } });
+  if (f.telemetry) and.push(telemetryWhere(f.telemetry));
   if (f.q) {
     // MySQL's default collation makes `contains` case-insensitive
     and.push({
@@ -69,6 +77,17 @@ export function ruleWhere(f: RuleListQuery, omit?: 'status'): Prisma.DetectionRu
     });
   }
   return and.length ? { AND: and } : {};
+}
+
+/** Rules depending on a telemetry key or on any event of a source. */
+export function telemetryWhere(telemetry: string): Prisma.DetectionRuleWhereInput {
+  const i = telemetry.indexOf(':');
+  const source = i < 0 ? telemetry : telemetry.slice(0, i);
+  if (source === 'sysmon') {
+    const eventId = Number(telemetry.slice(i + 1));
+    return { page: { sysmonEvents: { some: i < 0 || !Number.isInteger(eventId) ? {} : { sysmonEvent: { eventId } } } } };
+  }
+  return { page: { logEvents: { some: { logEvent: i < 0 ? { source } : { key: telemetry } } } } };
 }
 
 export function ruleOrderBy(sort: SortKey, dir: 'asc' | 'desc'): Prisma.DetectionRuleOrderByWithRelationInput[] {

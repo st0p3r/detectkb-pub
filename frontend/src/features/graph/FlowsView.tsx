@@ -1,14 +1,15 @@
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, Loader2, Unplug } from 'lucide-react';
+import { ChevronRight, ListFilter, Loader2, Unplug } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { apiErrorMessage, getCoverageFlows, SOURCE_FORMAT_LABELS, type CoverageFlows, type RuleSourceFormat } from '@/lib/api';
+import { apiErrorMessage, getCoverageFlows, SOURCE_FORMAT_LABELS, type CoverageFlows, type FlowSource, type RuleSourceFormat } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 interface FlowsViewProps {
   tactic: string | null;
   onTacticChange: (tactic: string | null) => void;
-  onShowImpact: (eventId: number) => void;
+  /** Open the impact view for a whole source or one event */
+  onShowImpact: (lost: { sources?: string[]; events?: string[] }) => void;
   onShowChain: (technique: string) => void;
 }
 
@@ -56,7 +57,7 @@ function layout(flows: CoverageFlows, height: number) {
       return p;
     });
   };
-  const left = place(flows.sources, 'source', (i, id) => (id.endsWith(':none') ? NONE_COLOR : PALETTE[i % PALETTE.length]));
+  const left = place(flows.sources, 'source', (i, id) => (id === 'none' ? NONE_COLOR : PALETTE[i % PALETTE.length]));
   const right = place(flows.targets, 'target', () => '#64748b');
   const L = new Map(left.map((n) => [n.id, n]));
   const R = new Map(right.map((n) => [n.id, n]));
@@ -89,25 +90,49 @@ function bandPath(y0: number, y1: number, w: number) {
   return `M${x0},${y0} C${mx},${y0} ${mx},${y1} ${x1},${y1} L${x1},${y1 + w} C${mx},${y1 + w} ${mx},${y0 + w} ${x0},${y0 + w} Z`;
 }
 
-/** Sankey: detections flowing from Sysmon events to ATT&CK tactics (or a tactic's techniques). */
+/** Where a flow source leads: its reference page and its rules. */
+function sourceLinks(s: FlowSource) {
+  if (!s.key) return null;
+  const key = s.key;
+  if (s.kind === 'event') {
+    return {
+      reference: key.startsWith('sysmon:') ? `/sysmon-events?event=${key.slice(7)}` : `/log-sources?event=${encodeURIComponent(key)}`,
+      rules: `/rules?telemetry=${encodeURIComponent(key)}`,
+    };
+  }
+  return {
+    reference: key === 'sysmon' ? '/sysmon-events' : `/log-sources?source=${encodeURIComponent(key)}`,
+    rules: `/rules?telemetry=${encodeURIComponent(key)}`,
+  };
+}
+
+/** Sankey: detections flowing from telemetry (log sources or events) to ATT&CK tactics (or a tactic's techniques). */
 export function FlowsView({ tactic, onTacticChange, onShowImpact, onShowChain }: FlowsViewProps) {
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
-  // Rules with no Sysmon link are one big block; off by default so the events are readable
-  const [withoutSysmon, setWithoutSysmon] = useState(false);
+  // Rules with no telemetry link are one block; off by default so the sources are readable
+  const [withoutTelemetry, setWithoutTelemetry] = useState(false);
+  const [groupBy, setGroupBy] = useState<'source' | 'event'>('source');
   const [hover, setHover] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string | null>(null);
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['graph-flows', status, source, tactic, withoutSysmon],
+    queryKey: ['graph-flows', status, source, tactic, withoutTelemetry, groupBy],
     queryFn: () =>
-      getCoverageFlows({ status: status || undefined, source: source || undefined, tactic: tactic ?? undefined, withoutSysmon: withoutSysmon ? undefined : '0' }),
+      getCoverageFlows({
+        status: status || undefined,
+        source: source || undefined,
+        tactic: tactic ?? undefined,
+        groupBy,
+        withoutTelemetry: withoutTelemetry ? undefined : '0',
+      }),
   });
 
   const height = Math.max(480, ((data && Math.max(data.sources.length, data.targets.length)) ?? 0) * (MIN_H + PAD + 4));
   const placed = useMemo(() => (data?.links.length ? layout(data, height) : null), [data, height]);
   const focus = hover ?? pinned;
   const lit = (b: { source: string; target: string }) => !focus || b.source === focus || b.target === focus;
-  const pinnedSource = pinned?.startsWith('sysmon:') ? data?.sources.find((s) => s.id === pinned) : null;
+  const pinnedSource = pinned ? data?.sources.find((s) => s.id === pinned && s.kind !== 'none') : null;
+  const pinnedLinks = pinnedSource ? sourceLinks(pinnedSource) : null;
   const tacticLabel = tactic?.replace(/-/g, ' ');
 
   return (
@@ -115,7 +140,7 @@ export function FlowsView({ tactic, onTacticChange, onShowImpact, onShowChain }:
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <nav className="flex items-center gap-1 text-sm">
           <button onClick={() => onTacticChange(null)} className={cn(tactic ? 'text-primary hover:underline' : 'font-semibold')}>
-            Sysmon events → tactics
+            Telemetry → tactics
           </button>
           {tactic && (
             <>
@@ -124,9 +149,29 @@ export function FlowsView({ tactic, onTacticChange, onShowImpact, onShowChain }:
             </>
           )}
         </nav>
-        <label className="flex items-center gap-2 text-sm ml-auto">
-          <input type="checkbox" checked={withoutSysmon} onChange={(e) => setWithoutSysmon(e.target.checked)} className="w-4 h-4" />
-          Include rules without a Sysmon event
+        <div className="flex rounded-md border border-border p-0.5 text-xs ml-auto" role="group" aria-label="Left column">
+          {(
+            [
+              ['source', 'By log source'],
+              ['event', 'By event'],
+            ] as const
+          ).map(([k, l]) => (
+            <button
+              key={k}
+              onClick={() => {
+                setGroupBy(k);
+                setPinned(null);
+              }}
+              aria-pressed={groupBy === k}
+              className={cn('px-2.5 py-1 rounded', groupBy === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={withoutTelemetry} onChange={(e) => setWithoutTelemetry(e.target.checked)} className="w-4 h-4" />
+          Include rules without telemetry
         </label>
         <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Rule status" className=" px-2.5 py-1.5 rounded-md border border-border bg-background text-sm">
           <option value="">Active rules</option>
@@ -150,13 +195,19 @@ export function FlowsView({ tactic, onTacticChange, onShowImpact, onShowChain }:
         <div className="flex flex-wrap items-center gap-3 mb-3 rounded-lg border border-border bg-card px-4 py-2 text-sm">
           <span className="font-medium">{pinnedSource.label}</span>
           <span className="text-muted-foreground">{pinnedSource.rules} rules</span>
-          {pinnedSource.eventId !== null && (
+          {pinnedLinks && (
             <>
-              <button onClick={() => onShowImpact(pinnedSource.eventId!)} className="inline-flex items-center gap-1 text-primary hover:underline">
-                <Unplug className="w-3.5 h-3.5" /> What if we lose it?
+              <button
+                onClick={() => onShowImpact(pinnedSource.kind === 'event' ? { events: [pinnedSource.key!] } : { sources: [pinnedSource.key!] })}
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                <Unplug className="w-3.5 h-3.5" /> What if we lose {pinnedSource.kind === 'event' ? 'it' : 'the whole source'}?
               </button>
-              <Link to={`/sysmon-events?event=${pinnedSource.eventId}`} className="text-primary hover:underline">
-                Sysmon reference
+              <Link to={pinnedLinks.rules} className="inline-flex items-center gap-1 text-primary hover:underline">
+                <ListFilter className="w-3.5 h-3.5" /> Rules
+              </Link>
+              <Link to={pinnedLinks.reference} className="text-primary hover:underline">
+                Reference
               </Link>
             </>
           )}
@@ -178,8 +229,9 @@ export function FlowsView({ tactic, onTacticChange, onShowImpact, onShowChain }:
         ) : (
           <>
             <p className="text-xs text-muted-foreground mb-2">
-              {data!.rules.toLocaleString()} rules · band width = rules using that event for that {tactic ? 'technique' : 'tactic'} (a rule with
-              several events or tactics counts in each) · hover to trace, click an event to pin it,{' '}
+              {data!.rules.toLocaleString()} rules · band width = rules reading that {groupBy === 'source' ? 'log source' : 'event'} for that{' '}
+              {tactic ? 'technique' : 'tactic'} (a rule with several sources or tactics counts in each)
+              {groupBy === 'event' && ' · events with fewer than 3 rules are merged per source'} · hover to trace, click a source to pin it,{' '}
               {tactic ? 'click a technique for its detection chain' : 'click a tactic to see its techniques'}
             </p>
             <svg data-graph-export data-graph-svg viewBox={`0 0 ${W} ${height + 8}`} className="w-full h-auto select-none" role="img" aria-label="Detection flows">

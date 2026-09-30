@@ -14,7 +14,12 @@ const OPTIONAL_LAYERS: { layer: GraphLayer; label: string; color: string }[] = [
   { layer: 'rules', label: 'All rules', color: '#4338ca' },
   { layer: 'technique', label: 'ATT&CK techniques', color: ENTITY_GROUPS.technique.color },
   { layer: 'sysmon', label: 'Sysmon events', color: ENTITY_GROUPS.sysmon.color },
+  { layer: 'logs', label: 'Log events', color: ENTITY_GROUPS.logevent.color },
   { layer: 'tools', label: 'Attacker tools', color: ENTITY_GROUPS.lolbas.color },
+  { layer: 'stories', label: 'Analytic stories', color: ENTITY_GROUPS.story.color },
+  { layer: 'groups', label: 'Threat groups', color: ENTITY_GROUPS['threat-group'].color },
+  { layer: 'software', label: 'Malware & tools', color: ENTITY_GROUPS.software.color },
+  { layer: 'mitigations', label: 'Mitigations', color: ENTITY_GROUPS.mitigation.color },
 ];
 const HEAVY_NODES = 400;
 

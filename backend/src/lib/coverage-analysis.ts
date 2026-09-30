@@ -1,10 +1,15 @@
 import { prisma } from './prisma';
 import { TACTICS, TECHNIQUE_BY_ID, parentTechniqueId, parseTechniqueIds, resolveTechniqueId } from './attack';
 import { kbCache } from './kb-cache';
+import { LOG_SOURCES, parseDataSourceName, parseProductName } from './log-events';
 
 // Coverage seen through telemetry: which rules and techniques depend on which
-// Sysmon events (impact analysis), and how detections flow from events to
-// ATT&CK tactics (Sankey view).
+// events (impact analysis), and how detections flow from telemetry to ATT&CK
+// tactics (Sankey view).
+//
+// Telemetry keys: "sysmon:10" for Sysmon for Windows, and log event keys
+// ("windows-security:4688", "crowdstrike:processrollup2", "elastic-defend:*")
+// for everything else. A key's source is the part before the colon.
 
 export interface RuleTelemetry {
   pageId: number;
@@ -19,58 +24,110 @@ export interface RuleTelemetry {
   techniques: string[];
   /** Sysmon event IDs the rule depends on (auto-detected or set by hand) */
   sysmon: number[];
+  /** Every telemetry key the rule depends on: sysmon:N and log event keys */
+  telemetry: string[];
 }
 
-const telemetryCache = kbCache(async (): Promise<RuleTelemetry[]> => {
-  const rules = await prisma.detectionRule.findMany({
-    select: {
-      status: true,
-      severity: true,
-      sourceFormat: true,
-      dataSource: true,
-      mitreTechniques: true,
-      page: { select: { id: true, title: true, slug: true, sysmonEvents: { select: { sysmonEvent: { select: { eventId: true } } } } } },
-    },
-  });
-  return rules.map((r) => ({
-    pageId: r.page.id,
-    title: r.page.title,
-    slug: r.page.slug,
-    status: r.status,
-    severity: r.severity,
-    sourceFormat: r.sourceFormat,
-    dataSource: r.dataSource,
-    techniques: Array.from(new Set(parseTechniqueIds(r.mitreTechniques).map(resolveTechniqueId).filter((t): t is string => !!t))),
-    sysmon: r.page.sysmonEvents.map((s) => s.sysmonEvent.eventId).sort((a, b) => a - b),
-  }));
+export interface TelemetryInfo {
+  key: string;
+  /** "sysmon" or a log source key */
+  source: string;
+  sourceLabel: string;
+  label: string;
+}
+
+export const telemetrySource = (key: string) => key.slice(0, key.indexOf(':'));
+
+interface TelemetryData {
+  rules: RuleTelemetry[];
+  /** key → labels, for every key some page uses */
+  info: Map<string, TelemetryInfo>;
+}
+
+const telemetryCache = kbCache(async (): Promise<TelemetryData> => {
+  const [rules, sysmonEvents, logEvents] = await Promise.all([
+    prisma.detectionRule.findMany({
+      select: {
+        status: true,
+        severity: true,
+        sourceFormat: true,
+        dataSource: true,
+        mitreTechniques: true,
+        page: {
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            sysmonEvents: { select: { sysmonEvent: { select: { eventId: true } } } },
+            logEvents: { select: { logEvent: { select: { key: true } } } },
+          },
+        },
+      },
+    }),
+    prisma.sysmonEvent.findMany({ select: { eventId: true, name: true } }),
+    prisma.logEvent.findMany({ select: { key: true, source: true, sourceLabel: true, code: true, name: true } }),
+  ]);
+  const info = new Map<string, TelemetryInfo>();
+  for (const e of sysmonEvents) {
+    info.set(`sysmon:${e.eventId}`, { key: `sysmon:${e.eventId}`, source: 'sysmon', sourceLabel: 'Sysmon', label: `Sysmon ${e.eventId} · ${e.name}` });
+  }
+  for (const e of logEvents) {
+    const label = e.code === '*' ? `${e.sourceLabel} (any event)` : /^\d+$/.test(e.code) ? `${e.sourceLabel} ${e.code} · ${e.name}` : `${e.sourceLabel} · ${e.name}`;
+    info.set(e.key, { key: e.key, source: e.source, sourceLabel: e.sourceLabel, label });
+  }
+  return {
+    info,
+    rules: rules.map((r) => {
+      const sysmon = r.page.sysmonEvents.map((s) => s.sysmonEvent.eventId).sort((a, b) => a - b);
+      return {
+        pageId: r.page.id,
+        title: r.page.title,
+        slug: r.page.slug,
+        status: r.status,
+        severity: r.severity,
+        sourceFormat: r.sourceFormat,
+        dataSource: r.dataSource,
+        techniques: Array.from(new Set(parseTechniqueIds(r.mitreTechniques).map(resolveTechniqueId).filter((t): t is string => !!t))),
+        sysmon,
+        telemetry: [...sysmon.map((e) => `sysmon:${e}`), ...r.page.logEvents.map((l) => l.logEvent.key).sort()],
+      };
+    }),
+  };
 });
 
-/** Every rule's techniques and Sysmon events (cached until data changes). */
-export function loadRuleTelemetry() {
-  return telemetryCache.get();
+/** Every rule's techniques and telemetry (cached until data changes). */
+export async function loadRuleTelemetry(): Promise<RuleTelemetry[]> {
+  return (await telemetryCache.get()).rules;
+}
+
+/** Labels of every telemetry key in use (cached until data changes). */
+export async function loadTelemetryInfo(): Promise<Map<string, TelemetryInfo>> {
+  return (await telemetryCache.get()).info;
 }
 
 /**
- * Sources other than Sysmon that a rule's data source field lists, e.g.
- * "Sysmon EventID 1, Windows Event Log Security 4688" → ["Windows Event Log
- * Security 4688"]. A Sigma logsource ("product:windows category:…") is what
- * the Sysmon links were derived from, so it doesn't count as another source.
+ * Names in a rule's data source field that DetectKB couldn't turn into a
+ * telemetry link (neither Sysmon nor a known log event), e.g. "Winlogbeat".
+ * They may still feed the rule. A Sigma logsource ("product:windows
+ * category:…") is what the links were derived from, so it doesn't count.
  */
-export function otherDataSources(dataSource: string | null): string[] {
-  if (!dataSource) return [];
+export function otherDataSources(dataSource: string | null, sourceFormat: string | null = null): string[] {
+  // ESCU names are all linked (unknown ones under "Other")
+  if (!dataSource || sourceFormat === 'escu') return [];
   return dataSource
-    .split(/[,;\n]/)
-    .map((s) => s.trim())
-    .filter((s) => s && !/sysmon/i.test(s) && !/^(product|category|service):/i.test(s));
+    .split(/\s*[,;\n]\s*|\s+AND\s+/)
+    .map((s) => s.trim().replace(/…$/, ''))
+    .filter((s) => s && !/^(product|category|service):/i.test(s))
+    .filter((s) => !parseDataSourceName(s) && !parseProductName(s));
 }
 
 export type ImpactLevel = 'lost' | 'atRisk' | 'partial';
 
-export interface ImpactedRule extends Pick<RuleTelemetry, 'pageId' | 'title' | 'slug' | 'status' | 'severity' | 'techniques' | 'sysmon'> {
+export interface ImpactedRule extends Pick<RuleTelemetry, 'pageId' | 'title' | 'slug' | 'status' | 'severity' | 'techniques' | 'telemetry'> {
   level: ImpactLevel;
-  /** Sysmon events of the rule that are gone */
-  lostEvents: number[];
-  /** Other data sources the rule lists, which may still feed it */
+  /** Telemetry keys of the rule that are gone */
+  lostEvents: string[];
+  /** Data sources the rule names that DetectKB couldn't map, which may still feed it */
   alternatives: string[];
 }
 
@@ -84,23 +141,35 @@ export interface TechniqueImpact {
 }
 
 /**
- * What stops working if the given Sysmon events are no longer collected.
- * Per rule (deprecated rules ignored):
- *  - lost: every Sysmon event it uses is gone and it lists no other source
- *  - atRisk: every Sysmon event it uses is gone, but it lists other sources
- *  - partial: some of its Sysmon events are gone
+ * The telemetry keys lost when these sources and events stop: every key of a
+ * lost source (sysmon, windows-security, …) plus the listed keys.
+ */
+export function expandLost(all: Iterable<string>, sources: string[], events: string[]): Set<string> {
+  const lost = new Set(events);
+  const bySource = new Set(sources);
+  for (const key of all) if (bySource.has(telemetrySource(key))) lost.add(key);
+  return lost;
+}
+
+/**
+ * What stops working if the given telemetry is no longer collected. A rule's
+ * telemetry are alternatives (any of them can feed it). Per rule (deprecated
+ * rules ignored):
+ *  - lost: all its telemetry is gone and it names no other data source
+ *  - atRisk: all its telemetry is gone, but it names data sources DetectKB couldn't map
+ *  - partial: some of its telemetry is gone
  * Per technique: uncovered when all its rules are lost, reduced otherwise.
  */
-export function analyzeImpact(rules: RuleTelemetry[], lostEvents: Set<number>) {
+export function analyzeImpact(rules: RuleTelemetry[], lostKeys: Set<string>) {
   const active = rules.filter((r) => r.status !== 'deprecated');
   const impacted: ImpactedRule[] = [];
   for (const r of active) {
-    const lost = r.sysmon.filter((e) => lostEvents.has(e));
+    const lost = r.telemetry.filter((k) => lostKeys.has(k));
     if (!lost.length) continue;
-    const alternatives = otherDataSources(r.dataSource);
-    const level: ImpactLevel = lost.length < r.sysmon.length ? 'partial' : alternatives.length ? 'atRisk' : 'lost';
-    const { pageId, title, slug, status, severity, techniques, sysmon } = r;
-    impacted.push({ pageId, title, slug, status, severity, techniques, sysmon, level, lostEvents: lost, alternatives });
+    const alternatives = otherDataSources(r.dataSource, r.sourceFormat);
+    const level: ImpactLevel = lost.length < r.telemetry.length ? 'partial' : alternatives.length ? 'atRisk' : 'lost';
+    const { pageId, title, slug, status, severity, techniques, telemetry } = r;
+    impacted.push({ pageId, title, slug, status, severity, techniques, telemetry, level, lostEvents: lost, alternatives });
   }
 
   const byTechnique = new Map<string, TechniqueImpact>();
@@ -134,27 +203,52 @@ export function analyzeImpact(rules: RuleTelemetry[], lostEvents: Set<number>) {
   };
 }
 
-export const NO_SYSMON = 'none';
+/** Left-column node for rules with no telemetry link */
+export const NO_TELEMETRY = 'none';
+
+export type FlowSourceKind = 'source' | 'event' | 'other' | 'none';
 
 export interface Flows {
-  /** Left column: Sysmon events ("sysmon:10") and rules without one ("sysmon:none") */
-  sources: { id: string; eventId: number | null; rules: number }[];
+  /**
+   * Left column: log sources ("src:windows-security"), or single events
+   * ("ev:sysmon:10") with a source's small events merged ("other:windows-security"),
+   * and rules without telemetry ("none")
+   */
+  sources: { id: string; kind: FlowSourceKind; key: string | null; rules: number }[];
   /** Right column: tactics, or a tactic's techniques when drilling down */
   targets: { id: string; label: string; rules: number }[];
   links: { source: string; target: string; rules: number }[];
-  /** Rules shown (with a technique, and a Sysmon link unless withoutSysmon) */
+  /** Rules shown (with a technique, and a telemetry link unless withoutTelemetry) */
   rules: number;
 }
 
+export interface FlowOptions {
+  tactic?: string;
+  /** false leaves out rules with no telemetry link (default: they form one "none" source) */
+  withoutTelemetry?: boolean;
+  /** "source" (default): one node per log source; "event": one per event */
+  groupBy?: 'source' | 'event';
+  /** In event mode, events with fewer rules are merged into their source's "other" node */
+  minRules?: number;
+}
+
 /**
- * How detections flow from telemetry to ATT&CK: rules counted per (Sysmon
- * event, tactic) pair. A rule with events {1, 10} mapped to credential access
- * adds one to 1→credential-access and one to 10→credential-access. With
- * `tactic`, the right column is that tactic's (parent) techniques instead.
- * withoutSysmon: false leaves out rules with no Sysmon link (default: they
- * form one "sysmon:none" source).
+ * How detections flow from telemetry to ATT&CK: rules counted per (telemetry,
+ * tactic) pair. A rule reading Sysmon 1 and Windows Security 4688, mapped to
+ * execution, adds one to each source → execution. With `tactic`, the right
+ * column is that tactic's (parent) techniques instead.
  */
-export function computeFlows(rules: RuleTelemetry[], opts: { tactic?: string; withoutSysmon?: boolean } = {}): Flows {
+export function computeFlows(rules: RuleTelemetry[], opts: FlowOptions = {}): Flows {
+  const groupBy = opts.groupBy ?? 'source';
+  const minRules = opts.minRules ?? 3;
+  // In event mode, small events are merged per source
+  const eventRules = new Map<string, number>();
+  if (groupBy === 'event') for (const r of rules) for (const k of r.telemetry) eventRules.set(k, (eventRules.get(k) ?? 0) + 1);
+  const nodeOf = (key: string) => {
+    if (groupBy === 'source') return `src:${telemetrySource(key)}`;
+    return (eventRules.get(key) ?? 0) >= minRules ? `ev:${key}` : `other:${telemetrySource(key)}`;
+  };
+
   const links = new Map<string, Set<number>>();
   const sourceRules = new Map<string, Set<number>>();
   const targetRules = new Map<string, Set<number>>();
@@ -175,9 +269,9 @@ export function computeFlows(rules: RuleTelemetry[], opts: { tactic?: string; wi
         for (const tactic of t.tactics) targets.add(`tactic:${tactic}`);
       }
     }
-    if (!targets.size || (!r.sysmon.length && opts.withoutSysmon === false)) continue;
+    if (!targets.size || (!r.telemetry.length && opts.withoutTelemetry === false)) continue;
     shown.add(r.pageId);
-    const sources = r.sysmon.length ? r.sysmon.map((e) => `sysmon:${e}`) : [`sysmon:${NO_SYSMON}`];
+    const sources = r.telemetry.length ? Array.from(new Set(r.telemetry.map(nodeOf))) : [NO_TELEMETRY];
     for (const s of sources) {
       add(sourceRules, s, r.pageId);
       for (const t of targets) {
@@ -193,11 +287,16 @@ export function computeFlows(rules: RuleTelemetry[], opts: { tactic?: string; wi
     if (kind === 'tactic') return TACTICS.find((t) => t.shortname === key)?.name ?? key;
     return `${key} ${TECHNIQUE_BY_ID.get(key)?.name ?? ''}`.trim();
   };
+  const kindOf = (id: string): FlowSourceKind => (id === NO_TELEMETRY ? 'none' : id.startsWith('src:') ? 'source' : id.startsWith('ev:') ? 'event' : 'other');
+  const rank = (id: string) => ({ source: 0, event: 0, other: 1, none: 2 })[kindOf(id)];
   return {
-    sources: Array.from(sourceRules, ([id, set]) => {
-      const key = id.split(':')[1];
-      return { id, eventId: key === NO_SYSMON ? null : Number(key), rules: set.size };
-    }).sort((a, b) => (a.eventId ?? Infinity) - (b.eventId ?? Infinity)),
+    // Biggest first; "other" nodes after the events, "none" last
+    sources: Array.from(sourceRules, ([id, set]) => ({
+      id,
+      kind: kindOf(id),
+      key: id === NO_TELEMETRY ? null : id.slice(id.indexOf(':') + 1),
+      rules: set.size,
+    })).sort((a, b) => rank(a.id) - rank(b.id) || b.rules - a.rules || a.id.localeCompare(b.id)),
     targets: Array.from(targetRules, ([id, set]) => ({ id, label: targetLabel(id), rules: set.size })).sort((a, b) =>
       opts.tactic ? b.rules - a.rules : (tacticOrder.get(a.id.split(':')[1]) ?? 99) - (tacticOrder.get(b.id.split(':')[1]) ?? 99)
     ),
@@ -207,4 +306,12 @@ export function computeFlows(rules: RuleTelemetry[], opts: { tactic?: string; wi
     }),
     rules: shown.size,
   };
+}
+
+/** Label of a log source key, for flows and impact ("windows-security" → "Windows Security"). */
+export function sourceLabel(source: string, info: Map<string, TelemetryInfo>): string {
+  if (source === 'sysmon') return 'Sysmon';
+  if (LOG_SOURCES[source]) return LOG_SOURCES[source].label;
+  for (const i of info.values()) if (i.source === source) return i.sourceLabel;
+  return source;
 }

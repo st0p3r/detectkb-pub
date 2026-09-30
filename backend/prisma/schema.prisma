@@ -108,6 +108,8 @@ model Page {
   rule         DetectionRule?
   splCommand   SplCommand?
   sysmonEvents PageSysmonEvent[]
+  logEvents    PageLogEvent[]
+  stories      RuleStory[]
   isPinned     Boolean           @default(false)
   createdById  Int?
   createdAt    DateTime          @default(now())
@@ -253,6 +255,69 @@ model PageSysmonEvent {
 
   @@id([pageId, sysmonEventId])
   @@index([sysmonEventId])
+}
+
+// Telemetry other than Sysmon for Windows (lib/log-events.ts): Windows event
+// logs, PowerShell, auditd, EDR, cloud logs. key = "source:code", e.g.
+// "windows-security:4688"; code "*" = any event of the source.
+model LogEvent {
+  id          Int            @id @default(autoincrement())
+  key         String         @unique @db.VarChar(191)
+  source      String         @db.VarChar(60)
+  sourceLabel String         @db.VarChar(120)
+  code        String         @db.VarChar(120)
+  name        String         @db.VarChar(255)
+  createdAt   DateTime       @default(now())
+  pages       PageLogEvent[]
+
+  @@index([source])
+}
+
+// Which log events a page (detection rule, data source) depends on.
+// source = "auto" (from the rule's data sources / logsource / tables).
+model PageLogEvent {
+  pageId     Int
+  logEventId Int
+  source     String   @default("auto") @db.VarChar(10)
+  page       Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  logEvent   LogEvent @relation(fields: [logEventId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, logEventId])
+  @@index([logEventId])
+}
+
+// Splunk analytic stories: scenarios grouping ESCU detections. Rules link to
+// them by the story names in their analytic_story tags; the description and
+// narrative come from the story files (uploaded or fetched from GitHub).
+model AnalyticStory {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique @db.VarChar(191)
+  externalId  String?     @db.VarChar(64)
+  description String?     @db.Text
+  narrative   String?     @db.LongText
+  references  Json?
+  category    String?     @db.VarChar(191)
+  usecase     String?     @db.VarChar(120)
+  detailsFrom String?     @db.VarChar(500)
+  updatedAt   DateTime    @updatedAt
+  rules       RuleStory[]
+}
+
+model RuleStory {
+  pageId  Int
+  storyId Int
+  page    Page          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  story   AnalyticStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, storyId])
+  @@index([storyId])
+}
+
+// D3FEND countermeasures per ATT&CK technique, cached from d3fend.mitre.org
+model D3fendMapping {
+  techniqueId String   @id @db.VarChar(20)
+  data        Json
+  fetchedAt   DateTime @default(now())
 }
 
 // Attacker-tool references (LOLBAS, GTFOBins, LOLDrivers). Fetched at runtime

@@ -7,6 +7,7 @@ import {
   apiErrorMessage,
   downloadSigmaRules,
   listRulesPage,
+  getStory,
   type RuleListFilter,
   type RuleListParams,
   type RuleSortKey,
@@ -98,6 +99,8 @@ export function RulesPage() {
   const sourceFilter = params.get('source') ?? 'all';
   const technique = params.get('technique') ?? '';
   const tactic = params.get('tactic') ?? '';
+  const story = Number(params.get('story')) || undefined;
+  const telemetry = params.get('telemetry') ?? '';
   const q = params.get('q') ?? '';
   const sortKey: RuleSortKey = SORT_KEYS.includes(params.get('sort') as RuleSortKey) ? (params.get('sort') as RuleSortKey) : 'updatedAt';
   const sortDir: 'asc' | 'desc' = params.get('dir') === 'asc' || params.get('dir') === 'desc' ? (params.get('dir') as 'asc' | 'desc') : sortKey === 'updatedAt' ? 'desc' : 'asc';
@@ -148,6 +151,8 @@ export function RulesPage() {
     source: sourceFilter === 'all' ? undefined : sourceFilter,
     technique: technique || undefined,
     tactic: tactic || undefined,
+    story,
+    telemetry: telemetry || undefined,
     sort: sortKey,
     dir: sortDir,
     page,
@@ -161,7 +166,9 @@ export function RulesPage() {
   });
   const rules = data?.items ?? [];
   const total = data?.total ?? 0;
-  const filtersActive = !!(q || technique || tactic) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
+  const filtersActive = !!(q || technique || tactic || story || telemetry) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
+  // Names for the story / telemetry chips
+  const { data: storyInfo } = useQuery({ queryKey: ['story', story], queryFn: () => getStory(story!), enabled: !!story, staleTime: 5 * 60 * 1000 });
 
   // Selection: rule ids (kept across pages), or "every rule matching the filters"
   const listFilter: RuleListFilter = {
@@ -171,6 +178,8 @@ export function RulesPage() {
     source: query.source,
     technique: query.technique,
     tactic: query.tactic,
+    story: query.story,
+    telemetry: query.telemetry,
   };
   const filterKey = JSON.stringify(listFilter);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -484,13 +493,15 @@ export function RulesPage() {
         </button>
       </div>
 
-      {/* Filters that arrive from links elsewhere (technique / tactic chips) */}
-      {(technique || tactic) && (
+      {/* Filters that arrive from links elsewhere (technique, tactic, story, telemetry chips) */}
+      {(technique || tactic || story || telemetry) && (
         <div className="flex flex-wrap items-center gap-2 mb-4 text-xs">
           <span className="text-muted-foreground">Filtered by</span>
           {[
             ['technique', technique, 'Technique'],
             ['tactic', tactic, 'Tactic'],
+            ['story', story ? storyInfo?.name ?? `#${story}` : '', 'Analytic story'],
+            ['telemetry', telemetry, telemetry.includes(':') ? 'Log event' : 'Log source'],
           ]
             .filter(([, v]) => v)
             .map(([key, value, label]) => (

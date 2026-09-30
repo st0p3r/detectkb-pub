@@ -25,6 +25,9 @@ import {
   Grid3x3,
   Crosshair,
   Network,
+  ScrollText,
+  Skull,
+  BookMarked,
 } from 'lucide-react';
 import { listCategories, createCategory, deleteCategory, type Category } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -173,6 +176,9 @@ const contentNavItems = [
   { to: '/attack-coverage', icon: Grid3x3, label: 'ATT&CK Coverage' },
   { to: '/spl-library', icon: Terminal, label: 'SPL Library' },
   { to: '/sysmon-events', icon: Cpu, label: 'Sysmon Events' },
+  { to: '/log-sources', icon: ScrollText, label: 'Log Sources' },
+  { to: '/threat-groups', icon: Skull, label: 'Threat Groups' },
+  { to: '/analytic-stories', icon: BookMarked, label: 'Analytic Stories' },
   { to: '/attacker-tools', icon: Crosshair, label: 'Attacker Tools' },
   { to: '/data-sources', icon: Database, label: 'Data Sources' },
   { to: '/concepts', icon: Lightbulb, label: 'Concepts' },

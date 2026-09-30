@@ -63,6 +63,8 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@detectkb.local}
       BACKUP_DIR: /backups
       SIGMA_SERVICE_URL: http://sigma:8000
+      REFERENCE_AUTO_FETCH: ${REFERENCE_AUTO_FETCH:-true}
+      D3FEND_FETCH: ${D3FEND_FETCH:-true}
     volumes:
       - ./backups:/backups
     healthcheck:

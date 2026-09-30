@@ -50,6 +50,16 @@ export function cardText(node: GraphNode | GraphMoreNode, groupLabel: (g: string
       const m = n.label.match(/^EID (\d+) (.*)$/);
       return m ? { title: m[2], subtitle: `Sysmon · EID ${m[1]}` } : { title: n.label, subtitle: 'Sysmon event' };
     }
+    case 'logevent': {
+      const i = n.label.indexOf(' · ');
+      return i > 0 ? { title: n.label.slice(i + 3), subtitle: n.label.slice(0, i) } : { title: n.label, subtitle: 'Log event' };
+    }
+    case 'threat-group':
+    case 'software':
+    case 'mitigation': {
+      const m = n.label.match(/^(.*) \(([GSM]\d{4})\)$/);
+      return m ? { title: m[1], subtitle: `${m[2]} · ${groupLabel(n.group)}` } : { title: n.label, subtitle: groupLabel(n.group) };
+    }
     case 'lolbas':
     case 'gtfobins':
     case 'loldrivers': {

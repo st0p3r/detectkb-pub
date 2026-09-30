@@ -111,6 +111,10 @@ export interface Page {
   /** From GET /api/pages/:slug: lower-cased [[link]] title → slug (missing pages left out) */
   wikiLinks?: Record<string, string>;
   sysmonEvents?: PageSysmonLink[];
+  /** Other telemetry (derived from the rule / data source page) */
+  logEvents?: { logEvent: { key: string; source: string; sourceLabel: string; code: string; name: string } }[];
+  /** Splunk analytic stories (ESCU rules) */
+  stories?: { story: { id: number; name: string } }[];
 }
 
 export interface PageSysmonLink {
@@ -287,6 +291,10 @@ export interface RuleListParams {
   source?: string;
   technique?: string;
   tactic?: string;
+  /** Analytic story ID */
+  story?: number;
+  /** Telemetry key (sysmon:1, windows-security:4688) or a whole log source */
+  telemetry?: string;
   sort?: RuleSortKey;
   dir?: 'asc' | 'desc';
   page: number;
@@ -982,7 +990,19 @@ export interface GraphMoreNode {
   degree: number;
 }
 
-export type GraphLayer = 'pages' | 'rules' | 'technique' | 'sysmon' | 'tools' | 'tag' | 'category';
+export type GraphLayer =
+  | 'pages'
+  | 'rules'
+  | 'technique'
+  | 'sysmon'
+  | 'logs'
+  | 'tools'
+  | 'tag'
+  | 'category'
+  | 'groups'
+  | 'software'
+  | 'mitigations'
+  | 'stories';
 
 export async function getGraph(layers: GraphLayer[]) {
   const { data } = await api.get('/api/graph', { params: { layers: layers.join(',') } });
@@ -1013,8 +1033,17 @@ export interface ChainRule {
   sourceFormat: RuleSourceFormat | null;
   dataSource: string | null;
   techniques: string[];
-  sysmon: number[];
+  /** Telemetry keys: sysmon:10, windows-security:4688, … */
+  telemetry: string[];
   tools: { kind: ReferenceKind; key: string; name: string }[];
+}
+
+export interface ChainTelemetry {
+  key: string;
+  label: string;
+  source: string;
+  sourceLabel: string;
+  ruleCount: number;
 }
 
 export interface DetectionChain {
@@ -1022,8 +1051,8 @@ export interface DetectionChain {
   tactics: AttackTactic[];
   techniques: { id: string; name: string; ruleCount: number }[];
   rules: ChainRule[];
-  sysmon: { eventId: number; name: string; ruleCount: number }[];
-  dataSources: { pageId: number; title: string; slug: string; sysmon: number[] }[];
+  telemetry: ChainTelemetry[];
+  dataSources: { pageId: number; title: string; slug: string; telemetry: string[] }[];
 }
 
 export async function getGraphPaths(from: string, to: string, opts: { status?: string; links?: boolean } = {}) {
@@ -1038,10 +1067,11 @@ export interface ImpactedRule {
   status: string;
   severity: string;
   techniques: string[];
-  sysmon: number[];
-  /** lost: no telemetry left · atRisk: lists other sources that may feed it · partial: some events left */
+  /** Telemetry keys the rule reads (any of them can feed it) */
+  telemetry: string[];
+  /** lost: no telemetry left · atRisk: names other sources that may feed it · partial: some telemetry left */
   level: 'lost' | 'atRisk' | 'partial';
-  lostEvents: number[];
+  lostEvents: string[];
   alternatives: string[];
 }
 
@@ -1054,30 +1084,54 @@ export interface TechniqueImpact {
 }
 
 export interface ImpactAnalysis {
-  events: number[];
+  /** Whole sources lost */
+  sources: { key: string; label: string }[];
+  /** Every telemetry key lost */
+  events: string[];
+  /** Labels of the telemetry keys the listed rules read */
+  labels: Record<string, string>;
   rules: ImpactedRule[];
   counts: { activeRules: number; lost: number; atRisk: number; partial: number };
   uncovered: TechniqueImpact[];
   reduced: TechniqueImpact[];
 }
 
-/** What stops working if these Sysmon events (or a data source page's events) are lost. */
-export async function getImpact(params: { sysmon?: number[]; dataSource?: number }) {
+/** What stops working if these log sources, events (telemetry keys) or a data source page's events are lost. */
+export async function getImpact(params: { sources?: string[]; events?: string[]; dataSource?: number }) {
+  const list = (v?: string[]) => (v?.length ? v.join(',') : undefined);
   const { data } = await api.get('/api/graph/impact', {
-    params: { sysmon: params.sysmon?.length ? params.sysmon.join(',') : undefined, dataSource: params.dataSource },
+    params: { sources: list(params.sources), events: list(params.events), dataSource: params.dataSource },
   });
   return data as ImpactAnalysis;
 }
 
+export interface FlowSource {
+  /** src:<source> · ev:<telemetry key> · other:<source> (its small events) · none */
+  id: string;
+  kind: 'source' | 'event' | 'other' | 'none';
+  /** Source key (source, other) or telemetry key (event) */
+  key: string | null;
+  label: string;
+  rules: number;
+}
+
 export interface CoverageFlows {
-  sources: { id: string; eventId: number | null; label: string; rules: number }[];
+  sources: FlowSource[];
   targets: { id: string; label: string; rules: number }[];
   links: { source: string; target: string; rules: number }[];
   rules: number;
 }
 
-/** Rules per (Sysmon event → tactic), or → technique within one tactic. */
-export async function getCoverageFlows(params: { status?: string; source?: string; tactic?: string; withoutSysmon?: '0' }) {
+/** Rules per (telemetry → tactic), or → technique within one tactic. */
+export async function getCoverageFlows(params: {
+  status?: string;
+  source?: string;
+  tactic?: string;
+  groupBy?: 'source' | 'event';
+  /** Only this log source's events */
+  telemetry?: string;
+  withoutTelemetry?: '0';
+}) {
   const { data } = await api.get('/api/graph/flows', { params });
   return data as CoverageFlows;
 }
@@ -1103,4 +1157,207 @@ export async function getToolGaps(kind?: string) {
 export async function getDetectionChain(technique: string, status?: string) {
   const { data } = await api.get('/api/graph/chain', { params: { technique, status: status || undefined } });
   return data as DetectionChain;
+}
+
+// ── Log sources (telemetry other than Sysmon for Windows) ─────────────────────
+
+export interface LogSourceSummary {
+  key: string;
+  label: string;
+  platform: string;
+  /** Specific events (not counting "any event") */
+  events: number;
+  rules: number;
+}
+
+export interface LogEventRow {
+  key: string;
+  source: string;
+  sourceLabel: string;
+  /** Event ID or name; "*" = any event of the source */
+  code: string;
+  name: string;
+  rules: number;
+  dataSources: number;
+}
+
+export async function listLogSources() {
+  const { data } = await api.get('/api/log-sources');
+  return data as LogSourceSummary[];
+}
+
+export async function listLogEvents(source: string) {
+  const { data } = await api.get(`/api/log-sources/${encodeURIComponent(source)}/events`);
+  return data as LogEventRow[];
+}
+
+export async function getLogEventPages(key: string) {
+  const { data } = await api.get('/api/log-sources/events/pages', { params: { key } });
+  return data as { rules: SysmonLinkedPage[]; dataSources: SysmonLinkedPage[] };
+}
+
+export async function getPageLogEvents(pageId: number) {
+  const { data } = await api.get(`/api/log-sources/page/${pageId}`);
+  return data as { key: string; source: string; sourceLabel: string; code: string; name: string }[];
+}
+
+// ── Threat intel: ATT&CK groups, software, mitigations, D3FEND ───────────────
+
+export interface ActorSummary {
+  id: string;
+  name: string;
+  aliases: string[];
+  /** Techniques it uses */
+  total: number;
+  covered: number;
+  /** Sub-techniques detected only by rules on the parent technique */
+  parentOnly: number;
+  pct: number;
+}
+
+export interface GroupSummary extends ActorSummary {
+  software: number;
+}
+
+export interface SoftwareSummary extends ActorSummary {
+  type: 'malware' | 'tool';
+  platforms: string[];
+}
+
+export interface ActorTechnique {
+  id: string;
+  name: string;
+  tactics: string[];
+  rules: number;
+  state: 'covered' | 'parent' | 'none';
+}
+
+export interface ActorCoverage {
+  techniques: ActorTechnique[];
+  total: number;
+  covered: number;
+  parentOnly: number;
+  pct: number;
+}
+
+export interface GroupDetail {
+  id: string;
+  name: string;
+  aliases: string[];
+  description: string;
+  url: string;
+  coverage: ActorCoverage;
+  software: { id: string; name: string; type: 'malware' | 'tool'; total: number; covered: number; parentOnly: number; pct: number }[];
+}
+
+export interface SoftwareDetail {
+  id: string;
+  name: string;
+  type: 'malware' | 'tool';
+  aliases: string[];
+  platforms: string[];
+  description: string;
+  url: string;
+  coverage: ActorCoverage;
+  groups: { id: string; name: string }[];
+}
+
+export async function listThreatGroups(params: { q?: string; status?: string } = {}) {
+  const { data } = await api.get('/api/threat-intel/groups', { params: { q: params.q || undefined, status: params.status || undefined } });
+  return data as GroupSummary[];
+}
+
+export async function getThreatGroup(id: string, status?: string) {
+  const { data } = await api.get(`/api/threat-intel/groups/${id}`, { params: { status: status || undefined } });
+  return data as GroupDetail;
+}
+
+export async function listSoftware(params: { q?: string; type?: string; status?: string } = {}) {
+  const { data } = await api.get('/api/threat-intel/software', {
+    params: { q: params.q || undefined, type: params.type || undefined, status: params.status || undefined },
+  });
+  return data as SoftwareSummary[];
+}
+
+export async function getSoftware(id: string, status?: string) {
+  const { data } = await api.get(`/api/threat-intel/software/${id}`, { params: { status: status || undefined } });
+  return data as SoftwareDetail;
+}
+
+export interface TechniqueContext {
+  id: string;
+  name: string;
+  /** `via`: the technique IDs (the technique or its sub-techniques) the item lists */
+  mitigations: { id: string; name: string; description: string; url: string; via: string[] }[];
+  groups: { id: string; name: string; via: string[] }[];
+  software: { id: string; name: string; type: 'malware' | 'tool'; via: string[] }[];
+}
+
+export async function getTechniqueContext(id: string) {
+  const { data } = await api.get(`/api/threat-intel/techniques/${id}`);
+  return data as TechniqueContext;
+}
+
+export interface D3fendResult {
+  techniqueId: string;
+  pageUrl: string;
+  available: boolean;
+  countermeasures: { name: string; tactic: string | null; artifact: string | null; url: string | null }[];
+  fetchedAt: string | null;
+  error?: string;
+}
+
+export async function getD3fend(id: string) {
+  const { data } = await api.get(`/api/threat-intel/techniques/${id}/d3fend`);
+  return data as D3fendResult;
+}
+
+// ── Analytic stories (Splunk) ─────────────────────────────────────────────────
+
+export interface StorySummary {
+  id: number;
+  name: string;
+  category: string | null;
+  usecase: string | null;
+  description: string | null;
+  hasDetails: boolean;
+  rules: number;
+  activeRules: number;
+  production: number;
+  techniques: number;
+}
+
+export interface StoryDetail {
+  id: number;
+  name: string;
+  externalId: string | null;
+  description: string | null;
+  narrative: string | null;
+  references: string[];
+  category: string | null;
+  usecase: string | null;
+  detailsFrom: string | null;
+  rules: { pageId: number; title: string; slug: string; status: string; severity: string; techniques: string[] }[];
+  techniques: { id: string; name: string; rules: number; activeRules: number }[];
+  statusCounts: Record<string, number>;
+}
+
+export async function listStories(q?: string) {
+  const { data } = await api.get('/api/stories', { params: { q: q || undefined } });
+  return data as { source: string; stories: StorySummary[] };
+}
+
+export async function getStory(id: number) {
+  const { data } = await api.get(`/api/stories/${id}`);
+  return data as StoryDetail;
+}
+
+export async function importStoryFiles(files: { name: string; content: string }[]) {
+  const { data } = await api.post('/api/stories/import', { files });
+  return data as { imported: number; skipped: string[] };
+}
+
+export async function fetchStoryDetails(all = false) {
+  const { data } = await api.post('/api/stories/fetch', { all });
+  return data as { fetched: number; missing: string[] };
 }

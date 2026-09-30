@@ -15,6 +15,7 @@ import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { relativeTime } from '@/lib/time';
+import { cn } from '@/lib/utils';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -181,6 +182,31 @@ function SysmonLinksBar({ links }: { links: NonNullable<Page['sysmonEvents']> })
           <span className="font-mono font-semibold">{e.eventId}</span>
           {e.name}
           {source === 'auto' && <span className="text-muted-foreground">·auto</span>}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/** Other telemetry a rule / data source reads, and the analytic stories of an ESCU rule. */
+function TelemetryBar({ page }: { page: Page }) {
+  const logs = page.logEvents ?? [];
+  const stories = page.stories ?? [];
+  if (!logs.length && !stories.length) return null;
+  const chip = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border bg-background text-xs hover:bg-accent';
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 px-6 py-3 border-b border-border bg-muted/10">
+      {logs.length > 0 && <span className="text-xs font-medium text-muted-foreground mr-1">Log events:</span>}
+      {logs.map(({ logEvent: e }) => (
+        <Link key={e.key} to={`/log-sources?event=${encodeURIComponent(e.key)}`} title="Detected from the rule's data sources / logsource" className={chip}>
+          <span className="text-muted-foreground">{e.sourceLabel}</span>
+          {e.code === '*' ? 'any event' : /^\d+$/.test(e.code) ? <span className="font-mono font-semibold">{e.code}</span> : e.name}
+        </Link>
+      ))}
+      {stories.length > 0 && <span className={cn('text-xs font-medium text-muted-foreground mr-1', logs.length > 0 && 'ml-3')}>Analytic stories:</span>}
+      {stories.map(({ story }) => (
+        <Link key={story.id} to={`/analytic-stories?story=${story.id}`} className={chip}>
+          {story.name}
         </Link>
       ))}
     </div>
@@ -597,6 +623,7 @@ export function PageViewPage() {
         )}
 
         <SysmonLinksBar links={page.sysmonEvents ?? []} />
+        <TelemetryBar page={page} />
         {page.type === 'RULE' && page.rule && <ReferencesBar pageId={page.id} />}
 
         <div className="px-6 py-6">

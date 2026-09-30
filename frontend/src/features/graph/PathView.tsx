@@ -17,6 +17,7 @@ const EXAMPLES: [string, string, string][] = [
   ['lolbas:certutil.exe', 'sysmon:3', 'certutil → network connections'],
   ['technique:T1003.001', 'lolbas:rundll32.exe', 'LSASS memory → rundll32'],
   ['sysmon:10', 'technique:T1055', 'Process access → process injection'],
+  ['group:G0016', 'log:windows-security:4688', 'APT29 → Security 4688'],
 ];
 
 /** How a step reads, from the node on its left to the one on its right */
@@ -26,6 +27,11 @@ const RELATION: Record<string, [forward: string, backward: string]> = {
   'tool-technique': ['used for', 'done with'],
   subtechnique: ['sub-technique of', 'parent of'],
   link: ['links to', 'linked from'],
+  'group-technique': ['uses', 'used by'],
+  'software-technique': ['uses', 'used by'],
+  'group-software': ['uses', 'used by'],
+  mitigates: ['mitigates', 'mitigated by'],
+  story: ['in story', 'includes'],
   tag: ['tagged', 'tags'],
   category: ['in category', 'contains'],
 };
@@ -33,7 +39,7 @@ const RELATION: Record<string, [forward: string, backward: string]> = {
 function relationLabel(edge: GraphEdge | undefined, left: string, leftNode: GraphNode, rightNode: GraphNode) {
   if (!edge) return '';
   const forward = edge.source === left;
-  if (edge.kind === 'sysmon') {
+  if (edge.kind === 'sysmon' || edge.kind === 'telemetry') {
     // Rules use an event; data sources (and other pages) provide it
     const page = forward ? leftNode : rightNode;
     const [f, b] = page.group === 'RULE' ? ['uses', 'used by'] : ['provides', 'provided by'];
