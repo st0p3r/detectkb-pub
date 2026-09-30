@@ -182,10 +182,32 @@ first login. After 10 failed logins for the same user from one IP, login is bloc
 | Key | Action |
 |---|---|
 | Cmd/Ctrl+K | Open search |
+| / | Focus the list's search box (rules, pages); elsewhere open search |
 | n | New page |
-| e | Edit current page |
+| e | Edit current page / highlighted row |
+| j / k | Next / previous row in the rules and pages lists |
+| Enter | Rules: preview in the side panel · Pages: open |
+| o | Open the highlighted row's page |
+| x | Rules: select the highlighted row |
 | ? | Show shortcuts |
-| Escape | Close modal |
+| Escape | Close modal / preview, then clear the selection |
+
+## Troubleshooting
+
+**`P1000: Authentication failed against database server at mysql`** — MySQL sets
+the `MYSQL_USER` / `MYSQL_PASSWORD` from `.env` only when its data volume is first
+created. The volume is always `detectkb_mysql_data` (the compose project is named
+`detectkb`), whatever folder you run from — so a new `.env` (a fresh clone, a
+deleted `.env`) next to an existing database has passwords the database doesn't
+know. Either:
+
+- keep the data: restore the `.env` the database was created with (or put its
+  `MYSQL_PASSWORD` / `MYSQL_ROOT_PASSWORD` back), then `docker compose up -d`; or
+- start empty — **deletes all DetectKB data**: `docker compose down -v && docker compose up -d`
+  (or `./install.sh uninstall --purge && ./install.sh`).
+
+`install.sh` refuses to generate a new `.env` while that volume exists, and the
+backend stops with this explanation instead of retrying.
 
 ## Tech Stack
 - Frontend: React 18 + TypeScript + Vite + Tailwind CSS
