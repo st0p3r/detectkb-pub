@@ -160,6 +160,23 @@ the backend downloads it from the official APIs on first start (`lolbas.json`, `
   `Data Source:` tags, Sentinel tables and `EventID` filters, Sigma logsource), recomputed when a
   rule is saved or imported. To steer a hand-written rule, name its telemetry in the rule's
   *Data source* field, e.g. `Windows Event Log Security 4688, Powershell Script Block Logging 4104`.
+  `A AND B` means the rule needs both: impact analysis counts it lost when either is gone.
+
+## How far each link can be trusted
+
+Every link carries its basis, shown in the UI and used by **Paths → Certain links only**:
+
+| Basis | Meaning |
+|---|---|
+| official | MITRE ATT&CK data (group/software/mitigation → technique, sub-technique → parent) |
+| declared | Named by the rule itself: its ATT&CK field, data sources, Sentinel tables, Sigma logsource service, analytic story |
+| manual | Set by a user (manual Sysmon links, wiki links) |
+| inferred | Derived by DetectKB: EventID filters in the query, the Windows audit equivalent of a Sigma category |
+| text match | An attacker tool's name found in the rule's text |
+
+**Data Health** (Tools menu) shows how many links of each basis there are and lists what needs
+attention: unknown or retired ATT&CK IDs, rules without telemetry or techniques, tool names found
+only outside the query, unknown data source names, rules needing several events at once, and more.
 
 ## How correctness is checked
 

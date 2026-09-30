@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SIGMA_CATEGORY_TO_SYSMON, eventIdsFromSigma, eventIdsFromText } from '../src/lib/sysmon-links';
+import { SIGMA_CATEGORY_TO_SYSMON, eventIdsFromSigma, eventIdsFromText, inferSysmonLinks } from '../src/lib/sysmon-links';
 
 // Copied from the official table (product: windows, Sysmon channel) in
 // sigma-specification/specification/sigma-appendix-taxonomy.md
@@ -74,5 +74,26 @@ describe('eventIdsFromSigma', () => {
 
   it('does not link non-Windows categories', () => {
     expect(eventIdsFromSigma('title: t\nlogsource: {product: linux, category: process_creation}\ndetection: {s: {a: 1}, condition: s}\n')).toEqual([]);
+  });
+});
+
+describe('inferSysmonLinks', () => {
+  const rule = (dataSource: string | null, splQuery = '', sigmaYaml: string | null = null) => ({
+    title: 'r',
+    type: 'RULE',
+    contentMd: '',
+    rule: { dataSource, splQuery, sigmaYaml, nativeQuery: null },
+  });
+
+  it('marks events named in the data source as declared, the rest as inferred', () => {
+    const links = inferSysmonLinks(rule('Sysmon EventID 1', '`sysmon` EventCode=1 OR EventCode=10'));
+    expect(Object.fromEntries(links)).toEqual({ 1: 'declared', 10: 'inferred' });
+  });
+
+  it('Sigma: category mapping is inferred, service: sysmon EventID filters declared', () => {
+    const category = 'logsource:\n  product: windows\n  category: process_access\ndetection:\n  sel:\n    TargetImage: x\n  condition: sel';
+    expect(Object.fromEntries(inferSysmonLinks(rule(null, '', category)))).toEqual({ 10: 'inferred' });
+    const service = 'logsource:\n  product: windows\n  service: sysmon\ndetection:\n  sel:\n    EventID: 4\n  condition: sel';
+    expect(Object.fromEntries(inferSysmonLinks(rule(null, '', service)))).toEqual({ 4: 'declared' });
   });
 });

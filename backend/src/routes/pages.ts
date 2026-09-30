@@ -13,11 +13,11 @@ const PAGE_INCLUDE = {
   rule: true,
   splCommand: true,
   sysmonEvents: {
-    select: { source: true, sysmonEvent: { select: { id: true, eventId: true, name: true, category: true } } },
+    select: { source: true, basis: true, sysmonEvent: { select: { id: true, eventId: true, name: true, category: true } } },
     orderBy: { sysmonEvent: { eventId: 'asc' as const } },
   },
   logEvents: {
-    select: { logEvent: { select: { key: true, source: true, sourceLabel: true, code: true, name: true } } },
+    select: { basis: true, logEvent: { select: { key: true, source: true, sourceLabel: true, code: true, name: true } } },
     orderBy: { logEvent: { key: 'asc' as const } },
   },
   stories: { select: { story: { select: { id: true, name: true } } }, orderBy: { story: { name: 'asc' as const } } },

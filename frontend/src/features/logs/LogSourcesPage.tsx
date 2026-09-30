@@ -6,6 +6,7 @@ import { getLogEventPages, listLogEvents, listLogSources, type LogEventRow } fro
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
+import { BasisBadge } from '@/components/ui/BasisBadge';
 import { cn } from '@/lib/utils';
 
 const PLATFORM_ORDER = ['Windows', 'Linux', 'EDR', 'Identity', 'Cloud', 'SaaS', 'Network', 'Containers', 'Multi-platform', 'Alerts', 'Other'];
@@ -42,6 +43,7 @@ function EventPages({ event }: { event: LogEventRow }) {
                 </Link>
                 {p.status && <StatusBadge status={p.status} />}
                 {p.severity && <SeverityBadge severity={p.severity} />}
+                <BasisBadge basis={p.basis} />
               </li>
             ))}
             {data.rules.length > rules.length && (

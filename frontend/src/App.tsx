@@ -37,6 +37,7 @@ const ActivityPage = named(() => import('@/features/activity/ActivityPage'), 'Ac
 const LogSourcesPage = named(() => import('@/features/logs/LogSourcesPage'), 'LogSourcesPage');
 const ThreatGroupsPage = named(() => import('@/features/threat/ThreatGroupsPage'), 'ThreatGroupsPage');
 const AnalyticStoriesPage = named(() => import('@/features/stories/AnalyticStoriesPage'), 'AnalyticStoriesPage');
+const DataHealthPage = named(() => import('@/features/health/DataHealthPage'), 'DataHealthPage');
 const KnowledgeGraphPage = lazy(() => import('@/features/graph/KnowledgeGraphPage'));
 
 export default function App() {
@@ -106,6 +107,7 @@ export default function App() {
             <Route path="/log-sources" element={<LogSourcesPage />} />
             <Route path="/threat-groups" element={<ThreatGroupsPage />} />
             <Route path="/analytic-stories" element={<AnalyticStoriesPage />} />
+            <Route path="/data-health" element={<DataHealthPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/broken-links" element={<BrokenLinksPage />} />
             <Route path="/backups" element={<BackupPage />} />

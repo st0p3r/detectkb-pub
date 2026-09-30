@@ -280,7 +280,12 @@ export function ImpactView({ sources, events, dataSource, onChange, onShowChain 
                       <span className="text-xs text-muted-foreground truncate max-w-[26rem]" title={r.lostEvents.map(label).join(', ')}>
                         loses {r.lostEvents.map(label).join(', ')}
                       </span>
-                      {kept.length > 0 && (
+                      {r.groups.length > 0 && (
+                        <span className="text-xs text-rose-600 dark:text-rose-400" title="The rule's data source says these are needed together">
+                          needs together: {r.groups.map((g) => g.map(label).join(' + ')).join(' · ')}
+                        </span>
+                      )}
+                      {kept.length > 0 && r.level === 'partial' && (
                         <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate max-w-[22rem]" title={kept.map(label).join(', ')}>
                           keeps {kept.map(label).join(', ')}
                         </span>

@@ -3,6 +3,7 @@ import { GROUP_BY_ID, GROUPS, MITIGATIONS, SOFTWARE, actorCoverage } from '../sr
 import { TECHNIQUE_BY_ID } from '../src/lib/attack';
 import { parseStoryYaml, ruleStoryNames, storyFileName } from '../src/lib/stories';
 import { parseD3fendResponse } from '../src/lib/d3fend';
+import { queryText } from '../src/lib/data-health';
 
 describe('ATT&CK CTI data', () => {
   it('has groups, software and mitigations mapped to current techniques', () => {
@@ -83,5 +84,14 @@ describe('parseD3fendResponse', () => {
       { name: 'Credential Hardening', tactic: 'Harden', artifact: 'Process', url: 'https://d3fend.mitre.org/technique/d3f:CredentialHardening/' },
     ]);
     expect(parseD3fendResponse({ nothing: true })).toEqual([]);
+  });
+});
+
+describe('data health: queryText', () => {
+  it('keeps the query and the Sigma detection, not titles or descriptions', () => {
+    const sigma = 'title: certutil download\ndescription: Detects certutil.exe\nlogsource:\n  product: windows\n  category: process_creation\ndetection:\n  sel:\n    Image|endswith: rundll32.exe\n  condition: sel';
+    const text = queryText({ splQuery: 'index=x', nativeQuery: null, sigmaYaml: sigma });
+    expect(text).toContain('rundll32.exe');
+    expect(text).not.toContain('certutil');
   });
 });

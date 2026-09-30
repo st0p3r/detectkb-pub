@@ -166,12 +166,21 @@ const EVENT_NAMES: Record<string, Record<string, string>> = {
   },
 };
 
+/**
+ * Why a link exists: declared = named in the rule's own metadata (ESCU
+ * data_source, Elastic tags, Sentinel tables, Sigma logsource service / EventID);
+ * inferred = derived by DetectKB (EventID filters in the query, the Windows
+ * audit equivalent of a Sigma category).
+ */
+export type LinkBasis = 'declared' | 'inferred';
+
 export interface ParsedLogEvent {
   source: string;
   sourceLabel: string;
   /** Event ID or name; "*" = any event of the source */
   code: string;
   name: string;
+  basis: LinkBasis;
 }
 
 const slug = (s: string) =>
@@ -182,7 +191,7 @@ const slug = (s: string) =>
 
 export const logEventKey = (e: { source: string; code: string }) => `${e.source}:${e.code === '*' ? '*' : slug(e.code) || e.code}`;
 
-function event(source: string, code: string, name?: string, sourceLabel?: string): ParsedLogEvent {
+function event(source: string, code: string, name?: string, sourceLabel?: string, basis: LinkBasis = 'declared'): ParsedLogEvent {
   const label = LOG_SOURCES[source]?.label ?? sourceLabel ?? source;
   const known = EVENT_NAMES[source]?.[code];
   return {
@@ -190,8 +199,11 @@ function event(source: string, code: string, name?: string, sourceLabel?: string
     sourceLabel: label,
     code,
     name: code === '*' ? 'Any event' : known ?? name ?? (/^\d+$/.test(code) ? `Event ${code}` : code),
+    basis,
   };
 }
+/** A Security event found in a query's EventID filter */
+const inferredSecurity = (id: string) => event('windows-security', id, undefined, undefined, 'inferred');
 
 // Windows event log channel (as ESCU writes it) → source
 const CHANNEL_SOURCES: Record<string, string> = {
@@ -336,7 +348,7 @@ export function parseSentinelTables(tables: string[], query: string): ParsedLogE
     if (!table) continue;
     if (/^(SecurityEvents?|WindowsEvent)$/.test(table)) {
       const ids = securityEventIds(query);
-      if (ids.length) ids.forEach((id) => out.push(event('windows-security', id)));
+      if (ids.length) ids.forEach((id) => out.push(inferredSecurity(id)));
       else if (table !== 'WindowsEvent') out.push(event('windows-security', '*'));
       continue;
     }
@@ -392,7 +404,7 @@ export function parseSigmaLogsource(sigmaYaml: string): ParsedLogEvent[] {
     const product = String(ls.product ?? '').toLowerCase();
     const service = String(ls.service ?? '').toLowerCase();
     const category = String(ls.category ?? '').toLowerCase();
-    for (const [source, code] of SIGMA_CATEGORY_EVENTS[`${product}/${category}`] ?? []) out.push(event(source, code));
+    for (const [source, code] of SIGMA_CATEGORY_EVENTS[`${product}/${category}`] ?? []) out.push(event(source, code, undefined, undefined, 'inferred'));
     if (product === 'windows' && SIGMA_SERVICE_SOURCES[service]) {
       const source = SIGMA_SERVICE_SOURCES[service];
       const ids = new Set<string>();
@@ -446,11 +458,20 @@ export interface ParsedRuleTelemetry {
   events: ParsedLogEvent[];
   /** Data source names that weren't recognised (not Sysmon either) */
   unrecognised: string[];
+  /**
+   * Telemetry needed all at once ("Sysmon EventID 1 AND Sysmon EventID 11"), as
+   * telemetry keys (sysmon:1, windows-security:4688); only groups of 2 or more
+   */
+  groups: string[][];
 }
 
 function dedupe(events: ParsedLogEvent[]): ParsedLogEvent[] {
   const byKey = new Map<string, ParsedLogEvent>();
-  for (const e of events) if (!byKey.has(logEventKey(e))) byKey.set(logEventKey(e), e);
+  // Declared wins over inferred for the same event
+  for (const e of events) {
+    const prev = byKey.get(logEventKey(e));
+    if (!prev || (prev.basis === 'inferred' && e.basis === 'declared')) byKey.set(logEventKey(e), e);
+  }
   // A specific event of a source makes "any event" of the same source redundant
   const specific = new Set(Array.from(byKey.values()).filter((e) => e.code !== '*').map((e) => e.source));
   return Array.from(byKey.values()).filter((e) => e.code !== '*' || !specific.has(e.source));
@@ -470,39 +491,69 @@ export function parseRuleTelemetry(r: RuleTelemetryInput): ParsedRuleTelemetry {
     }
   };
   const query = `${r.splQuery ?? ''}\n${r.nativeQuery ?? ''}`;
+  const groups: string[][] = [];
+  // "A AND B" entries: both are needed; each part is also a link of its own
+  const withGroups = (entries: string[], parse: (s: string) => ParsedLogEvent | 'sysmon' | null) => {
+    for (const entry of entries) {
+      const parts = entry.split(/\s+AND\s+/).map((p) => p.trim()).filter(Boolean);
+      names(parts, parse);
+      if (parts.length < 2) continue;
+      const keys = parts.map((p) => {
+        const sysmon = p.match(/^Sysmon EventID\s+(\d+)$/i);
+        if (sysmon) return `sysmon:${sysmon[1]}`;
+        const e = parse(p);
+        return e && e !== 'sysmon' ? logEventKey(e) : null;
+      });
+      const unique = Array.from(new Set(keys.filter((k): k is string => !!k)));
+      if (unique.length > 1 && !keys.includes(null)) groups.push(unique);
+    }
+  };
 
   if (r.sourceFormat === 'escu') {
     const list = escuDataSources(r.sourceContent ?? null) ?? (r.dataSource ?? '').split(/\s*,\s*/);
-    names(list.flatMap((s) => s.split(/\s+AND\s+/)), (s) => parseDataSourceName(s, true));
+    withGroups(list, (s) => parseDataSourceName(s, true));
   } else if (r.sourceFormat === 'elastic') {
     names(elasticDataSources(r.sourceContent ?? null, r.dataSource), parseProductName);
     // "Windows Security Event Logs" + event.code filters → the specific events
-    if (events.some((e) => e.source === 'windows-security')) securityEventIds(query).forEach((id) => events.push(event('windows-security', id)));
+    if (events.some((e) => e.source === 'windows-security')) securityEventIds(query).forEach((id) => events.push(inferredSecurity(id)));
   } else if (r.sourceFormat === 'sentinel') {
     events.push(...parseSentinelTables((r.dataSource ?? '').split(/\s*,\s*/), query));
   } else {
     if (r.sigmaYaml) events.push(...parseSigmaLogsource(r.sigmaYaml));
     // Hand-written data source field: "Windows Event Log Security 4688, Sysmon EventID 1"
-    names((r.dataSource ?? '').split(/\s*[,;\n]\s*|\s+AND\s+/), (s) => parseDataSourceName(s) ?? parseProductName(s));
+    withGroups((r.dataSource ?? '').split(/\s*[,;\n]\s*/), (s) => parseDataSourceName(s) ?? parseProductName(s));
     if (/\bsecurity\b/i.test(r.dataSource ?? '') || /\bSecurityEvent\b|WinEventLog:Security/i.test(query))
-      securityEventIds(query).forEach((id) => events.push(event('windows-security', id)));
+      securityEventIds(query).forEach((id) => events.push(inferredSecurity(id)));
   }
   // Sigma logsource strings ("product:windows category:…") are handled by the Sysmon links
-  return { events: dedupe(events), unrecognised: unrecognised.filter((s) => !/^(product|category|service):/i.test(s)) };
+  return { events: dedupe(events), unrecognised: unrecognised.filter((s) => !/^(product|category|service):/i.test(s)), groups };
 }
+
+// Data source page titles naming a whole log ("Windows Security Event Log")
+const PAGE_TITLE_SOURCES: [RegExp, string][] = [
+  [/\bwindows security\b|\bsecurity (event )?log\b/i, 'windows-security'],
+  [/\bpowershell\b/i, 'windows-powershell'],
+  [/\bwindows system (event )?log\b/i, 'windows-system'],
+  [/\bdefender antivirus\b/i, 'windows-defender'],
+  [/\bauditd\b/i, 'auditd'],
+];
 
 /** A data source page: telemetry named in its title and text. */
 export function parseDataSourcePage(title: string, content: string): ParsedLogEvent[] {
   const events: ParsedLogEvent[] = [];
   const whole = parseProductName(title) ?? parseDataSourceName(title);
   if (whole && whole !== 'sysmon') events.push(whole);
+  else if (!/sysmon/i.test(title)) {
+    const match = PAGE_TITLE_SOURCES.find(([re]) => re.test(title));
+    if (match) events.push(event(match[1], '*'));
+  }
   for (const line of `${title}\n${content}`.split(/\n|,|;/)) {
     const e = parseDataSourceName(line.replace(/^[\s*\-#>|`]+|[\s|`]+$/g, ''));
     if (e && e !== 'sysmon') events.push(e);
   }
   if (/windows security|security event log|security auditing/i.test(`${title}\n${content}`)) {
     for (const m of content.matchAll(/\bEvent\s?(?:ID|Code)?\s*:?\s*(\d{4})\b/gi)) {
-      if (+m[1] >= 1100 && +m[1] < 7000) events.push(event('windows-security', m[1]));
+      if (+m[1] >= 1100 && +m[1] < 7000) events.push(inferredSecurity(m[1]));
     }
   }
   return dedupe(events);

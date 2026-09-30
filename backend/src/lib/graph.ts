@@ -35,7 +35,36 @@ export interface GraphEdge {
   target: string;
   kind: string; // link | technique | sysmon | telemetry | tag | category | reference | tool-technique | subtechnique
   // | group-technique | software-technique | group-software | mitigates | story
+  /** Where the relationship comes from, see EdgeBasis */
+  basis: EdgeBasis;
 }
+
+/**
+ * official: MITRE ATT&CK data · declared: named by the rule / dataset itself
+ * (the rule's ATT&CK field, data sources, story; LOLBAS' technique mapping) ·
+ * inferred: derived by DetectKB (query EventID filters, Sigma category
+ * mapping) · text-match: a tool name found in the rule's text · manual: set by
+ * a user (wiki links, tags, manual Sysmon links)
+ */
+export type EdgeBasis = 'official' | 'declared' | 'inferred' | 'text-match' | 'manual';
+
+/** Basis of relationships that always have the same one */
+const KIND_BASIS: Record<string, EdgeBasis> = {
+  technique: 'declared',
+  reference: 'text-match',
+  'tool-technique': 'declared',
+  subtechnique: 'official',
+  'group-technique': 'official',
+  'software-technique': 'official',
+  'group-software': 'official',
+  mitigates: 'official',
+  story: 'declared',
+  link: 'manual',
+  tag: 'manual',
+  category: 'manual',
+};
+/** Bases a strict path may use */
+export const CERTAIN_BASES = new Set<EdgeBasis>(['official', 'declared', 'manual']);
 
 export interface Graph {
   nodes: Map<string, GraphNode>;
@@ -90,8 +119,8 @@ async function buildGraph(): Promise<Graph> {
       },
     }),
     prisma.pageLink.findMany({ select: { sourceId: true, targetId: true } }),
-    prisma.pageSysmonEvent.findMany({ select: { pageId: true, sysmonEvent: { select: { eventId: true, name: true } } } }),
-    prisma.pageLogEvent.findMany({ select: { pageId: true, logEvent: { select: { key: true, sourceLabel: true, code: true, name: true } } } }),
+    prisma.pageSysmonEvent.findMany({ select: { pageId: true, basis: true, sysmonEvent: { select: { eventId: true, name: true } } } }),
+    prisma.pageLogEvent.findMany({ select: { pageId: true, basis: true, logEvent: { select: { key: true, sourceLabel: true, code: true, name: true } } } }),
     prisma.ruleStory.findMany({ select: { pageId: true, story: { select: { id: true, name: true } } } }),
     computeReferenceMatches(),
   ]);
@@ -102,11 +131,11 @@ async function buildGraph(): Promise<Graph> {
   const node = (n: Omit<GraphNode, 'degree'>) => {
     if (!nodes.has(n.id)) nodes.set(n.id, { ...n, degree: 0 });
   };
-  const edge = (source: string, target: string, kind: string) => {
+  const edge = (source: string, target: string, kind: string, basis: EdgeBasis = KIND_BASIS[kind] ?? 'declared') => {
     const key = source < target ? `${source}|${target}` : `${target}|${source}`;
     if (source === target || seen.has(key)) return;
     seen.add(key);
-    edges.push({ source, target, kind });
+    edges.push({ source, target, kind, basis });
   };
 
   const techniqueNode = (techId: string) => {
@@ -143,7 +172,7 @@ async function buildGraph(): Promise<Graph> {
   for (const s of sysmon) {
     const nid = `sysmon:${s.sysmonEvent.eventId}`;
     node({ id: nid, label: `EID ${s.sysmonEvent.eventId} ${s.sysmonEvent.name}`, group: 'sysmon' });
-    edge(`page:${s.pageId}`, nid, 'sysmon');
+    edge(`page:${s.pageId}`, nid, 'sysmon', s.basis as EdgeBasis);
   }
   for (const l of logLinks) {
     const e = l.logEvent;
@@ -151,7 +180,7 @@ async function buildGraph(): Promise<Graph> {
     // "Windows Security · 4688 Process creation" — the card shows the event, then the source
     const label = `${e.sourceLabel} · ${e.code === '*' ? 'any event' : /^\d+$/.test(e.code) ? `${e.code} ${e.name}` : e.name}`;
     node({ id: nid, label, group: 'logevent' });
-    edge(`page:${l.pageId}`, nid, 'telemetry');
+    edge(`page:${l.pageId}`, nid, 'telemetry', l.basis as EdgeBasis);
   }
   for (const l of storyLinks) {
     const nid = `story:${l.story.id}`;
@@ -368,7 +397,7 @@ export function neighbourhood(graph: Graph, centerId: string, opts: { group?: st
   // Edges from the centre, plus edges among the returned neighbours
   const ids = new Set([centerId, ...nodes.map((n) => n.id)]);
   const edges: GraphEdge[] = graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target));
-  for (const m of more) edges.push({ source: centerId, target: m.id, kind: 'more' });
+  for (const m of more) edges.push({ source: centerId, target: m.id, kind: 'more', basis: 'manual' });
   return { center, nodes, more, edges };
 }
 
@@ -402,19 +431,23 @@ export interface PathOptions {
   statuses?: string[] | null;
   /** Also step along wiki links and through non-rule pages */
   links?: boolean;
+  /** Only relationships that are official, declared or set by hand (no inferred links or text matches) */
+  strict?: boolean;
 }
 
-const kindCache = new WeakMap<Graph, Map<string, string>>();
+const edgeCache = new WeakMap<Graph, Map<string, GraphEdge>>();
 const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-/** Relationship between two adjacent nodes */
-export function edgeKind(graph: Graph, a: string, b: string): string | undefined {
-  let kinds = kindCache.get(graph);
-  if (!kinds) {
-    kinds = new Map(graph.edges.map((e) => [pairKey(e.source, e.target), e.kind]));
-    kindCache.set(graph, kinds);
+/** The edge between two adjacent nodes */
+export function edgeBetween(graph: Graph, a: string, b: string): GraphEdge | undefined {
+  let byPair = edgeCache.get(graph);
+  if (!byPair) {
+    byPair = new Map(graph.edges.map((e) => [pairKey(e.source, e.target), e]));
+    edgeCache.set(graph, byPair);
   }
-  return kinds.get(pairKey(a, b));
+  return byPair.get(pairKey(a, b));
 }
+/** Relationship between two adjacent nodes */
+export const edgeKind = (graph: Graph, a: string, b: string) => edgeBetween(graph, a, b)?.kind;
 
 /**
  * Shortest paths between two nodes (each a list of node IDs, from → to), at
@@ -429,7 +462,8 @@ export function edgeKind(graph: Graph, a: string, b: string): string | undefined
  *  - rules must have one of `statuses` (default: not deprecated);
  *  - a Sysmon or log event only joins a rule to a data source: two rules
  *    sharing an event (or two sources providing it) isn't a relationship;
- *  - groups, software, mitigations and stories are never stepped through.
+ *  - groups, software, mitigations and stories are never stepped through;
+ *  - with `strict`, only official, declared and manual relationships count.
  * Paths are picked to overlap as little as possible, then by fewest hub nodes.
  * Empty when the nodes aren't connected this way.
  */
@@ -452,7 +486,10 @@ export function findPaths(graph: Graph, from: string, to: string, opts: PathOpti
     return statusOk(id);
   };
   const edgeOk = (a: string, b: string) => {
-    const kind = edgeKind(graph, a, b);
+    const e = edgeBetween(graph, a, b);
+    const kind = e?.kind;
+    // Strict: inferred links and text matches are not evidence enough
+    if (opts.strict && e && !CERTAIN_BASES.has(e.basis)) return false;
     if (kind && PATH_EDGE_KINDS.has(kind)) return true;
     // The endpoints the user picked may use any of their own relationships
     if (a === from || b === to) return true;

@@ -112,13 +112,17 @@ export interface Page {
   wikiLinks?: Record<string, string>;
   sysmonEvents?: PageSysmonLink[];
   /** Other telemetry (derived from the rule / data source page) */
-  logEvents?: { logEvent: { key: string; source: string; sourceLabel: string; code: string; name: string } }[];
+  logEvents?: { basis: LinkBasis; logEvent: { key: string; source: string; sourceLabel: string; code: string; name: string } }[];
   /** Splunk analytic stories (ESCU rules) */
   stories?: { story: { id: number; name: string } }[];
 }
 
+/** Why a link exists — see LINK_BASIS in components/ui/BasisBadge */
+export type LinkBasis = 'official' | 'declared' | 'inferred' | 'text-match' | 'manual';
+
 export interface PageSysmonLink {
   source: 'auto' | 'manual';
+  basis: LinkBasis;
   sysmonEvent: { id: number; eventId: number; name: string; category: string };
 }
 
@@ -693,6 +697,7 @@ export interface SysmonLinkedPage {
   slug: string;
   type: string;
   source: 'auto' | 'manual';
+  basis?: LinkBasis;
   status: string | null;
   severity: string | null;
 }
@@ -972,6 +977,7 @@ export interface GraphEdge {
   source: string;
   target: string;
   kind: string;
+  basis: LinkBasis;
 }
 
 /** Placeholder for neighbours not loaded yet ("+659 more"). */
@@ -1055,12 +1061,16 @@ export interface DetectionChain {
   dataSources: { pageId: number; title: string; slug: string; telemetry: string[] }[];
 }
 
-export async function getGraphPaths(from: string, to: string, opts: { status?: string; links?: boolean } = {}) {
-  const { data } = await api.get('/api/graph/path', { params: { from, to, status: opts.status || undefined, links: opts.links ? '1' : undefined } });
+export async function getGraphPaths(from: string, to: string, opts: { status?: string; links?: boolean; strict?: boolean } = {}) {
+  const { data } = await api.get('/api/graph/path', {
+    params: { from, to, status: opts.status || undefined, links: opts.links ? '1' : undefined, strict: opts.strict ? '1' : undefined },
+  });
   return data as { paths: string[][]; nodes: GraphNode[]; edges: GraphEdge[]; linksWouldHelp: boolean };
 }
 
 export interface ImpactedRule {
+  /** Telemetry needed all at once (from "A AND B" data sources) */
+  groups: string[][];
   pageId: number;
   title: string;
   slug: string;
@@ -1360,4 +1370,32 @@ export async function importStoryFiles(files: { name: string; content: string }[
 export async function fetchStoryDetails(all = false) {
   const { data } = await api.post('/api/stories/fetch', { all });
   return data as { fetched: number; missing: string[] };
+}
+
+// ── Data health ───────────────────────────────────────────────────────────────
+
+export interface HealthCheck {
+  id: string;
+  title: string;
+  description: string;
+  severity: 'error' | 'warning' | 'info';
+  count: number;
+  items: { title: string; slug: string; detail?: string }[];
+  link?: string;
+}
+
+export interface DataHealth {
+  generatedAt: string;
+  rules: number;
+  provenance: {
+    sysmon: Record<string, number>;
+    logs: Record<string, number>;
+    tools: { inQuery: number; outsideQuery: number };
+  };
+  checks: HealthCheck[];
+}
+
+export async function getDataHealth() {
+  const { data } = await api.get('/api/data-health');
+  return data as DataHealth;
 }

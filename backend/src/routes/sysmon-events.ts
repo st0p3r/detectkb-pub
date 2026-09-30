@@ -52,13 +52,15 @@ router.get('/:eventId/pages', async (req, res) => {
     where: { sysmonEventId: event.id },
     select: {
       source: true,
+      basis: true,
       page: { select: { id: true, title: true, slug: true, type: true, rule: { select: { status: true, severity: true } } } },
     },
     orderBy: { page: { title: 'asc' } },
   });
-  const linked = pages.map(({ source, page: { rule, ...page } }) => ({
+  const linked = pages.map(({ source, basis, page: { rule, ...page } }) => ({
     ...page,
     source,
+    basis,
     status: rule?.status ?? null,
     severity: rule?.severity ?? null,
     isRule: !!rule,
