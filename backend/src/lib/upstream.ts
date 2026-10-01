@@ -4,7 +4,7 @@ import { prisma } from './prisma';
 import { markDataChanged } from './kb-cache';
 import { ArchiveFile, readTarGz, readZip, stripTopFolder } from './archive';
 import { ImportFormat, ImportedRule, parseRuleFile } from './rule-import';
-import { diffImportedRule, ExistingRule } from './rule-import-diff';
+import { clipChange, diffImportedRule, ExistingRule } from './rule-import-diff';
 import { logEventKey, parseRuleTelemetry } from './log-events';
 import { inferSysmonLinks } from './sysmon-links';
 import { alternatives, loadRuleTelemetry } from './coverage-analysis';
@@ -170,9 +170,6 @@ export interface CheckStats {
   errors: number;
 }
 
-const CLIP = 600;
-const clip = (v: string) => (v.length > CLIP ? `${v.slice(0, CLIP)}…` : v);
-
 /** Compares files with the imported rules and replaces the source's items with the result. */
 export async function checkFiles(sourceKey: string, files: ArchiveFile[]): Promise<CheckStats> {
   const [findExisting, inUse, dismissals] = await Promise.all([
@@ -225,7 +222,7 @@ export async function checkFiles(sourceKey: string, files: ArchiveFile[]): Promi
         content: file.content,
         contentHash,
         pageId: existing?.pageId ?? null,
-        changes: existing ? (changes.map((c) => ({ ...c, before: clip(c.before), after: clip(c.after) })) as Prisma.InputJsonValue) : Prisma.JsonNull,
+        changes: existing ? (changes.map((c) => ({ ...c, ...clipChange(c.before, c.after) })) as Prisma.InputJsonValue) : Prisma.JsonNull,
         severity: rule.severity,
         sourceStatus: rule.sourceStatus,
         techniques: rule.mitreTechniques,

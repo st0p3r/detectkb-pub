@@ -60,6 +60,7 @@ if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN === '*' ? '*' : CORS_ORIGIN.
 app.use('/api/auth', express.json({ limit: '10kb' }));
 // Reference datasets (LOLDrivers' drivers.json is ~20 MB) get a larger body limit
 app.use('/api/references/upload', express.json({ limit: '100mb' }));
+app.use('/api/upstream/check-upload', express.json({ limit: '100mb' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true }));
 

@@ -2,6 +2,7 @@ import zlib from 'zlib';
 import { describe, expect, it } from 'vitest';
 import { readTarGz, readZip, stripTopFolder } from '../src/lib/archive';
 import { isRelevant, ruleTelemetry, sourceDef } from '../src/lib/upstream';
+import { clipChange } from '../src/lib/rule-import-diff';
 import { parseRuleFile } from '../src/lib/rule-import';
 
 // ── Tiny archive writers for the tests ──────────────────────────────────────
@@ -165,5 +166,16 @@ describe('relevance', () => {
     expect(isRelevant(t, new Set(['sysmon:1']))).toBe(false);
     expect(isRelevant(t, new Set(['sysmon:1', 'sysmon:11']))).toBe(true);
     expect(isRelevant({ telemetry: ['crowdstrike:processrollup2'], groups: [] }, new Set(['crowdstrike:*']))).toBe(true);
+  });
+});
+
+describe('clipChange', () => {
+  it('keeps short values and cuts long ones around the first difference', () => {
+    expect(clipChange('a', 'b')).toEqual({ before: 'a', after: 'b' });
+    const head = 'x'.repeat(2000);
+    const c = clipChange(`${head}OLD tail`, `${head}NEW tail`);
+    expect(c.before.startsWith('…')).toBe(true);
+    expect(c.before).toContain('OLD tail');
+    expect(c.after).toContain('NEW tail');
   });
 });

@@ -48,3 +48,18 @@ export function diffImportedRule(rule: ImportedRule, existing: ExistingRule): Fi
     .filter(([field, , before, after]) => norm(before) !== norm(after) && !(field === 'splQuery' && !norm(after)))
     .map(([field, label, before, after]) => ({ field, label, before: norm(before), after: norm(after) }));
 }
+
+const CLIP = 700;
+
+/**
+ * Both sides of a change, cut to the same window around their first
+ * difference, so a change deep in a long query stays visible.
+ */
+export function clipChange(before: string, after: string): { before: string; after: string } {
+  if (before.length <= CLIP && after.length <= CLIP) return { before, after };
+  let i = 0;
+  while (i < before.length && i < after.length && before[i] === after[i]) i++;
+  const start = Math.max(0, i - 200);
+  const cut = (v: string) => `${start > 0 ? '…' : ''}${v.slice(start, start + CLIP)}${v.length > start + CLIP ? '…' : ''}`;
+  return { before: cut(before), after: cut(after) };
+}

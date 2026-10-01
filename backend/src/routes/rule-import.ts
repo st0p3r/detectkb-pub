@@ -6,7 +6,7 @@ import { syncPageLinks } from '../lib/links';
 import { syncDerivedLinks } from '../lib/derived-links';
 import { SigmaServiceError, convertSigma } from '../lib/sigma';
 import { FORMAT_LABELS, FORMAT_TAGS, ImportFormat, ImportedRule, parseRuleFile } from '../lib/rule-import';
-import { diffImportedRule } from '../lib/rule-import-diff';
+import { clipChange, diffImportedRule } from '../lib/rule-import-diff';
 
 const router = Router();
 
@@ -187,8 +187,6 @@ export async function runImport(input: ImportInput, userId: number | null) {
   return { created, updated, skipped, errors, warnings };
 }
 
-const PREVIEW_VALUE_MAX = 600;
-const clip = (v: string) => (v.length > PREVIEW_VALUE_MAX ? `${v.slice(0, PREVIEW_VALUE_MAX)}…` : v);
 
 /**
  * POST /api/rules-import/preview { files } — what an import would do, without
@@ -241,7 +239,7 @@ export async function previewImport(req: Request, res: Response) {
         ...base,
         status: changes.length ? 'changed' : 'unchanged',
         existing: { title: existing.page.title, slug: existing.page.slug, status: existing.status },
-        changes: changes.map((c) => ({ ...c, before: clip(c.before), after: clip(c.after) })),
+        changes: changes.map((c) => ({ ...c, ...clipChange(c.before, c.after) })),
       });
     }
   }

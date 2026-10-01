@@ -65,6 +65,7 @@ services:
       SIGMA_SERVICE_URL: http://sigma:8000
       REFERENCE_AUTO_FETCH: ${REFERENCE_AUTO_FETCH:-true}
       D3FEND_FETCH: ${D3FEND_FETCH:-true}
+      UPSTREAM_AUTO_CHECK: ${UPSTREAM_AUTO_CHECK:-true}
     volumes:
       - ./backups:/backups
     healthcheck:

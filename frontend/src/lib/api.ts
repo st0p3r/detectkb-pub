@@ -1566,6 +1566,94 @@ export async function downloadSavedSearches(params: { status?: string; scope?: '
   return Number(response.headers['x-rule-count'] ?? 0);
 }
 
+// ── Upstream updates ──────────────────────────────────────────────────────────
+
+export interface UpstreamCheckStats {
+  files: number;
+  rules: number;
+  new: number;
+  relevantNew: number;
+  changed: number;
+  unchanged: number;
+  dismissed: number;
+  errors: number;
+}
+
+export interface UpstreamSourceInfo {
+  key: string;
+  label: string;
+  format: string;
+  repository: string | null;
+  downloadable: boolean;
+  options: { value: string; label: string }[];
+  option: string | null;
+  enabled: boolean;
+  running: boolean;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  stats: UpstreamCheckStats | null;
+  items: { new: number; relevantNew: number; changed: number };
+}
+
+export interface UpstreamItem {
+  id: number;
+  sourceKey: string;
+  kind: 'new' | 'changed';
+  format: RuleSourceFormat;
+  externalId: string | null;
+  title: string;
+  path: string;
+  pageId: number | null;
+  changes: { field: string; label: string; before: string; after: string }[] | null;
+  severity: string | null;
+  sourceStatus: string | null;
+  techniques: string | null;
+  telemetry: string[];
+  relevant: boolean;
+  checkedAt: string;
+  existing: { title: string; slug: string; status: string | null } | null;
+}
+
+export async function getUpstreamSources() {
+  const { data } = await api.get('/api/upstream');
+  return data as { autoCheckDays: number; sources: UpstreamSourceInfo[] };
+}
+
+export async function listUpstreamItems(params: { source?: string; kind?: string; relevant?: boolean; q?: string; page?: number }) {
+  const { data } = await api.get('/api/upstream/items', {
+    params: { source: params.source || undefined, kind: params.kind, relevant: params.relevant ? 1 : undefined, q: params.q || undefined, page: params.page },
+  });
+  return data as { total: number; page: number; pageSize: number; items: UpstreamItem[] };
+}
+
+export async function getUpstreamItemContent(id: number) {
+  const { data } = await api.get(`/api/upstream/items/${id}/content`);
+  return data as { path: string; content: string };
+}
+
+export async function checkUpstreamSource(source: string) {
+  await api.post('/api/upstream/check', { source });
+}
+
+export async function checkUpstreamUpload(files: { name: string; content: string }[]) {
+  const { data } = await api.post('/api/upstream/check-upload', { files });
+  return data as UpstreamCheckStats;
+}
+
+export async function updateUpstreamSource(key: string, body: { enabled?: boolean; option?: string }) {
+  await api.put(`/api/upstream/sources/${key}`, body);
+}
+
+export async function importUpstreamItems(ids: number[], opts: { status?: 'draft' | 'source'; convertTo?: string | null }) {
+  const { data } = await api.post('/api/upstream/import', { ids, ...opts });
+  return data as SigmaImportResult;
+}
+
+export async function dismissUpstreamItems(ids: number[]) {
+  const { data } = await api.post('/api/upstream/dismiss', { ids });
+  return data as { dismissed: number };
+}
+
 // ── Data health ───────────────────────────────────────────────────────────────
 
 export interface HealthCheck {
