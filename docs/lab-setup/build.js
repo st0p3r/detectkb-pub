@@ -196,7 +196,7 @@ const chapters = [
   'چه می‌سازیم و چرا',
   'آماده‌سازی vSphere و شبکه',
   'ماشین‌ها (VMها) و منابع',
-  'راه‌اندازی SPLUNK-LAB',
+  'راه‌اندازی SPLUNK-LAB و بارگذاری قانون‌ها',
   'راه‌اندازی WIN-VICTIM',
   'DC-LAB و LNX-VICTIM (اختیاری)',
   'نصب Atomic Red Team و اجرای اولین تست',
@@ -343,6 +343,13 @@ sudo -u splunk /opt/splunk/bin/splunk add index linux -auth admin:'CHANGE-ME-Str
     'در CIM، دیتامدل **Endpoint** را برای indexهای لب تنظیم کنید و **Acceleration** را روشن کنید؛ یا ماکروی `security_content_summariesonly` را روی `summariesonly=false` بگذارید تا قانون‌های `tstats` بدون شتاب‌دهی هم نتیجه بدهند.',
     'رمز پیش‌فرض admin را عوض کنید و برای DetectKB یک کاربر جدا بسازید (فصل ۹).',
   ]),
+  H2('۴-۵. بارگذاری قانون‌ها از DetectKB'),
+  P('قانون‌ها باید در Splunk لب تعریف شوند تا هنگام تست هشدار بدهند. در DetectKB، صفحه‌ی **Atomic Red Team** → **Export rules for Splunk** را بزنید (مثلاً قانون‌های Production که تکنیکشان تست Atomic دارد). فایل `savedsearches.conf` دانلود می‌شود؛ هر قانون یک جستجوی ذخیره‌شده است که هر ۵ دقیقه اجرا می‌شود و اگر نتیجه داشته باشد هشدار می‌دهد.'),
+  CODE(`sudo mkdir -p /opt/splunk/etc/apps/detectkb_lab/local
+sudo cp savedsearches.conf /opt/splunk/etc/apps/detectkb_lab/local/
+sudo chown -R splunk:splunk /opt/splunk/etc/apps/detectkb_lab
+sudo -u splunk /opt/splunk/bin/splunk restart`),
+  NOTE(['هشدارهای فعال‌شده در Splunk در **Activity → Triggered Alerts** دیده می‌شوند. هر بار قانون‌ها در DetectKB تغییر کردند، فایل را دوباره خروجی بگیرید و جایگزین کنید.'], 'دیدن هشدارها'),
 );
 
 // ── 5
@@ -441,7 +448,7 @@ Install-AtomicRedTeam -getAtomics -Force`),
     'اگر ماشین اینترنت ندارد: دو مخزن `redcanaryco/invoke-atomicredteam` و `redcanaryco/atomic-red-team` را جای دیگری به‌صورت ZIP دانلود کنید، در `C:\\AtomicRedTeam` باز کنید و ماژول `powershell-yaml` را هم نصب کنید.',
   ], 'بدون اینترنت'),
   H2('۷-۲. اجرای یک تست'),
-  P('در DetectKB، صفحه‌ی **Atomic Red Team** یا بخش **Atomic Red Team tests** صفحه‌ی قانون را باز کنید و خط `Invoke-AtomicTest` را کپی کنید. روی WIN-VICTIM:'),
+  P('در DetectKB، صفحه‌ی **Atomic Red Team** یا بخش **Lab validation · Atomic Red Team** صفحه‌ی قانون را باز کنید و خط `Invoke-AtomicTest` را کپی کنید. روی WIN-VICTIM:'),
   CODE(`Import-Module 'C:\\AtomicRedTeam\\invoke-atomicredteam\\Invoke-AtomicRedTeam.psd1' -Force
 
 # 1. Prerequisites (downloads the test's tools)
@@ -452,13 +459,15 @@ Invoke-AtomicTest T1003.001 -TestGuids 2536dee2-12fb-459a-8c37-971844fa73be
 
 # 3. Clean up
 Invoke-AtomicTest T1003.001 -TestGuids 2536dee2-12fb-459a-8c37-971844fa73be -Cleanup`),
-  H2('۷-۳. دیدن نتیجه'),
+  H2('۷-۳. دیدن نتیجه و ثبت آن در DetectKB'),
   OL([
-    '۲ تا ۵ دقیقه صبر کنید تا لاگ‌ها به Splunk برسند.',
-    'در Splunk، کوئری قانون (از صفحه‌ی قانون در DetectKB) را برای **۱۵ دقیقه‌ی اخیر** اجرا کنید.',
-    'نتیجه داشت ← قانون کار می‌کند ✅ · نتیجه نداشت ← قانون یا لاگ مشکل دارد ❌',
+    '۵ تا ۱۰ دقیقه صبر کنید تا لاگ‌ها به Splunk برسند و جستجوهای ذخیره‌شده اجرا شوند.',
+    'در Splunk، **Activity → Triggered Alerts** را ببینید، یا کوئری قانون را برای **۱۵ دقیقه‌ی اخیر** دستی اجرا کنید.',
+    'در DetectKB، در جزئیات همان تست **Record a run** را بزنید و برای هر قانون نتیجه را ثبت کنید: **Detected**، **Not detected**، یا اگر حمله اجرا نشد **Blocked** / **Test error**.',
     'بعد از چند تست، ماشین را به Snapshot `clean-baseline` برگردانید.',
   ]),
+  P('قانون‌هایی که هشدار دادند در DetectKB وضعیت **Validated** می‌گیرند و در ماتریس ATT&CK با گزینه‌ی **Proven in lab only** به‌عنوان پوشش اثبات‌شده دیده می‌شوند.'),
+  WARNBOX(['اگر قانونی هشدار نداد، قبل از اصلاح آن بررسی کنید حمله واقعاً اجرا شده و لاگش به Splunk رسیده است (فصل ۸). فقط وقتی لاگ هست ولی قانون آن را نمی‌گیرد، قانون نیاز به بازبینی دارد.'], 'قبل از اصلاح قانون'),
 );
 
 // ── 8
@@ -494,7 +503,7 @@ add(
     [2, 1.8, 5, 1]
   ),
   H2('در فاز ۲ (دستی)'),
-  P('هیچ اتصالی لازم نیست. تست را طبق فصل ۷ دستی اجرا می‌کنید، نتیجه را در Splunk می‌بینید و در DetectKB ثبت می‌کنید.'),
+  P('هیچ اتصالی لازم نیست و این حالت همین الان در DetectKB آماده است: قانون‌ها را با **Export rules for Splunk** به Splunk لب می‌برید (بخش ۴-۵)، تست را طبق فصل ۷ دستی اجرا می‌کنید، نتیجه را در Splunk می‌بینید و با **Record a run** در DetectKB ثبت می‌کنید.'),
   H2('در فاز ۳ (خودکار)'),
   IMGP('flow', 'مسیر یک تست خودکار: از دکمه در DetectKB تا ثبت نتیجه', 620),
   H2('حساب‌ها و دسترسی‌ها'),
@@ -533,7 +542,8 @@ add(
     'SPLUNK-LAB نصب، اپ‌ها نصب، indexها ساخته و دریافت روی 9997 فعال است.',
     'WIN-VICTIM: Sysmon، Audit، Forwarder، Atomic Red Team نصب و Snapshot `clean-baseline` گرفته شده است.',
     'همه‌ی جستجوهای فصل ۸ نتیجه دارند.',
-    'یک تست نمونه (T1003.001) اجرا و در Splunk دیده شده است.',
+    'قانون‌ها از DetectKB خروجی گرفته و در Splunk لب بارگذاری شده‌اند (بخش ۴-۵).',
+    'یک تست نمونه (T1003.001) اجرا، در Splunk دیده و نتیجه‌اش در DetectKB ثبت شده است.',
   ]),
   H2('اطلاعاتی که برای تنظیم DetectKB لازم است'),
   TABLE(
@@ -556,7 +566,7 @@ const cover = [
   new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, spacing: { before: 200 }, children: runs('**راه‌اندازی لب تست تشخیص روی vSphere**', { size: 40, sizeComplexScript: 40, color: ACCENT }) }),
   new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, spacing: { before: 120 }, children: runs('Splunk · Sysmon · Atomic Red Team · اتصال به DetectKB', { size: 26, sizeComplexScript: 26, color: MUTED }) }),
   new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 600 }, border: { top: { style: BorderStyle.SINGLE, size: 8, color: ACCENT, space: 12 } }, children: [] }),
-  new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, children: runs('ویرایش ۱ · مهر ۱۴۰۵', { size: 22, sizeComplexScript: 22, color: MUTED }) }),
+  new Paragraph({ bidirectional: true, alignment: AlignmentType.CENTER, children: runs('ویرایش ۲ · مهر ۱۴۰۵', { size: 22, sizeComplexScript: 22, color: MUTED }) }),
   new Paragraph({ children: [new PageBreak()] }),
 ];
 
