@@ -8,6 +8,7 @@ import {
   parseTechniqueIds,
   resolveTechniqueId,
 } from '../lib/attack';
+import { ValidationStatus, loadValidation } from '../lib/validation';
 
 const router = Router();
 
@@ -17,6 +18,8 @@ interface CoveringRule {
   slug: string;
   status: string;
   severity: string;
+  /** Lab validation status (lib/validation) */
+  validation: ValidationStatus;
 }
 
 /** ?status=production,testing — defaults to every status except deprecated. */
@@ -29,7 +32,10 @@ function statusFilter(req: Request) {
 
 /** technique ID → rules that reference it (IDs not in ATT&CK are returned separately). */
 async function computeCoverage(req: Request) {
-  const rules = await prisma.detectionRule.findMany({
+  const validation = await loadValidation();
+  // ?validation=validated — proven coverage: only rules a lab test showed firing
+  const onlyValidated = req.query.validation === 'validated';
+  const all = await prisma.detectionRule.findMany({
     where: statusFilter(req),
     select: {
       status: true,
@@ -38,6 +44,7 @@ async function computeCoverage(req: Request) {
       page: { select: { id: true, title: true, slug: true } },
     },
   });
+  const rules = onlyValidated ? all.filter((r) => validation(r.page.id).status === 'validated') : all;
 
   const byTechnique = new Map<string, CoveringRule[]>();
   const unknown = new Map<string, CoveringRule[]>();
@@ -50,6 +57,7 @@ async function computeCoverage(req: Request) {
       slug: r.page.slug,
       status: r.status,
       severity: r.severity,
+      validation: validation(r.page.id).status,
     };
     for (const rawId of parseTechniqueIds(r.mitreTechniques)) {
       const id = resolveTechniqueId(rawId);
