@@ -7,6 +7,7 @@ import {
   TECHNIQUE_BY_ID,
   findTactic,
   parseTechniqueIds,
+  replaceRetiredTechniques,
   resolveTechniqueId,
 } from '../src/lib/attack';
 
@@ -56,5 +57,28 @@ describe('technique helpers', () => {
     expect(findTactic('Credential Access')?.id).toBe('TA0006');
     expect(findTactic('defense-evasion')?.id).toBe('TA0005');
     expect(findTactic('defense_evasion')?.id).toBe('TA0005');
+  });
+});
+
+describe('replaceRetiredTechniques', () => {
+  it('swaps retired IDs for their replacements and drops duplicates', () => {
+    expect(replaceRetiredTechniques('T1562, T1562.004, T1059')).toEqual({
+      text: 'T1685, T1686, T1059',
+      replaced: [
+        ['T1562', 'T1685'],
+        ['T1562.004', 'T1686'],
+      ],
+    });
+    expect(replaceRetiredTechniques('T1685, T1562').text).toBe('T1685');
+  });
+
+  it('leaves current IDs, empty values and free text without retired IDs as they are', () => {
+    expect(replaceRetiredTechniques('T1059,T1003.001')).toEqual({ text: 'T1059,T1003.001', replaced: [] });
+    expect(replaceRetiredTechniques(null)).toEqual({ text: null, replaced: [] });
+    expect(replaceRetiredTechniques('see T1059 notes')).toEqual({ text: 'see T1059 notes', replaced: [] });
+  });
+
+  it('replaces inside free text without reformatting it', () => {
+    expect(replaceRetiredTechniques('Defense impairment (t1070.001)').text).toBe('Defense impairment (T1685.005)');
   });
 });

@@ -318,13 +318,13 @@ export interface RulePage {
 export type RuleListFilter = Omit<RuleListParams, 'sort' | 'dir' | 'page' | 'pageSize'>;
 
 /** Target of a bulk action: explicit rule ids, or every rule matching a filter. */
-export type RuleBulkTarget = { ids: number[] } | { filter: RuleListFilter };
+export type RuleBulkTarget = { ids: number[] } | { pageIds: number[] } | { filter: RuleListFilter };
 
-export type RuleBulkAction = 'status' | 'severity' | 'addTag' | 'removeTag';
+export type RuleBulkAction = 'status' | 'severity' | 'addTag' | 'removeTag' | 'replaceRetiredTechniques';
 
 export async function bulkUpdateRules(target: RuleBulkTarget, action: RuleBulkAction, value: string) {
   const { data } = await api.put('/api/rules/bulk', { ...target, action, value });
-  return data as { matched: number; changed: number };
+  return data as { matched: number; changed: number; replacements?: Record<string, string> };
 }
 
 /** Ids of every rule matching the list filters ("select all matching"). */

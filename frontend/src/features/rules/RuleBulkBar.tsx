@@ -11,7 +11,7 @@ const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 
 interface RuleBulkBarProps {
   count: number;
-  target: RuleBulkTarget;
+  target: Exclude<RuleBulkTarget, { pageIds: number[] }>;
   canUpdate: boolean;
   canDelete: boolean;
   /** Offered when the whole page is selected but more rules match */
