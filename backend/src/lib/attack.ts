@@ -65,6 +65,30 @@ export function resolveTechniqueId(id: string): string | null {
   return replacement && TECHNIQUE_BY_ID.has(replacement) ? replacement : null;
 }
 
+/**
+ * Replaces technique IDs MITRE retired (and gave a replacement) in a rule's
+ * technique field. A plain list ("T1562, T1562.004") is rebuilt without
+ * duplicates; other text keeps its wording with the IDs swapped.
+ */
+export function replaceRetiredTechniques(text: string | null): { text: string | null; replaced: [string, string][] } {
+  if (!text) return { text, replaced: [] };
+  const replaced: [string, string][] = [];
+  const swap = (id: string) => {
+    const upper = id.toUpperCase();
+    if (TECHNIQUE_BY_ID.has(upper)) return upper;
+    const to = resolveTechniqueId(upper);
+    if (!to) return id;
+    if (!replaced.some(([from]) => from === upper)) replaced.push([upper, to]);
+    return to;
+  };
+  if (/^[\sT\d.,;]+$/i.test(text)) {
+    const ids = Array.from(new Set((text.match(/T\d{4}(?:\.\d{3})?/gi) ?? []).map(swap)));
+    return { text: replaced.length ? ids.join(', ') : text, replaced };
+  }
+  const out = text.replace(/\bT\d{4}(?:\.\d{3})?\b/gi, swap);
+  return { text: replaced.length ? out : text, replaced };
+}
+
 export function parentTechniqueId(id: string): string {
   return id.split('.')[0];
 }

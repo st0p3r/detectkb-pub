@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { AlertOctagon, AlertTriangle, ChevronDown, ChevronRight, HeartPulse, Info, Loader2 } from 'lucide-react';
-import { apiErrorMessage, getDataHealth, type HealthCheck } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertOctagon, AlertTriangle, ChevronDown, ChevronRight, HeartPulse, Info, Loader2, Wand2 } from 'lucide-react';
+import { apiErrorMessage, bulkUpdateRules, getDataHealth, type HealthCheck } from '@/lib/api';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { useAuth } from '@/features/auth/AuthContext';
+import { useToast } from '@/hooks/useToast';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { LINK_BASIS } from '@/lib/linkBasis';
 import { relativeTime } from '@/lib/time';
@@ -14,7 +17,54 @@ const SEVERITY = {
   info: { icon: Info, color: 'text-sky-600 dark:text-sky-400', ring: 'border-border' },
 } as const;
 
+/** Rewrites retired ATT&CK IDs in every rule's technique list to MITRE's replacements. */
+function ReplaceRetiredButton({ count }: { count: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  async function run() {
+    setConfirm(false);
+    setBusy(true);
+    try {
+      const { changed, replacements = {} } = await bulkUpdateRules({ filter: {} }, 'replaceRetiredTechniques', '');
+      const pairs = Object.entries(replacements);
+      toast(
+        `Updated ${changed} rule${changed === 1 ? '' : 's'}${pairs.length ? `: ${pairs.slice(0, 4).map(([a, b]) => `${a} → ${b}`).join(', ')}${pairs.length > 4 ? ', …' : ''}` : ''}`,
+        'success'
+      );
+      queryClient.invalidateQueries({ queryKey: ['data-health'] });
+      queryClient.invalidateQueries({ queryKey: ['rules'] });
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not update the techniques'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <button
+        onClick={() => setConfirm(true)}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 mt-2 mr-4 px-2.5 py-1.5 rounded-md border border-border text-xs font-medium hover:bg-accent disabled:opacity-50"
+      >
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+        Replace with MITRE's IDs
+      </button>
+      <ConfirmDialog
+        open={confirm}
+        title={`Update ${count.toLocaleString()} rule${count === 1 ? '' : 's'}?`}
+        message="Each retired technique ID in the rules' ATT&CK field is replaced by the ID MITRE moved it to (as listed above); other IDs stay as they are. The rule queries are not touched."
+        confirmLabel="Replace"
+        onConfirm={run}
+        onCancel={() => setConfirm(false)}
+      />
+    </>
+  );
+}
+
 function CheckCard({ check }: { check: HealthCheck }) {
+  const { hasPermission } = useAuth();
   const [open, setOpen] = useState(false);
   const s = SEVERITY[check.severity];
   const Icon = s.icon;
@@ -55,6 +105,7 @@ function CheckCard({ check }: { check: HealthCheck }) {
               Showing {check.items.length} of {check.count.toLocaleString()}.
             </p>
           )}
+          {check.id === 'retired-technique' && hasPermission('rules:update') && <ReplaceRetiredButton count={check.count} />}
           {check.link && (
             <Link to={check.link} className="inline-block mt-2 text-sm text-primary hover:underline">
               Open the related page →

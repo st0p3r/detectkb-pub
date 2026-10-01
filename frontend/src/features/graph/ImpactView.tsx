@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Loader2, ShieldOff, Unplug, X } from 'lucide-react';
-import { apiErrorMessage, getImpact, listLogEvents, listLogSources, listPages, listSysmonEvents, type ImpactedRule } from '@/lib/api';
+import { apiErrorMessage, bulkUpdateRules, getImpact, listLogEvents, listLogSources, listPages, listSysmonEvents, type ImpactedRule } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { useAuth } from '@/features/auth/AuthContext';
+import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
 
 export interface ImpactSelection {
@@ -30,6 +33,10 @@ const LEVELS: Record<ImpactedRule['level'], { label: string; hint: string; chip:
 };
 
 const LIST_STEP = 50;
+const LOST_STATUSES = [
+  ['deprecated', 'Deprecated'],
+  ['draft', 'Draft'],
+] as const;
 const toggle = (list: string[], item: string) => (list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
 
 /** Events of one log source to pick from (Sysmon from its own reference). */
@@ -56,6 +63,30 @@ export function ImpactView({ sources, events, dataSource, onChange, onShowChain 
   });
   const [level, setLevel] = useState<ImpactedRule['level'] | 'all'>('all');
   const [shown, setShown] = useState(LIST_STEP);
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [lostStatus, setLostStatus] = useState<(typeof LOST_STATUSES)[number][0] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Exactly the rules this selection leaves without any telemetry (e.g. an EDR the organisation doesn't have)
+  const lostRules = (data?.rules ?? []).filter((r) => r.level === 'lost');
+  async function setLost(status: string) {
+    setLostStatus(null);
+    setBusy(true);
+    try {
+      const { changed } = await bulkUpdateRules({ pageIds: lostRules.map((r) => r.pageId) }, 'status', status);
+      toast(`${changed} rule${changed === 1 ? '' : 's'} set to ${status}`, 'success');
+      queryClient.invalidateQueries({ queryKey: ['graph-impact'] });
+      queryClient.invalidateQueries({ queryKey: ['rules'] });
+      queryClient.invalidateQueries({ queryKey: ['data-health'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not change the rules'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const set = (next: Partial<ImpactSelection>) => onChange({ sources, events, dataSource, ...next });
   const lostKeys = new Set(data?.events ?? []);
@@ -261,6 +292,27 @@ export function ImpactView({ sources, events, dataSource, onChange, onShowChain 
                   {l === 'all' ? `All ${data.rules.length}` : `${LEVELS[l].label} ${data.counts[l]}`}
                 </button>
               ))}
+              {lostRules.length > 0 && hasPermission('rules:update') && (
+                <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <select
+                    value=""
+                    disabled={busy}
+                    onChange={(e) => setLostStatus(e.target.value as (typeof LOST_STATUSES)[number][0])}
+                    title="Change the status of the lost rules only — at-risk and degraded rules still have telemetry and are left as they are"
+                    className="px-2 py-1 rounded-md border border-border bg-background text-xs text-foreground"
+                  >
+                    <option value="">
+                      Set the {lostRules.length} lost rule{lostRules.length === 1 ? '' : 's'} to…
+                    </option>
+                    {LOST_STATUSES.map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
             {rules.length === 0 ? (
               <p className="text-sm text-muted-foreground">None.</p>
@@ -308,6 +360,14 @@ export function ImpactView({ sources, events, dataSource, onChange, onShowChain 
           </div>
         </div>
       ) : null}
+      <ConfirmDialog
+        open={!!lostStatus}
+        title={`Set ${lostRules.length} lost rule${lostRules.length === 1 ? '' : 's'} to ${lostStatus}?`}
+        message={`Only the rules marked "Lost" change: all the telemetry they read is in this selection and they name no other data source. At-risk and degraded rules are left as they are. The change is recorded in the audit log and can be undone from the Rules list.`}
+        confirmLabel={`Set to ${lostStatus}`}
+        onConfirm={() => lostStatus && setLost(lostStatus)}
+        onCancel={() => setLostStatus(null)}
+      />
     </div>
   );
 }

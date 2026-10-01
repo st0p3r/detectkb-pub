@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { parseSingleSigmaRule } from '../lib/sigma';
 import { syncDerivedLinks } from '../lib/derived-links';
+import { replaceRetiredTechniques } from '../lib/attack';
 import {
   RULE_LIST_SELECT,
   RULE_SEVERITIES,
@@ -115,6 +116,11 @@ router.get('/ids', async (req, res) => {
 
 /** Rules a bulk action targets: explicit ids, or every rule matching a list filter. */
 async function bulkTargets(body: Record<string, unknown>) {
+  // By page (the rules' pages, as the graph and impact analysis identify rules)
+  if (Array.isArray(body.pageIds)) {
+    const pageIds = body.pageIds.map(Number).filter(Number.isInteger);
+    return pageIds.length ? prisma.detectionRule.findMany({ where: { pageId: { in: pageIds } }, select: { id: true, pageId: true } }) : [];
+  }
   if (Array.isArray(body.ids)) {
     const ids = body.ids.map(Number).filter(Number.isInteger);
     return ids.length ? prisma.detectionRule.findMany({ where: { id: { in: ids } }, select: { id: true, pageId: true } }) : [];
@@ -128,9 +134,9 @@ async function bulkTargets(body: Record<string, unknown>) {
   return null;
 }
 
-const BULK_ACTIONS = ['status', 'severity', 'addTag', 'removeTag'] as const;
+const BULK_ACTIONS = ['status', 'severity', 'addTag', 'removeTag', 'replaceRetiredTechniques'] as const;
 
-// PUT /api/rules/bulk { ids | filter, action: status|severity|addTag|removeTag, value }
+// PUT /api/rules/bulk { ids | pageIds | filter, action: status|severity|addTag|removeTag|replaceRetiredTechniques, value }
 router.put('/bulk', async (req, res) => {
   const { action } = req.body ?? {};
   const value = typeof req.body?.value === 'string' ? req.body.value.trim() : '';
@@ -141,12 +147,23 @@ router.put('/bulk', async (req, res) => {
     return res.status(400).json({ error: 'Tag name must be 1–80 characters' });
 
   const targets = await bulkTargets(req.body);
-  if (!targets) return res.status(400).json({ error: 'Send ids or filter' });
+  if (!targets) return res.status(400).json({ error: 'Send ids, pageIds or filter' });
   const ids = targets.map((t) => t.id);
   const pageIds = targets.map((t) => t.pageId);
 
   let changed = 0;
-  if (action === 'status' || action === 'severity') {
+  const replacements: Record<string, string> = {};
+  if (action === 'replaceRetiredTechniques') {
+    const rules = await prisma.detectionRule.findMany({ where: { id: { in: ids } }, select: { id: true, mitreTechniques: true } });
+    for (const r of rules) {
+      const { text, replaced } = replaceRetiredTechniques(r.mitreTechniques);
+      if (!replaced.length) continue;
+      const rule = await prisma.detectionRule.update({ where: { id: r.id }, data: { mitreTechniques: text }, select: { pageId: true } });
+      await syncDerivedLinks(rule.pageId);
+      for (const [from, to] of replaced) replacements[from] = to;
+      changed++;
+    }
+  } else if (action === 'status' || action === 'severity') {
     changed = (await prisma.detectionRule.updateMany({ where: { id: { in: ids }, [action]: { not: value } }, data: { [action]: value } })).count;
   } else if (action === 'addTag') {
     const tag = await prisma.tag.upsert({ where: { name: value }, create: { name: value }, update: {} });
@@ -162,15 +179,15 @@ router.put('/bulk', async (req, res) => {
   }
 
   await prisma.auditLog.create({
-    data: { userId: req.user?.userId ?? null, action: 'RULE_BULK_UPDATE', resourceType: 'rule', newValue: { action, value, rules: ids.length, changed } },
+    data: { userId: req.user?.userId ?? null, action: 'RULE_BULK_UPDATE', resourceType: 'rule', newValue: { action, value, rules: ids.length, changed, ...(action === 'replaceRetiredTechniques' && { replacements }) } },
   });
-  res.json({ matched: ids.length, changed });
+  res.json({ matched: ids.length, changed, ...(action === 'replaceRetiredTechniques' && { replacements }) });
 });
 
 // DELETE /api/rules/bulk { ids | filter } — deletes the rules' pages
 router.delete('/bulk', async (req, res) => {
   const targets = await bulkTargets(req.body ?? {});
-  if (!targets) return res.status(400).json({ error: 'Send ids or filter' });
+  if (!targets) return res.status(400).json({ error: 'Send ids, pageIds or filter' });
   const pageIds = targets.map((t) => t.pageId);
   const { count } = await prisma.page.deleteMany({ where: { id: { in: pageIds } } });
   await prisma.tag.deleteMany({ where: { pages: { none: {} } } });

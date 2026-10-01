@@ -230,6 +230,9 @@ Every link carries its basis, shown in the UI and used by **Paths → Certain li
 **Data Health** (Tools menu) shows how many links of each basis there are and lists what needs
 attention: unknown or retired ATT&CK IDs, rules without telemetry or techniques, tool names found
 only outside the query, unknown data source names, rules needing several events at once, and more.
+Retired ATT&CK IDs can be replaced with MITRE's replacements in one step from their check.
+In the impact analysis, users who can edit rules can set exactly the rules marked **Lost** to
+deprecated or draft — e.g. after selecting every EDR the organisation doesn't have.
 
 ## How correctness is checked
 
