@@ -164,7 +164,9 @@ the backend downloads it from the official APIs on first start (`lolbas.json`, `
   *sees its telemetry* (one of the rule's inputs, including AND groups, is among what the test
   produces), *needs the EDR* (the rule reads an EDR product), *other telemetry* and *no telemetry
   links*. A rule tagged with a parent technique counts for its sub-techniques' tests, not the other
-  way round. Only running the test in a lab proves that a rule fires.
+  way round. Only running the test in a lab proves that a rule fires. How to build such a lab on
+  vSphere (Splunk, Sysmon, Atomic Red Team) and connect it to DetectKB:
+  [`docs/lab-setup`](docs/lab-setup/DetectKB-Lab-Setup.pdf) (Persian).
 - **D3FEND** countermeasures are looked up on d3fend.mitre.org when a technique is opened and cached
   in the database. Offline servers show a link to the D3FEND page instead (`D3FEND_FETCH=false`
   skips the lookup).
