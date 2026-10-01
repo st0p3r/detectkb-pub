@@ -162,6 +162,27 @@ async function computeHealth() {
     check('production-no-fp', 'info', 'Production rules without false positives', 'No false-positive notes for analysts.'),
     check('duplicate-title', 'info', 'Rules with the same title', 'Often the same detection imported from two sources.'),
   ];
+  const upstreamChanged = await prisma.upstreamItem.findMany({
+    where: { kind: 'changed' },
+    select: { title: true, sourceKey: true, changes: true, pageId: true },
+    orderBy: { title: 'asc' },
+  });
+  const changedPages = new Map(
+    (await prisma.page.findMany({ where: { id: { in: upstreamChanged.map((u) => u.pageId!).filter(Boolean) } }, select: { id: true, slug: true } })).map((p) => [p.id, p.slug])
+  );
+  checks.push({
+    id: 'upstream-changed',
+    severity: 'info',
+    title: 'Imported rules changed upstream',
+    description: 'The repository a rule was imported from has a newer version (last upstream check). Review and import the changes on the Upstream Updates page.',
+    count: upstreamChanged.length,
+    items: upstreamChanged.slice(0, ITEM_LIMIT).map((u) => ({
+      title: u.title,
+      slug: changedPages.get(u.pageId!) ?? '',
+      detail: `${u.sourceKey}: ${(Array.isArray(u.changes) ? (u.changes as { label?: string }[]).map((c) => c.label) : []).join(', ')}`,
+    })),
+    link: '/upstream',
+  });
   checks.push({
     id: 'stories-no-details',
     severity: 'info',
