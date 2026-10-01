@@ -112,7 +112,7 @@ router.get('/rule/:pageId', async (req, res) => {
     return;
   }
   const [runs, validation] = await Promise.all([
-    prisma.ruleTestRun.findMany({ where: { pageId }, select: runSelect, orderBy: { executedAt: 'desc' } }),
+    prisma.ruleTestRun.findMany({ where: { pageId }, select: runSelect, orderBy: [{ executedAt: 'desc' }, { id: 'desc' }] }),
     loadValidation(),
   ]);
   const currentHash = ruleQueryHash(queryText(rule));
@@ -128,7 +128,7 @@ router.get('/atomic/:guid', async (req, res) => {
   const runs = await prisma.ruleTestRun.findMany({
     where: { atomicGuid: String(req.params.guid) },
     select: { ...runSelect, page: { select: { title: true, slug: true } } },
-    orderBy: [{ executedAt: 'desc' }, { pageId: 'asc' }],
+    orderBy: [{ executedAt: 'desc' }, { id: 'desc' }],
   });
   res.json({ runs: runs.map(({ queryHash: _h, ...r }) => r) });
 });

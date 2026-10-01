@@ -831,6 +831,7 @@ export interface CoveringRule {
   slug: string;
   status: string;
   severity: string;
+  validation: ValidationStatus;
 }
 
 export interface AttackCoverage {
@@ -846,20 +847,23 @@ export interface AttackCoverage {
   summary: { rulesAnalyzed: number; coveredTechniques: number; totalTechniques: number };
 }
 
-export async function getAttackCoverage(status?: string) {
-  const { data } = await api.get('/api/attack/coverage', { params: { status: status || undefined } });
+/** `validatedOnly`: proven coverage — only rules whose latest lab test detected the attack */
+export async function getAttackCoverage(status?: string, validatedOnly = false) {
+  const { data } = await api.get('/api/attack/coverage', { params: { status: status || undefined, validation: validatedOnly ? 'validated' : undefined } });
   return data as AttackCoverage;
 }
 
 /** Rules covering a technique and each of its sub-techniques, keyed by ID. */
-export async function getTechniqueRules(id: string, status?: string) {
-  const { data } = await api.get(`/api/attack/techniques/${encodeURIComponent(id)}/rules`, { params: { status: status || undefined } });
+export async function getTechniqueRules(id: string, status?: string, validatedOnly = false) {
+  const { data } = await api.get(`/api/attack/techniques/${encodeURIComponent(id)}/rules`, {
+    params: { status: status || undefined, validation: validatedOnly ? 'validated' : undefined },
+  });
   return data as Record<string, CoveringRule[]>;
 }
 
-export async function downloadNavigatorLayer(status?: string) {
+export async function downloadNavigatorLayer(status?: string, validatedOnly = false) {
   const response = await api.get('/api/attack/navigator-layer', {
-    params: { status: status || undefined },
+    params: { status: status || undefined, validation: validatedOnly ? 'validated' : undefined },
     responseType: 'text',
   });
   saveBlob(response.data, 'detectkb-attack-layer.json', 'application/json');
@@ -1489,6 +1493,77 @@ export async function importAtomicFiles(files: { name: string; content: string }
 export async function fetchAtomicIndex() {
   const { data } = await api.post('/api/atomics/fetch');
   return data as AtomicImportResult;
+}
+
+// ── Lab validation ────────────────────────────────────────────────────────────
+
+export type RunResult = 'detected' | 'not-detected' | 'partial' | 'blocked' | 'error';
+export type ValidationStatus = 'validated' | 'partial' | 'failed' | 'stale' | 'never';
+
+export interface TestRun {
+  id: number;
+  pageId: number;
+  atomicGuid: string | null;
+  techniqueId: string | null;
+  testName: string;
+  result: RunResult;
+  executedAt: string;
+  environment: string | null;
+  evidence: string | null;
+  notes: string | null;
+  createdAt: string;
+  recordedBy: { username: string } | null;
+}
+
+export interface RuleValidationInfo {
+  pageId: number;
+  status: ValidationStatus;
+  reason?: 'query-changed' | 'too-old';
+  lastRun?: { result: RunResult; executedAt: string };
+  runs: (TestRun & { queryChangedSince: boolean })[];
+}
+
+export async function getRuleValidation(pageId: number) {
+  const { data } = await api.get(`/api/validation/rule/${pageId}`);
+  return data as RuleValidationInfo;
+}
+
+export async function getAtomicRuns(guid: string) {
+  const { data } = await api.get(`/api/validation/atomic/${encodeURIComponent(guid)}`);
+  return data as { runs: (TestRun & { page: { title: string; slug: string } })[] };
+}
+
+export interface RecordRunInput {
+  atomicGuid?: string;
+  testName?: string;
+  executedAt?: string;
+  environment?: string;
+  notes?: string;
+  results: { pageId: number; result: RunResult; evidence?: string }[];
+}
+
+export async function recordTestRun(input: RecordRunInput) {
+  const { data } = await api.post('/api/validation/runs', input);
+  return data as { recorded: number };
+}
+
+export async function deleteTestRun(id: number) {
+  await api.delete(`/api/validation/runs/${id}`);
+}
+
+export async function getValidationSummary() {
+  const { data } = await api.get('/api/validation/summary');
+  return data as { byRuleStatus: Record<string, Record<ValidationStatus, number>> };
+}
+
+/** The rules as savedsearches.conf for the lab Splunk; returns how many rules it holds. */
+export async function downloadSavedSearches(params: { status?: string; scope?: 'all' | 'with-tests'; pageIds?: number[] }) {
+  const response = await api.get('/api/validation/export/savedsearches', {
+    params: { status: params.status || undefined, scope: params.scope, pageIds: params.pageIds?.length ? params.pageIds.join(',') : undefined },
+    responseType: 'text',
+  });
+  saveBlob(response.data, 'savedsearches.conf', 'text/plain');
+  return Number(response.headers['x-rule-count'] ?? 0);
 }
 
 // ── Data health ───────────────────────────────────────────────────────────────

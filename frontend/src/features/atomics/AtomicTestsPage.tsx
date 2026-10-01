@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/useToast';
 import { useDebounced } from '@/hooks/useDebounced';
 import { ATOMIC_MATCH, ATOMIC_MATCH_ORDER, EXECUTOR_LABEL, PLATFORM_LABEL } from '@/lib/atomicMatch';
 import { relativeTime } from '@/lib/time';
+import { AtomicValidation, ExportSavedSearchesButton } from '@/features/validation/AtomicValidation';
 import { cn } from '@/lib/utils';
 
 const SECTION = 'text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2';
@@ -58,6 +59,7 @@ function TestDetail({ guid }: { guid: string }) {
   if (isLoading) return <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />;
   if (error || !data) return <p className="text-sm text-destructive">{apiErrorMessage(error, 'Could not load the test')}</p>;
   const command = raw ? data.command : data.resolvedCommand;
+  const attackRange = `python attack_range.py simulate -t <target> -a ${data.techniqueId}:${data.guid}`;
   return (
     <div className="space-y-5">
       <div className="space-y-2">
@@ -103,6 +105,16 @@ function TestDetail({ guid }: { guid: string }) {
           Add <code className="font-mono">-GetPrereqs</code> first to fetch its tools, and <code className="font-mono">-Cleanup</code> afterwards. Only on an isolated
           test machine.
         </p>
+        <div className="flex items-center gap-2">
+          <code
+            className="flex-1 min-w-0 text-xs font-mono bg-background border border-border rounded px-2 py-1.5 overflow-x-auto whitespace-nowrap"
+            title="Splunk Attack Range CLI; replace <target> with the server name in your range"
+          >
+            {attackRange}
+          </code>
+          <CopyText text={attackRange} />
+        </div>
+        <p className="text-xs text-muted-foreground">Or with Splunk Attack Range (replace &lt;target&gt; with the victim's name in your range).</p>
       </section>
 
       {command && (
@@ -231,6 +243,8 @@ function TestDetail({ guid }: { guid: string }) {
         </section>
       )}
 
+      <AtomicValidation test={data} />
+
       <p className="text-xs text-muted-foreground font-mono break-all">GUID {data.guid}</p>
     </div>
   );
@@ -302,39 +316,42 @@ export function AtomicTestsPage() {
             Small attack tests per ATT&CK technique, the telemetry each should produce, and the rules it should trigger
           </p>
         </div>
-        {hasPermission('settings:manage') && (
-          <div className="ml-auto flex gap-2">
-            <button
-              onClick={() => download.mutate()}
-              disabled={download.isPending}
-              title="atomics/Indexes/index.yaml from github.com/redcanaryco/atomic-red-team"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
-            >
-              {download.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />}
-              {data?.total ? 'Update from GitHub' : 'Download from GitHub'}
-            </button>
-            <button
-              onClick={() => fileRef.current?.click()}
-              disabled={upload.isPending}
-              title="Technique files (atomics/T*/T*.yaml) or atomics/Indexes/index.yaml — for servers without internet access"
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
-            >
-              {upload.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              Upload files
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              accept=".yml,.yaml"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files?.length) upload.mutate(e.target.files);
-                e.target.value = '';
-              }}
-            />
-          </div>
-        )}
+        <div className="ml-auto flex gap-2">
+          <ExportSavedSearchesButton label="Export rules for Splunk" />
+          {hasPermission('settings:manage') && (
+            <>
+              <button
+                onClick={() => download.mutate()}
+                disabled={download.isPending}
+                title="atomics/Indexes/index.yaml from github.com/redcanaryco/atomic-red-team"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
+              >
+                {download.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadCloud className="w-4 h-4" />}
+                {data?.total ? 'Update from GitHub' : 'Download from GitHub'}
+              </button>
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={upload.isPending}
+                title="Technique files (atomics/T*/T*.yaml) or atomics/Indexes/index.yaml — for servers without internet access"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
+              >
+                {upload.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                Upload files
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept=".yml,.yaml"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) upload.mutate(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </>
+          )}
+        </div>
       </div>
 
       {error ? (

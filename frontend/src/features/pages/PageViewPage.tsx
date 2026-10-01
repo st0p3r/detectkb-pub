@@ -20,6 +20,7 @@ import { BasisBadge } from '@/components/ui/BasisBadge';
 import { LINK_BASIS, basisChip } from '@/lib/linkBasis';
 import { safeHref } from '@/lib/safeUrl';
 import { RuleAtomics } from '@/features/atomics/AtomicSections';
+import { RuleValidation, RuleValidationBadge } from '@/features/validation/RuleValidation';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -58,6 +59,7 @@ function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: stri
       <div className="px-6 py-4 flex flex-wrap items-center gap-3 border-b border-border/60">
         <StatusBadge status={rule.status} />
         <SeverityBadge severity={rule.severity} />
+        <RuleValidationBadge pageId={rule.pageId} />
         {rule.dataSource && (
           <span className="text-xs text-muted-foreground font-mono">
             <span className="text-muted-foreground/60 mr-1">source:</span>
@@ -135,11 +137,17 @@ function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: stri
       )}
 
       <CollapsibleSection
-        label="Atomic Red Team tests"
+        label="Lab validation · Atomic Red Team"
         isOpen={!!openSections['atomics']}
         onToggle={() => toggleSection('atomics')}
       >
-        <RuleAtomics pageId={rule.pageId} />
+        <div className="space-y-5">
+          <RuleValidation pageId={rule.pageId} />
+          <div>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Tests to run</h4>
+            <RuleAtomics pageId={rule.pageId} />
+          </div>
+        </div>
       </CollapsibleSection>
 
       {rule.testNotes && (

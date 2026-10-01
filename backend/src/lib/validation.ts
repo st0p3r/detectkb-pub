@@ -22,6 +22,8 @@ export interface RunForStatus {
   result: string;
   executedAt: Date;
   queryHash: string;
+  /** Breaks ties between runs at the same time: the one recorded later wins */
+  createdAt?: Date;
 }
 
 export interface RuleValidation {
@@ -40,7 +42,9 @@ export const ruleQueryHash = (queryText: string) => crypto.createHash('sha256').
  * as the query hasn't changed since and it isn't older than VALIDATION_MAX_AGE_DAYS.
  */
 export function validationStatus(runs: RunForStatus[], currentHash: string, now = new Date()): RuleValidation {
-  const latest = runs.filter((r) => DECISIVE.has(r.result)).sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime())[0];
+  const latest = runs
+    .filter((r) => DECISIVE.has(r.result))
+    .sort((a, b) => b.executedAt.getTime() - a.executedAt.getTime() || (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0))[0];
   if (!latest) return { status: 'never' };
   if (latest.queryHash !== currentHash) return { status: 'stale', reason: 'query-changed', lastRun: latest };
   if (now.getTime() - latest.executedAt.getTime() > VALIDATION_MAX_AGE_DAYS * 86400000) return { status: 'stale', reason: 'too-old', lastRun: latest };
@@ -53,7 +57,7 @@ export function validationStatus(runs: RunForStatus[], currentHash: string, now 
  * query (cached until data changes). Statuses are computed on read since they age.
  */
 const runsCache = kbCache(async () => {
-  const runs = await prisma.ruleTestRun.findMany({ select: { pageId: true, result: true, executedAt: true, queryHash: true } });
+  const runs = await prisma.ruleTestRun.findMany({ select: { pageId: true, result: true, executedAt: true, queryHash: true, createdAt: true } });
   const byPage = new Map<number, RunForStatus[]>();
   for (const r of runs) byPage.set(r.pageId, [...(byPage.get(r.pageId) ?? []), r]);
   const rules = byPage.size

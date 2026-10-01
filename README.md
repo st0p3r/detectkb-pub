@@ -25,6 +25,9 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
 - **Splunk analytic stories**: the scenarios ESCU rules belong to, with their rules and techniques
 - **Atomic Red Team**: the tests for every technique, the telemetry each should produce and the
   rules expected to fire, with the `Invoke-AtomicTest` line to run it in a lab
+- **Lab validation**: record whether each rule fired when a test ran in the lab; rules become
+  *Validated*, *Failed* or *Retest* (query changed, or result older than 90 days), the ATT&CK
+  matrix can show proven coverage only, and rules export as Splunk saved searches for the lab
 - **Attacker tools**: LOLBAS, GTFOBins and LOLDrivers references, each linked to the rules that
   mention the binary, driver file or driver hash
 - **Knowledge graph** of pages, wiki links, ATT&CK techniques, telemetry, attacker tools, threat
@@ -167,6 +170,16 @@ the backend downloads it from the official APIs on first start (`lolbas.json`, `
   way round. Only running the test in a lab proves that a rule fires. How to build such a lab on
   vSphere (Splunk, Sysmon, Atomic Red Team) and connect it to DetectKB:
   [`docs/lab-setup`](docs/lab-setup/DetectKB-Lab-Setup.pdf) (Persian).
+- **Lab validation** records, per rule, the result of a test run in the lab: *detected*, *not
+  detected*, *partly detected*, or *blocked* / *error* (the attack never really ran; these don't
+  change the status). Record one run for many rules on a test's page (**Record a run**) or one
+  result on a rule's page (**Lab validation → Record a result**). A rule's status comes from its
+  latest decisive run: *Validated*, *Partly validated* or *Failed in lab*; it turns to *Retest*
+  when the rule's query (SPL, native query or Sigma detection) changed after that run or the run
+  is older than 90 days. **ATT&CK Coverage → Proven in lab only** counts only validated rules
+  (also in the Navigator layer), and Data Health lists failed, stale and never-tested production
+  rules. **Export rules for Splunk** writes the rules' SPL as `savedsearches.conf` (each runs every
+  5 minutes and raises an alert) to load into the lab Splunk. Test runs are part of backups.
 - **D3FEND** countermeasures are looked up on d3fend.mitre.org when a technique is opened and cached
   in the database. Offline servers show a link to the D3FEND page instead (`D3FEND_FETCH=false`
   skips the lookup).

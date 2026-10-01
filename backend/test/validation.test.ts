@@ -23,6 +23,16 @@ describe('validationStatus', () => {
     expect(validationStatus([{ result: 'partial', executedAt: daysAgo(1), queryHash: H }], H, now).status).toBe('partial');
   });
 
+  it('lets the run recorded later win a tie on time', () => {
+    const at = daysAgo(1);
+    const runs = [
+      { result: 'not-detected', executedAt: at, queryHash: H, createdAt: new Date(now.getTime() - 60000) },
+      { result: 'detected', executedAt: at, queryHash: H, createdAt: now },
+    ];
+    expect(validationStatus(runs, H, now).status).toBe('validated');
+    expect(validationStatus([...runs].reverse(), H, now).status).toBe('validated');
+  });
+
   it('goes stale when the query changes or the result ages', () => {
     const run = { result: 'detected', executedAt: daysAgo(1), queryHash: H };
     expect(validationStatus([run], ruleQueryHash('index=win EventCode=4689'), now)).toMatchObject({ status: 'stale', reason: 'query-changed' });

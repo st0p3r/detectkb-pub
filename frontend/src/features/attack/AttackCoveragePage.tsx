@@ -23,6 +23,7 @@ import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
 import { safeHref } from '@/lib/safeUrl';
 import { TechniqueAtomics } from '@/features/atomics/AtomicSections';
+import { ValidationBadge } from '@/components/ui/ValidationBadge';
 
 const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: '', label: 'Active rules (not deprecated)' },
@@ -74,13 +75,15 @@ export function AttackCoveragePage() {
   const [params, setParams] = useSearchParams();
   const actorId = params.get('actor');
   const [status, setStatus] = useState('');
+  // Proven coverage: only rules whose latest lab test detected the attack
+  const [validatedOnly, setValidatedOnly] = useState(false);
   const [onlyCovered, setOnlyCovered] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['attack-coverage', status],
-    queryFn: () => getAttackCoverage(status),
+    queryKey: ['attack-coverage', status, validatedOnly],
+    queryFn: () => getAttackCoverage(status, validatedOnly),
   });
   const actor = useActor(actorId, status);
   const { data: groups = [] } = useQuery({ queryKey: ['threat-groups', '', ''], queryFn: () => listThreatGroups() });
@@ -120,7 +123,7 @@ export function AttackCoveragePage() {
   async function handleDownload() {
     setDownloading(true);
     try {
-      await downloadNavigatorLayer(status);
+      await downloadNavigatorLayer(status, validatedOnly);
     } catch (err) {
       toast(apiErrorMessage(err, 'Could not export the layer'), 'error');
     } finally {
@@ -142,7 +145,7 @@ export function AttackCoveragePage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">MITRE ATT&CK Coverage</h1>
             <p className="text-sm text-muted-foreground">
-              Enterprise techniques covered by your detection rules
+              {validatedOnly ? 'Enterprise techniques covered by rules proven in the lab' : 'Enterprise techniques covered by your detection rules'}
               {data?.attackVersion ? ` · ATT&CK v${data.attackVersion}` : ''}
             </p>
           </div>
@@ -178,6 +181,13 @@ export function AttackCoveragePage() {
           <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm cursor-pointer">
             <input type="checkbox" checked={onlyCovered} onChange={(e) => setOnlyCovered(e.target.checked)} />
             Only covered
+          </label>
+          <label
+            className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm cursor-pointer"
+            title="Count only rules whose latest lab test (Atomic Red Team) detected the attack"
+          >
+            <input type="checkbox" checked={validatedOnly} onChange={(e) => setValidatedOnly(e.target.checked)} />
+            Proven in lab only
           </label>
           <button
             onClick={handleDownload}
@@ -344,7 +354,7 @@ export function AttackCoveragePage() {
           </div>
 
           {selectedCell && (
-            <TechniqueDetail cell={selectedCell} status={status} onClose={() => setSelected(null)} />
+            <TechniqueDetail cell={selectedCell} status={status} validatedOnly={validatedOnly} onClose={() => setSelected(null)} />
           )}
         </>
       )}
@@ -360,22 +370,24 @@ function RuleList({ rules }: { rules: CoveringRule[] }) {
           <Link to={`/pages/${r.slug}`} className="text-primary hover:underline">{r.title}</Link>
           <StatusBadge status={r.status} />
           <SeverityBadge severity={r.severity} />
+          {r.validation !== 'never' && <ValidationBadge status={r.validation} />}
         </li>
       ))}
     </ul>
   );
 }
 
-function TechniqueDetail({ cell, status, onClose }: {
+function TechniqueDetail({ cell, status, validatedOnly, onClose }: {
   cell: ParentCell;
   status: string;
+  validatedOnly: boolean;
   onClose: () => void;
 }) {
   const { technique, subs } = cell;
   // The rules load when a technique is opened; the matrix only has counts
   const { data: coverage, isLoading } = useQuery({
-    queryKey: ['attack-technique-rules', technique.id, status],
-    queryFn: () => getTechniqueRules(technique.id, status),
+    queryKey: ['attack-technique-rules', technique.id, status, validatedOnly],
+    queryFn: () => getTechniqueRules(technique.id, status, validatedOnly),
   });
   const own = coverage?.[technique.id] ?? [];
   return (
