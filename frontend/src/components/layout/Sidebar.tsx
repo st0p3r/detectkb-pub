@@ -30,6 +30,7 @@ import {
   BookMarked,
   HeartPulse,
   FlaskConical,
+  GitPullRequestArrow,
 } from 'lucide-react';
 import { listCategories, createCategory, deleteCategory, type Category } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -192,6 +193,7 @@ const toolsNavItems = [
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/graph', icon: Network, label: 'Knowledge Graph' },
   { to: '/data-health', icon: HeartPulse, label: 'Data Health' },
+  { to: '/upstream', icon: GitPullRequestArrow, label: 'Upstream Updates' },
   { to: '/broken-links', icon: Link2Off, label: 'Broken Links' },
   { to: '/backups', icon: HardDrive, label: 'Backups', permission: 'backups:create' },
   { to: '/settings', icon: Settings, label: 'Settings' },

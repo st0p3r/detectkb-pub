@@ -25,6 +25,8 @@ import threatIntelRouter from './routes/threat-intel';
 import storiesRouter from './routes/stories';
 import atomicsRouter from './routes/atomics';
 import validationRouter from './routes/validation';
+import upstreamRouter from './routes/upstream';
+import { checkStaleSources } from './lib/upstream';
 import dataHealthRouter from './routes/data-health';
 import { markDataChanged } from './lib/kb-cache';
 import sigmaRouter from './routes/sigma';
@@ -58,6 +60,7 @@ if (CORS_ORIGIN) app.use(cors({ origin: CORS_ORIGIN === '*' ? '*' : CORS_ORIGIN.
 app.use('/api/auth', express.json({ limit: '10kb' }));
 // Reference datasets (LOLDrivers' drivers.json is ~20 MB) get a larger body limit
 app.use('/api/references/upload', express.json({ limit: '100mb' }));
+app.use('/api/upstream/check-upload', express.json({ limit: '100mb' }));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -71,7 +74,7 @@ app.use('/api', authMiddleware);
 // A successful write may change what the knowledge graph and the tool matches
 // are built from: mark those caches stale (lib/kb-cache). Writes that only
 // produce files or touch accounts don't count.
-const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$)/;
+const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$|upstream\/(check|check-upload|dismiss|sources)\b)/;
 app.use('/api', (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !WRITES_WITHOUT_KB_CHANGES.test(req.originalUrl.split('?')[0])) {
     res.on('finish', () => {
@@ -95,6 +98,7 @@ app.use('/api/threat-intel', threatIntelRouter);
 app.use('/api/stories', guard('rules'), storiesRouter);
 app.use('/api/atomics', atomicsRouter);
 app.use('/api/validation', validationRouter);
+app.use('/api/upstream', upstreamRouter);
 app.use('/api/data-health', dataHealthRouter);
 app.use('/api/sigma', sigmaRouter);
 app.use('/api/rules-import', ruleImportRouter);
@@ -113,6 +117,13 @@ app.use('/api/activity', requirePermission('audit:read'), activityRouter);
 setInterval(() => {
   runJsonBackup().catch((err) => console.error('Scheduled backup failed:', err));
 }, 86400000);
+
+// Upstream rule repositories: checked weekly in the background (UPSTREAM_AUTO_CHECK=false turns it off)
+if (process.env.UPSTREAM_AUTO_CHECK !== 'false' && process.env.REFERENCE_AUTO_FETCH !== 'false') {
+  const runCheck = () => checkStaleSources().catch((err) => console.warn('[upstream] check failed:', err));
+  setTimeout(runCheck, 10 * 60000).unref();
+  setInterval(runCheck, 6 * 3600000).unref();
+}
 
 app.use((err: Error & { status?: number; expose?: boolean }, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   // Client errors from body parsing etc. (e.g. 400 bad JSON, 413 too large) keep their status;

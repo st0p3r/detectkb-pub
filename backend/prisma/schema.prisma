@@ -429,3 +429,55 @@ model RuleTestRun {
   @@index([pageId, executedAt])
   @@index([atomicGuid])
 }
+
+// Upstream rule repositories (SigmaHQ, Splunk security_content, Elastic
+// detection-rules, or uploaded folders) checked for rules that are new or
+// changed compared with what was imported. Items hold the latest check's
+// results until imported or dismissed.
+model UpstreamSource {
+  key           String         @id @db.VarChar(40)
+  lastCheckedAt DateTime?
+  lastError     String?        @db.Text
+  // Counts of the last check: { files, rules, new, changed, unchanged, errors }
+  stats         Json?
+  // Source-specific choice, e.g. the Sigma package (core / core+ / all)
+  option        String?        @db.VarChar(40)
+  enabled       Boolean        @default(true)
+  items         UpstreamItem[]
+}
+
+model UpstreamItem {
+  id           Int            @id @default(autoincrement())
+  sourceKey    String         @db.VarChar(40)
+  source       UpstreamSource @relation(fields: [sourceKey], references: [key], onDelete: Cascade)
+  // new | changed
+  kind         String         @db.VarChar(10)
+  format       String         @db.VarChar(20)
+  externalId   String?        @db.VarChar(128)
+  title        String         @db.VarChar(500)
+  // Path of the file in the repository / package
+  path         String         @db.VarChar(500)
+  // The file itself, to import it later
+  content      String         @db.LongText
+  contentHash  String         @db.VarChar(64)
+  // The imported rule a changed item updates
+  pageId       Int?
+  changes      Json?
+  severity     String?        @db.VarChar(20)
+  sourceStatus String?        @db.VarChar(40)
+  techniques   String?        @db.Text
+  telemetry    Json
+  // Its telemetry is among what your production / testing rules already use
+  relevant     Boolean        @default(false)
+  checkedAt    DateTime       @default(now())
+
+  @@index([sourceKey, kind])
+}
+
+// Upstream items someone chose to ignore: "<format>:<externalId>:<contentHash>",
+// so a later upstream change of the same rule shows up again
+model UpstreamDismissal {
+  key       String   @id @db.VarChar(250)
+  userId    Int?
+  createdAt DateTime @default(now())
+}

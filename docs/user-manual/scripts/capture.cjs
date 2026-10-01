@@ -266,6 +266,17 @@ fs.mkdirSync(O, { recursive: true });
     await p.locator('text=Rules that did not fire in the lab').scrollIntoViewIfNeeded();
   }, { wait: 1000 });
 
+  // Upstream updates (needs a source checked first)
+  await shot('65-upstream-changed', async () => {
+    await go('/upstream', 'text=SigmaHQ');
+    const first = p.locator('ul li button.font-medium').first();
+    if (await first.count()) await first.click();
+  }, { wait: 1200 });
+  await shot('66-upstream-new', async () => {
+    await go('/upstream', 'text=SigmaHQ');
+    await p.click('role=tab[name=/New/]');
+  }, { wait: 1500 });
+
   console.log('page errors:', errors.length, errors.slice(0, 3).join(' | '));
   await b.close();
 })();

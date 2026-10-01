@@ -28,6 +28,8 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
 - **Lab validation**: record whether each rule fired when a test ran in the lab; rules become
   *Validated*, *Failed* or *Retest* (query changed, or result older than 90 days), the ATT&CK
   matrix can show proven coverage only, and rules export as Splunk saved searches for the lab
+- **Upstream updates**: new and changed rules in SigmaHQ, Splunk security_content and Elastic
+  detection-rules compared with what you imported (weekly), with diffs; import or dismiss
 - **Attacker tools**: LOLBAS, GTFOBins and LOLDrivers references, each linked to the rules that
   mention the binary, driver file or driver hash
 - **Knowledge graph** of pages, wiki links, ATT&CK techniques, telemetry, attacker tools, threat
@@ -125,6 +127,7 @@ when running the backend directly on the host.
 | CORS_ORIGIN | (none) | Origins allowed to call the API cross-origin, comma-separated. Not needed when the UI is served by the bundled nginx |
 | SIGMA_SERVICE_URL | http://localhost:8000 (`http://sigma:8000` in Docker) | pySigma conversion service |
 | REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers, Atomic Red Team tests and analytic story details on first start |
+| UPSTREAM_AUTO_CHECK | true | Check the rule repositories weekly for new and changed rules (also off when REFERENCE_AUTO_FETCH=false) |
 | D3FEND_FETCH | true | Look up D3FEND countermeasures on d3fend.mitre.org (cached 30 days per technique) |
 | PORT | 3001 | Backend port |
 
@@ -142,6 +145,29 @@ when running the backend directly on the host.
 Imported rules start as **Draft** (a vendor's "production" only means it works on *their* data
 model) and keep their original source. Re-importing skips rules with the same source id unless
 "update" is ticked.
+
+## Upstream updates
+
+**Upstream Updates** compares the rules in their source repositories with what you imported:
+
+| Source | Downloaded from |
+|---|---|
+| SigmaHQ | the latest release package: `sigma_core.zip` (default), `sigma_core+.zip` or `sigma_all_rules.zip` |
+| Splunk security_content | the `develop` branch archive (`detections/`, without `deprecated/`) |
+| Elastic detection-rules | the `main` branch archive (`rules/`, without `_deprecated`) |
+| Any (e.g. Sentinel) | **Check a folder**: upload a clone, for servers without internet access |
+
+Enabled sources (by default, those you imported rules from) are checked every 7 days in the
+background; **Check now** runs a check at once. A check only records differences:
+
+- **Changed**: rules you imported whose source version differs (same comparison as the import
+  preview), shown field by field. Applying keeps the rule's status here.
+- **New**: rules you don't have. **For my telemetry** narrows them to rules that can run on
+  telemetry your production or testing rules already use. Rules the source marked deprecated are
+  left out.
+
+Import the selection (as drafts, or with the source's status) or **Dismiss** it; a dismissed rule
+comes back only when the source changes it again. Data Health lists imported rules changed upstream.
 
 ## Attacker tool references
 

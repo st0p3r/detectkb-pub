@@ -6,16 +6,16 @@ import { syncPageLinks } from '../lib/links';
 import { syncDerivedLinks } from '../lib/derived-links';
 import { SigmaServiceError, convertSigma } from '../lib/sigma';
 import { FORMAT_LABELS, FORMAT_TAGS, ImportFormat, ImportedRule, parseRuleFile } from '../lib/rule-import';
-import { diffImportedRule } from '../lib/rule-import-diff';
+import { clipChange, diffImportedRule } from '../lib/rule-import-diff';
 
 const router = Router();
 
-interface ImportFile {
+export interface ImportFile {
   name: string;
   content: string;
 }
 
-async function findExisting(rule: ImportedRule) {
+export async function findExisting(rule: ImportedRule) {
   if (!rule.externalId) return null;
   const where =
     rule.format === 'sigma'
@@ -35,18 +35,26 @@ async function findExisting(rule: ImportedRule) {
  * them) the user left out.
  */
 export async function importRules(req: Request, res: Response) {
-  const { files, overwrite = false, convertTo = 'splunk', status = 'draft', skip = [] } = req.body as {
-    files?: ImportFile[];
-    overwrite?: boolean;
-    convertTo?: string | null;
-    status?: 'draft' | 'source';
-    skip?: string[];
-  };
-  const skipSet = new Set(Array.isArray(skip) ? skip.map(String) : []);
-  if (!Array.isArray(files) || files.length === 0) {
+  const body = req.body as ImportInput;
+  if (!Array.isArray(body.files) || body.files.length === 0) {
     res.status(400).json({ error: 'files is required' });
     return;
   }
+  res.json(await runImport(body, req.user?.userId ?? null));
+}
+
+export interface ImportInput {
+  files: ImportFile[];
+  overwrite?: boolean;
+  convertTo?: string | null;
+  status?: 'draft' | 'source';
+  skip?: string[];
+}
+
+/** Imports rule files (see importRules); also used for upstream updates. */
+export async function runImport(input: ImportInput, userId: number | null) {
+  const { files, overwrite = false, convertTo = 'splunk', status = 'draft', skip = [] } = input;
+  const skipSet = new Set(Array.isArray(skip) ? skip.map(String) : []);
 
   const created: { title: string; slug: string; format: ImportFormat }[] = [];
   const updated: { title: string; slug: string; format: ImportFormat }[] = [];
@@ -138,7 +146,7 @@ export async function importRules(req: Request, res: Response) {
               slug: await generateUniqueSlug(rule.title),
               contentMd: rule.contentMd,
               type: 'RULE',
-              createdById: req.user?.userId ?? null,
+              createdById: userId,
               tags: { create: [{ tagId: tagIds.get(rule.format)! }] },
               rule: { create: ruleData },
             },
@@ -164,7 +172,7 @@ export async function importRules(req: Request, res: Response) {
     );
   await prisma.auditLog.create({
     data: {
-      userId: req.user?.userId ?? null,
+      userId,
       action: 'RULE_IMPORT',
       resourceType: 'rule',
       newValue: {
@@ -176,11 +184,9 @@ export async function importRules(req: Request, res: Response) {
     },
   });
 
-  res.json({ created, updated, skipped, errors, warnings });
+  return { created, updated, skipped, errors, warnings };
 }
 
-const PREVIEW_VALUE_MAX = 600;
-const clip = (v: string) => (v.length > PREVIEW_VALUE_MAX ? `${v.slice(0, PREVIEW_VALUE_MAX)}…` : v);
 
 /**
  * POST /api/rules-import/preview { files } — what an import would do, without
@@ -233,7 +239,7 @@ export async function previewImport(req: Request, res: Response) {
         ...base,
         status: changes.length ? 'changed' : 'unchanged',
         existing: { title: existing.page.title, slug: existing.page.slug, status: existing.status },
-        changes: changes.map((c) => ({ ...c, before: clip(c.before), after: clip(c.after) })),
+        changes: changes.map((c) => ({ ...c, ...clipChange(c.before, c.after) })),
       });
     }
   }
