@@ -215,6 +215,57 @@ fs.mkdirSync(O, { recursive: true });
   }, { wait: 1500 });
   await p.evaluate(() => localStorage.setItem('darkMode', 'false'));
 
+  // User menu, Atomic Red Team and lab validation
+  await shot('56-user-menu', async () => {
+    await go('/', 'text=Rules by Source');
+    await p.click('button[aria-label="User menu"]');
+    await p.waitForSelector('text=Sign out');
+  }, { clip: { x: 980, y: 0, width: 460, height: 300 } });
+  await p.keyboard.press('Escape');
+  const LSASS_COMSVCS = '2536dee2-12fb-459a-8c37-971844fa73be';
+  const LSASS_PROCDUMP = '0be2230c-9ab3-4ac2-8826-3199b9a0ebf8';
+  await shot('57-atomic-page', () => go(`/atomic-tests?test=${LSASS_COMSVCS}`, 'text=Run it in the lab'), { wait: 1500 });
+  await shot('58-atomic-rules', async () => {
+    await go(`/atomic-tests?test=${LSASS_COMSVCS}`, 'text=Run it in the lab');
+    await p.locator('text=/^Rules for T1003/').scrollIntoViewIfNeeded();
+  }, { wait: 1000 });
+  await shot('59-atomic-record', async () => {
+    await go(`/atomic-tests?test=${LSASS_PROCDUMP}`, 'text=Lab results');
+    await p.click('button:has-text("Record a run")');
+    await p.locator('text=Lab results').scrollIntoViewIfNeeded();
+  }, { wait: 1000 });
+  await shot('60-rule-validation', async () => {
+    await go('/pages/lsass-access-from-potentially-white-listed-processes', 'text=Lab validation');
+    await p.click('button:has-text("Lab validation")');
+    await p.waitForSelector('text=Tests to run');
+    await p.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes('Lab validation'));
+      b.scrollIntoView({ block: 'start' });
+      document.querySelector('main')?.scrollBy(0, -380);
+    });
+  }, { wait: 1000 });
+  await shot('61-rule-record', async () => {
+    await p.click('button:has-text("Record a result")');
+    await p.evaluate(() => {
+      const b = [...document.querySelectorAll('button')].find((x) => x.textContent.includes('Lab validation'));
+      b.scrollIntoView({ block: 'start' });
+    });
+  }, { wait: 1000 });
+  await shot('62-coverage-proven', async () => {
+    await go('/attack-coverage', 'text=Proven in lab only');
+    await p.check('text=Proven in lab only');
+  }, { wait: 2000 });
+  await shot('63-technique-atomics', async () => {
+    await go('/attack-coverage', 'text=Proven in lab only');
+    await p.locator('text=T1003').first().click();
+    await p.waitForSelector('text=/Atomic Red Team tests \\(/');
+    await p.locator('text=/Atomic Red Team tests \\(/').scrollIntoViewIfNeeded();
+  }, { wait: 1200 });
+  await shot('64-health-validation', async () => {
+    await go('/data-health', 'text=Rules that did not fire in the lab');
+    await p.locator('text=Rules that did not fire in the lab').scrollIntoViewIfNeeded();
+  }, { wait: 1000 });
+
   console.log('page errors:', errors.length, errors.slice(0, 3).join(' | '));
   await b.close();
 })();
