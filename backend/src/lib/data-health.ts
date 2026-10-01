@@ -3,7 +3,10 @@ import { kbCache } from './kb-cache';
 import { parseTechniqueIds, resolveTechniqueId, REVOKED_TECHNIQUES, TECHNIQUE_BY_ID } from './attack';
 import { otherDataSources } from './coverage-analysis';
 import { loadReferenceMatchers, matchText } from './references';
-import { parseSigmaDocuments } from './sigma';
+import { queryText } from './rule-text';
+import { VALIDATION_MAX_AGE_DAYS, loadValidation } from './validation';
+
+export { queryText };
 
 // Data health: checks on how well the links between rules, techniques,
 // telemetry and tools are grounded, and on gaps in the data itself. Computed
@@ -37,16 +40,6 @@ export interface Provenance {
 
 const ITEM_LIMIT = 100;
 
-/** The query text of a rule: SPL, native query and the Sigma detection block (no titles, descriptions, references). */
-export function queryText(r: { splQuery: string; nativeQuery: string | null; sigmaYaml: string | null }): string {
-  const detection = r.sigmaYaml
-    ? parseSigmaDocuments(r.sigmaYaml)
-        .map(({ doc }) => JSON.stringify(doc?.detection ?? {}))
-        .join('\n')
-    : '';
-  return [r.splQuery, r.nativeQuery ?? '', detection].join('\n');
-}
-
 const healthCache = kbCache(computeHealth);
 
 export function loadDataHealth() {
@@ -57,6 +50,7 @@ async function computeHealth() {
   const [rules, stories, dsPages, matchers] = await Promise.all([
     prisma.detectionRule.findMany({
       select: {
+        pageId: true,
         status: true,
         mitreTechniques: true,
         dataSource: true,
@@ -85,6 +79,8 @@ async function computeHealth() {
     }),
     loadReferenceMatchers(),
   ]);
+  const validation = await loadValidation();
+  const day = (d: Date) => d.toISOString().slice(0, 10);
 
   const provenance: Provenance = { sysmon: {}, logs: {}, tools: { inQuery: 0, outsideQuery: 0 } };
   const buckets: Record<string, HealthItem[]> = {};
@@ -132,6 +128,13 @@ async function computeHealth() {
     }
 
     if (r.status === 'production' && !r.falsePositives?.trim()) add('production-no-fp', r);
+    if (r.status !== 'deprecated') {
+      const v = validation(r.pageId);
+      if (v.status === 'failed') add('validation-failed', r, `not detected on ${day(v.lastRun!.executedAt)}`);
+      else if (v.status === 'stale')
+        add('validation-stale', r, v.reason === 'query-changed' ? `query changed since the test on ${day(v.lastRun!.executedAt)}` : `last tested ${day(v.lastRun!.executedAt)}`);
+      else if (v.status === 'never' && r.status === 'production') add('production-untested', r);
+    }
     const t = r.page.title.trim().toLowerCase();
     titles.set(t, [...(titles.get(t) ?? []), r.page]);
   }
@@ -147,12 +150,15 @@ async function computeHealth() {
   const checks: HealthCheck[] = [
     check('unknown-technique', 'error', 'Unknown ATT&CK IDs', 'Rules mapped to technique IDs that do not exist in ATT&CK (typos, or deprecated without a replacement). They count toward no technique.'),
     check('no-telemetry', 'warning', 'Rules without any telemetry link', 'No Sysmon or log event could be linked, so impact analysis, flows and the detection chain leave them out. Name the telemetry in the rule\'s Data source field.'),
+    check('validation-failed', 'warning', 'Rules that did not fire in the lab', 'The latest lab test of these rules did not detect the attack: the rule, its telemetry or the lab needs a look.', '/atomic-tests'),
     check('tool-outside-query', 'warning', 'Tool matches outside the query', 'An attacker tool is named in the rule\'s title or description but not in its query or detection — the rule may not actually detect it.'),
     check('no-technique', 'warning', 'Rules without an ATT&CK technique', 'They are missing from the coverage matrix, threat group coverage and the detection chain.'),
     check('retired-technique', 'warning', 'Retired ATT&CK IDs', 'Counted under MITRE\'s replacement technique; update the mapping.', '/attack-coverage'),
     check('inferred-only', 'info', 'Telemetry only inferred', 'Every telemetry link of these rules was derived by DetectKB (EventID filters in the query, Sigma category mapping), none is named by the rule itself.'),
     check('and-requirements', 'info', 'Rules needing several events at once', 'Their data source says "A AND B": impact analysis counts them lost when any of those events is gone.'),
     check('unmapped-data-source', 'info', 'Data sources DetectKB does not know', 'Names in the rule\'s Data source field that are not linked to a log source; impact analysis marks such rules "at risk" instead of "lost".', '/log-sources'),
+    check('validation-stale', 'info', 'Lab results to redo', `The query changed after the rule was tested, or the test is older than ${VALIDATION_MAX_AGE_DAYS} days.`),
+    check('production-untested', 'info', 'Production rules never tested in the lab', 'No lab test result is recorded for them; the Atomic Red Team section of each rule lists tests to run.', '/atomic-tests'),
     check('production-no-fp', 'info', 'Production rules without false positives', 'No false-positive notes for analysts.'),
     check('duplicate-title', 'info', 'Rules with the same title', 'Often the same detection imported from two sources.'),
   ];

@@ -17,6 +17,45 @@ async function restoreManualSysmonLinks(
   if (manual.length) await setManualSysmonLinks(pageId, manual);
 }
 
+interface BackupTestRun {
+  atomicGuid?: string | null;
+  techniqueId?: string | null;
+  testName: string;
+  result: string;
+  executedAt: string;
+  environment?: string | null;
+  evidence?: string | null;
+  notes?: string | null;
+  queryHash: string;
+  recordedBy?: { username: string } | null;
+}
+
+/** Restores a rule's lab test runs; runs already there (same test, time and result) are skipped. */
+async function restoreTestRuns(pageId: number, runs: BackupTestRun[] | undefined) {
+  if (!runs?.length) return;
+  const existing = await prisma.ruleTestRun.findMany({ where: { pageId }, select: { atomicGuid: true, testName: true, executedAt: true, result: true } });
+  const key = (r: { atomicGuid?: string | null; testName: string; executedAt: Date | string; result: string }) =>
+    `${r.atomicGuid ?? ''}|${r.testName}|${new Date(r.executedAt).toISOString()}|${r.result}`;
+  const have = new Set(existing.map(key));
+  const users = new Map((await prisma.user.findMany({ select: { id: true, username: true } })).map((u) => [u.username, u.id]));
+  const data = runs
+    .filter((r) => r.testName && r.result && r.executedAt && r.queryHash && !have.has(key(r)))
+    .map((r) => ({
+      pageId,
+      atomicGuid: r.atomicGuid ?? null,
+      techniqueId: r.techniqueId ?? null,
+      testName: r.testName,
+      result: r.result,
+      executedAt: new Date(r.executedAt),
+      environment: r.environment ?? null,
+      evidence: r.evidence ?? null,
+      notes: r.notes ?? null,
+      queryHash: r.queryHash,
+      recordedById: r.recordedBy ? users.get(r.recordedBy.username) ?? null : null,
+    }));
+  if (data.length) await prisma.ruleTestRun.createMany({ data });
+}
+
 const router = Router();
 
 // Listing/downloading backups exposes the full dataset, so it needs the same
@@ -35,6 +74,20 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
         splCommand: true,
         outLinks: true,
         sysmonEvents: { select: { source: true, sysmonEvent: { select: { eventId: true } } } },
+        testRuns: {
+          select: {
+            atomicGuid: true,
+            techniqueId: true,
+            testName: true,
+            result: true,
+            executedAt: true,
+            environment: true,
+            evidence: true,
+            notes: true,
+            queryHash: true,
+            recordedBy: { select: { username: true } },
+          },
+        },
       },
     }),
     prisma.category.findMany(),
@@ -133,6 +186,7 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
         nativeLanguage?: string | null;
       } | null;
       sysmonEvents?: { source: string; sysmonEvent: { eventId: number } }[];
+      testRuns?: BackupTestRun[];
       splCommand?: {
         command?: string;
         group?: string;
@@ -282,6 +336,7 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
         }
 
         await restoreManualSysmonLinks(existing.id, p.sysmonEvents);
+        await restoreTestRuns(existing.id, p.testRuns);
         restored++;
       } else {
         const created = await prisma.page.create({
@@ -340,6 +395,7 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
         }
 
         await restoreManualSysmonLinks(created.id, p.sysmonEvents);
+        await restoreTestRuns(created.id, p.testRuns);
         restored++;
       }
     } catch (e) {

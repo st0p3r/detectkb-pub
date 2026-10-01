@@ -22,6 +22,7 @@ model User {
   auditLogs          AuditLog[]
   generatedDocs      GeneratedDoc[]
   savedViews         SavedView[]
+  testRuns           RuleTestRun[]
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 }
@@ -113,6 +114,7 @@ model Page {
   logEvents    PageLogEvent[]
   telemetryAll TelemetryGroup[]
   stories      RuleStory[]
+  testRuns     RuleTestRun[]
   isPinned     Boolean           @default(false)
   createdById  Int?
   createdAt    DateTime          @default(now())
@@ -400,4 +402,30 @@ model AtomicTest {
   updatedAt          DateTime @updatedAt
 
   @@index([techniqueId])
+}
+
+// A test run recorded against a rule in the lab (usually an Atomic Red Team
+// test): did the rule fire? The rule's validation status comes from its runs.
+model RuleTestRun {
+  id           Int      @id @default(autoincrement())
+  pageId       Int
+  page         Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  // The Atomic Red Team test; null for a custom test
+  atomicGuid   String?  @db.VarChar(64)
+  techniqueId  String?  @db.VarChar(20)
+  testName     String   @db.VarChar(500)
+  // detected | not-detected | partial | blocked (stopped before it ran) | error
+  result       String   @db.VarChar(20)
+  executedAt   DateTime
+  environment  String?  @db.VarChar(191)
+  evidence     String?  @db.Text
+  notes        String?  @db.Text
+  // Hash of the rule's query when tested: a later change makes the result stale
+  queryHash    String   @db.VarChar(64)
+  recordedById Int?
+  recordedBy   User?    @relation(fields: [recordedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([pageId, executedAt])
+  @@index([atomicGuid])
 }
