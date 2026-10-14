@@ -257,6 +257,11 @@ use by coverage of production and testing rules (gaps first, pre-compromise tech
 the draft rules that would close the most groups' gaps. **ATT&CK Coverage → ★ Watchlist** highlights
 the watched groups' techniques on the matrix. The watchlist is shared and part of backups.
 
+**Documentation exports** (PDF and HTML reports, single-page PDF, detection matrix) have a cover with
+counts, a summary by severity / status / tactic, contents with page numbers and links, and per rule its
+ATT&CK tactics and techniques by name, queries, false positives and linked references. Persian text is
+laid out right to left (Vazirmatn font, Unicode bidi algorithm); the HTML file embeds the font.
+
 **Similar Rules** (Tools menu) groups active rules mapped to the same techniques and reading the same
 telemetry, and compares their queries word by word (rare words — process names, paths, switches —
 count more than SPL boilerplate). Open two rules side by side, or deprecate the weaker ones of a group.

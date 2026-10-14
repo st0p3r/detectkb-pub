@@ -40,7 +40,7 @@ async function loadReportSelection(rawPageIds: unknown, rawRuleIds: unknown) {
     ruleIds.length
       ? prisma.detectionRule.findMany({
           where: { id: { in: ruleIds } },
-          include: { page: { select: { title: true } } },
+          include: { page: { select: { title: true, contentMd: true, tags: { include: { tag: true } } } } },
           orderBy: { page: { title: 'asc' } },
         })
       : [],
