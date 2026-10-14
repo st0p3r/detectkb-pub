@@ -24,6 +24,7 @@ import { useToast } from '@/hooks/useToast';
 import { useDebounced } from '@/hooks/useDebounced';
 import { relativeTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import { AttackDataCard } from './AttackDataCard';
 
 type Kind = 'changed' | 'new';
 const RULE_FILE = /\.(ya?ml|toml)$/i;
@@ -342,6 +343,8 @@ export function UpstreamUpdatesPage() {
           </div>
         )}
       </div>
+
+      <AttackDataCard canManage={canManage} />
 
       {sources.error ? (
         <p className="text-destructive text-sm">{apiErrorMessage(sources.error)}</p>

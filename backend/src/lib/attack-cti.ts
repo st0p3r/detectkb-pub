@@ -2,8 +2,9 @@ import ctiData from '../data/attack-cti.json';
 import { TECHNIQUE_BY_ID, parentTechniqueId } from './attack';
 
 // ATT&CK threat groups, software (malware and tools) and mitigations, with the
-// techniques they use / mitigate. Regenerate with
-// `node scripts/update-attack-data.js` (together with attack-enterprise.json).
+// techniques they use / mitigate. The bundled copy is regenerated with
+// `node scripts/update-attack-data.js` (together with attack-enterprise.json)
+// and replaced at startup by a newer one imported in the app.
 
 export interface AttackGroup {
   id: string; // G0049
@@ -31,23 +32,40 @@ export interface AttackMitigation {
   techniques: string[];
 }
 
-export const GROUPS = ctiData.groups as AttackGroup[];
-export const SOFTWARE = ctiData.software as AttackSoftware[];
-export const MITIGATIONS = ctiData.mitigations as AttackMitigation[];
+// Updated in place when ATT&CK data is replaced (see setAttackData in ./attack)
+export const GROUPS: AttackGroup[] = [];
+export const SOFTWARE: AttackSoftware[] = [];
+export const MITIGATIONS: AttackMitigation[] = [];
 
-export const GROUP_BY_ID = new Map(GROUPS.map((g) => [g.id, g]));
-export const SOFTWARE_BY_ID = new Map(SOFTWARE.map((s) => [s.id, s]));
-export const MITIGATION_BY_ID = new Map(MITIGATIONS.map((m) => [m.id, m]));
+export const GROUP_BY_ID = new Map<string, AttackGroup>();
+export const SOFTWARE_BY_ID = new Map<string, AttackSoftware>();
+export const MITIGATION_BY_ID = new Map<string, AttackMitigation>();
 
-function index<T extends { techniques: string[] }>(items: T[]): Map<string, T[]> {
-  const out = new Map<string, T[]>();
-  for (const item of items) for (const t of item.techniques) out.set(t, [...(out.get(t) ?? []), item]);
-  return out;
-}
 /** technique ID → groups / software / mitigations that list it */
-export const GROUPS_BY_TECHNIQUE = index(GROUPS);
-export const SOFTWARE_BY_TECHNIQUE = index(SOFTWARE);
-export const MITIGATIONS_BY_TECHNIQUE = index(MITIGATIONS);
+export const GROUPS_BY_TECHNIQUE = new Map<string, AttackGroup[]>();
+export const SOFTWARE_BY_TECHNIQUE = new Map<string, AttackSoftware[]>();
+export const MITIGATIONS_BY_TECHNIQUE = new Map<string, AttackMitigation[]>();
+
+function fill<T extends { id: string; techniques: string[] }>(list: T[], items: T[], byId: Map<string, T>, byTechnique: Map<string, T[]>) {
+  list.splice(0, list.length, ...items);
+  byId.clear();
+  byTechnique.clear();
+  for (const item of items) {
+    byId.set(item.id, item);
+    for (const t of item.techniques) {
+      if (!byTechnique.has(t)) byTechnique.set(t, []);
+      byTechnique.get(t)!.push(item);
+    }
+  }
+}
+
+/** Replaces groups, software and mitigations (startup, in-app ATT&CK update). */
+export function setCtiData(data: { groups: AttackGroup[]; software: AttackSoftware[]; mitigations: AttackMitigation[] }) {
+  fill(GROUPS, data.groups, GROUP_BY_ID, GROUPS_BY_TECHNIQUE);
+  fill(SOFTWARE, data.software, SOFTWARE_BY_ID, SOFTWARE_BY_TECHNIQUE);
+  fill(MITIGATIONS, data.mitigations, MITIGATION_BY_ID, MITIGATIONS_BY_TECHNIQUE);
+}
+setCtiData(ctiData as { groups: AttackGroup[]; software: AttackSoftware[]; mitigations: AttackMitigation[] });
 
 export const attackObjectUrl = (id: string) => {
   const kind = id[0] === 'G' ? 'groups' : id[0] === 'S' ? 'software' : id[0] === 'M' ? 'mitigations' : 'techniques';
