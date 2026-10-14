@@ -233,6 +233,25 @@ const ELASTIC_MATURITY: Record<string, string> = {
 };
 const ELASTIC_LANGUAGES = new Set(['eql', 'kuery', 'esql', 'lucene']);
 
+/**
+ * The "False positive analysis" section of an Elastic investigation guide
+ * (rule.note), for rules without a false_positives list — almost all of them.
+ */
+export function falsePositivesFromNote(note: string): string | null {
+  const lines = note.split('\n');
+  const start = lines.findIndex((l) => /^#{1,6}\s*false positive analysis\s*$/i.test(l.trim()));
+  if (start < 0) return null;
+  const level = (lines[start].trim().match(/^#+/) ?? [''])[0].length;
+  const body: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const heading = line.trim().match(/^(#{1,6})\s/);
+    if (heading && heading[1].length <= level) break;
+    body.push(line);
+  }
+  const text = body.join('\n').trim();
+  return text || null;
+}
+
 function parseElastic(text: string): ImportedRule {
   const doc = parseToml(text) as Obj;
   const rule = isObj(doc.rule) ? doc.rule : null;
@@ -284,7 +303,7 @@ function parseElastic(text: string): ImportedRule {
     mitreTactics: joinOrNull(Array.from(new Set(tactics.filter(Boolean))), ', '),
     mitreTechniques: techniqueList(techniques),
     dataSource: joinOrNull(dataSources, ', '),
-    falsePositives: joinOrNull(asList(rule.false_positives), '\n'),
+    falsePositives: joinOrNull(asList(rule.false_positives), '\n') ?? falsePositivesFromNote(str(rule.note)),
     references: joinOrNull(asList(rule.references), '\n'),
     splQuery: '',
     nativeQuery: query || null,

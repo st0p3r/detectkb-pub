@@ -9,6 +9,7 @@ import { AuthProvider } from '@/features/auth/AuthContext';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
 import { PageTypesProvider } from '@/context/PageTypesContext';
 import { Database, Lightbulb } from 'lucide-react';
+import { DataSourcePlanner } from '@/features/pages/DataSourcePlanner';
 
 // Each page is its own chunk, loaded when first opened (the Markdown editor,
 // graph and ATT&CK data made one ~2 MB bundle). The dashboard and login stay
@@ -89,6 +90,7 @@ export default function App() {
                 icon={Database}
                 newLabel="New Data Source"
                 emptyMessage="Document your data sources — Windows Event Logs, Sysmon, network flows, and more."
+                header={(reload) => <DataSourcePlanner onCreated={reload} />}
               />
             } />
             <Route path="/concepts" element={

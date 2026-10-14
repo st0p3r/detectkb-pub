@@ -287,6 +287,7 @@ const PRODUCT_SOURCES: Record<string, string> = {
   'microsoft defender xdr': 'mde',
   'microsoft defender for endpoint': 'mde',
   crowdstrike: 'crowdstrike',
+  'crowdstrike falcon': 'crowdstrike',
   'windows security event logs': 'windows-security',
   'active directory': 'windows-security',
   'powershell logs': 'windows-powershell',
@@ -555,7 +556,8 @@ export function parseDataSourcePage(title: string, content: string): ParsedLogEv
     const match = PAGE_TITLE_SOURCES.find(([re]) => re.test(title));
     if (match) events.push(event(match[1], '*'));
   }
-  for (const line of `${title}\n${content}`.split(/\n|,|;/)) {
+  // A title naming a whole product ("CrowdStrike Falcon") is not also an event name
+  for (const line of `${whole ? '' : title}\n${content}`.split(/\n|,|;/)) {
     const e = parseDataSourceName(line.replace(/^[\s*\-#>|`]+|[\s|`]+$/g, ''));
     if (e && e !== 'sysmon') events.push(e);
   }

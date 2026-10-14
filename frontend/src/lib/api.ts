@@ -1743,7 +1743,8 @@ export interface HealthCheck {
   description: string;
   severity: 'error' | 'warning' | 'info';
   count: number;
-  items: { title: string; slug: string; detail?: string }[];
+  /** ruleId: the item can be fixed in place (false positives) */
+  items: { title: string; slug: string; detail?: string; ruleId?: number }[];
   link?: string;
 }
 
@@ -1862,4 +1863,27 @@ export async function uploadAttackData(file: File) {
 export async function resetAttackData() {
   const { data } = await api.post('/api/attack/data/reset');
   return data as AttackDataInfo;
+}
+
+// ── Data source pages from the log sources rules read ───────────────────────
+
+export interface DataSourcePlan {
+  source: string;
+  label: string;
+  platform: string;
+  /** Active rules reading the source */
+  rules: number;
+  events: { key: string; label: string; rules: number }[];
+  /** Data source pages already linked to its events */
+  pages: { title: string; slug: string }[];
+}
+
+export async function planDataSourcePages() {
+  const { data } = await api.get('/api/log-sources/data-source-pages');
+  return data as DataSourcePlan[];
+}
+
+export async function createDataSourcePages(sources: string[]) {
+  const { data } = await api.post('/api/log-sources/data-source-pages', { sources });
+  return data as { created: { source: string; title: string; slug: string }[] };
 }

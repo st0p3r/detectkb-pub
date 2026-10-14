@@ -13,6 +13,8 @@ interface FilteredPagesPageProps {
   icon: LucideIcon;
   emptyMessage: string;
   newLabel: string;
+  /** Shown above the list; `reload` refreshes the list (e.g. after pages were created) */
+  header?: (reload: () => void) => React.ReactNode;
 }
 
 function SkeletonRows() {
@@ -30,20 +32,21 @@ function SkeletonRows() {
   );
 }
 
-export function FilteredPagesPage({ type, title, icon: Icon, emptyMessage, newLabel }: FilteredPagesPageProps) {
+export function FilteredPagesPage({ type, title, icon: Icon, emptyMessage, newLabel, header }: FilteredPagesPageProps) {
   const navigate = useNavigate();
   const [pages, setPages] = useState<PageListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [confirmPage, setConfirmPage] = useState<PageListItem | null>(null);
+  const [reloads, setReloads] = useState(0);
 
   useEffect(() => {
     setLoading(true);
     listPages({ type, q: search || undefined })
       .then(setPages)
       .finally(() => setLoading(false));
-  }, [type, search]);
+  }, [type, search, reloads]);
 
   async function handleDelete() {
     if (!confirmPage) return;
@@ -77,6 +80,8 @@ export function FilteredPagesPage({ type, title, icon: Icon, emptyMessage, newLa
           {newLabel}
         </Link>
       </div>
+
+      {header?.(() => setReloads((n) => n + 1))}
 
       <div className="mb-4">
         <input
