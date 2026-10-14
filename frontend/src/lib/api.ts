@@ -1817,3 +1817,49 @@ export async function compareRules(a: number, b: number) {
   const { data } = await api.get('/api/similar-rules/compare', { params: { a, b } });
   return data as [ComparedRule, ComparedRule];
 }
+
+// ── ATT&CK data (in-app update) ─────────────────────────────────────────────
+
+export interface AttackDataInfo {
+  version: string | null;
+  bundledVersion: string | null;
+  /** Set when the data in use was imported in the app */
+  imported: { source: string; importedAt: string } | null;
+  techniques: number;
+  groups: number;
+  software: number;
+  downloadUrl: string;
+}
+
+export interface AttackImportResult {
+  from: string | null;
+  to: string | null;
+  techniques: { added: string[]; removed: string[] };
+  newlyRevoked: Record<string, string>;
+  groups: { added: number; removed: number };
+  software: { added: number; removed: number };
+  ruleMappings: { added: number; removed: number };
+}
+
+export async function getAttackDataInfo() {
+  const { data } = await api.get('/api/attack/data');
+  return data as AttackDataInfo;
+}
+
+export async function downloadAttackData() {
+  const { data } = await api.post('/api/attack/data/download', {}, { timeout: 300_000 });
+  return data as AttackImportResult;
+}
+
+/** enterprise-attack.json from github.com/mitre-attack/attack-stix-data */
+export async function uploadAttackData(file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  const { data } = await api.post('/api/attack/data/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300_000 });
+  return data as AttackImportResult;
+}
+
+export async function resetAttackData() {
+  const { data } = await api.post('/api/attack/data/reset');
+  return data as AttackDataInfo;
+}

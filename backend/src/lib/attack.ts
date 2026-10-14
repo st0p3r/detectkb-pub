@@ -1,7 +1,9 @@
 import attackData from '../data/attack-enterprise.json';
 
-// Compact MITRE ATT&CK Enterprise dataset, regenerate with
-// `node scripts/update-attack-data.js`.
+// Compact MITRE ATT&CK Enterprise dataset. The bundled copy (regenerate with
+// `node scripts/update-attack-data.js`) is replaced at startup by a newer one
+// imported in the app (lib/attack-update.ts), so the exports below are
+// updated in place — never copy them into module-level variables elsewhere.
 
 export interface AttackTactic {
   id: string; // TA0002
@@ -15,32 +17,45 @@ export interface AttackTechnique {
   tactics: string[]; // tactic shortnames
 }
 
-export const ATTACK_VERSION: string | null = attackData.version;
-export const TACTICS: AttackTactic[] = attackData.tactics;
-export const TECHNIQUES: AttackTechnique[] = attackData.techniques;
+export let ATTACK_VERSION: string | null = attackData.version;
+export const TACTICS: AttackTactic[] = [];
+export const TECHNIQUES: AttackTechnique[] = [];
 /** Revoked technique ID → the current technique that replaced it. */
-export const REVOKED_TECHNIQUES: Record<string, string> = attackData.revoked;
-
-export const TECHNIQUE_BY_ID = new Map(TECHNIQUES.map((t) => [t.id, t]));
+export const REVOKED_TECHNIQUES: Record<string, string> = {};
+export const TECHNIQUE_BY_ID = new Map<string, AttackTechnique>();
 const TACTIC_BY_KEY = new Map<string, AttackTactic>();
-for (const t of TACTICS) {
-  TACTIC_BY_KEY.set(t.id.toLowerCase(), t);
-  TACTIC_BY_KEY.set(t.shortname, t);
-  TACTIC_BY_KEY.set(t.name.toLowerCase(), t);
-  // Sigma uses underscores in older rules: attack.credential_access
-  TACTIC_BY_KEY.set(t.shortname.replace(/-/g, '_'), t);
-}
+
 // Names retired by newer ATT&CK releases but still used by most Sigma rules
 const LEGACY_TACTIC_NAMES: Record<string, string> = {
   'defense-evasion': 'TA0005', // renamed to "Stealth" in ATT&CK v19
 };
-for (const [name, id] of Object.entries(LEGACY_TACTIC_NAMES)) {
-  const tactic = TACTIC_BY_KEY.get(id.toLowerCase());
-  if (!tactic) continue;
-  for (const key of [name, name.replace(/-/g, '_'), name.replace(/-/g, ' ')]) {
-    if (!TACTIC_BY_KEY.has(key)) TACTIC_BY_KEY.set(key, tactic);
+
+/** Replaces the tactics, techniques and revoked IDs (startup, in-app ATT&CK update). */
+export function setAttackData(data: { version: string | null; tactics: AttackTactic[]; techniques: AttackTechnique[]; revoked: Record<string, string> }) {
+  ATTACK_VERSION = data.version;
+  TACTICS.splice(0, TACTICS.length, ...data.tactics);
+  TECHNIQUES.splice(0, TECHNIQUES.length, ...data.techniques);
+  for (const k of Object.keys(REVOKED_TECHNIQUES)) delete REVOKED_TECHNIQUES[k];
+  Object.assign(REVOKED_TECHNIQUES, data.revoked);
+  TECHNIQUE_BY_ID.clear();
+  for (const t of TECHNIQUES) TECHNIQUE_BY_ID.set(t.id, t);
+  TACTIC_BY_KEY.clear();
+  for (const t of TACTICS) {
+    TACTIC_BY_KEY.set(t.id.toLowerCase(), t);
+    TACTIC_BY_KEY.set(t.shortname, t);
+    TACTIC_BY_KEY.set(t.name.toLowerCase(), t);
+    // Sigma uses underscores in older rules: attack.credential_access
+    TACTIC_BY_KEY.set(t.shortname.replace(/-/g, '_'), t);
+  }
+  for (const [name, id] of Object.entries(LEGACY_TACTIC_NAMES)) {
+    const tactic = TACTIC_BY_KEY.get(id.toLowerCase());
+    if (!tactic) continue;
+    for (const key of [name, name.replace(/-/g, '_'), name.replace(/-/g, ' ')]) {
+      if (!TACTIC_BY_KEY.has(key)) TACTIC_BY_KEY.set(key, tactic);
+    }
   }
 }
+setAttackData(attackData);
 
 /** Extracts technique IDs (T1059, T1059.001) from free text such as "T1110, t1110.001". */
 export function parseTechniqueIds(text: string | null | undefined): string[] {

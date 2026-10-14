@@ -382,6 +382,17 @@ model ReferenceDataset {
   fetchedAt DateTime @default(now())
 }
 
+// MITRE ATT&CK data imported in the app (a newer release than the bundled
+// copy): the compact dataset from lib/attack-stix.ts, as JSON. One row.
+model AttackData {
+  id           Int      @id @default(1)
+  version      String?  @db.VarChar(20)
+  source       String   @db.VarChar(500)
+  data         String   @db.LongText
+  importedById Int?
+  importedAt   DateTime @default(now())
+}
+
 // ATT&CK groups the organisation watches (relevant to its sector or region).
 // Gaps and draft rules are prioritized by the techniques these groups use.
 model WatchedGroup {

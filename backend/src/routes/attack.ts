@@ -1,5 +1,8 @@
 import { Router, Request } from 'express';
+import multer from 'multer';
 import { kbCacheMap } from '../lib/kb-cache';
+import { requirePermission } from '../middleware/auth';
+import { attackDataInfo, downloadAttackBundle, importAttackBundle, resetAttackData } from '../lib/attack-update';
 import { prisma } from '../lib/prisma';
 import {
   ATTACK_VERSION,
@@ -13,6 +16,52 @@ import { ValidationStatus, loadValidation } from '../lib/validation';
 import { CONFIDENCE_LEVELS, CoverageConfidence, bestConfidence } from '../lib/coverage-confidence';
 
 const router = Router();
+const canManage = requirePermission('settings:manage');
+// enterprise-attack.json is ~55 MB
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200 * 1024 * 1024 } });
+
+// GET /api/attack/data — the ATT&CK release in use and where it came from
+router.get('/data', async (_req, res) => {
+  res.json(await attackDataInfo());
+});
+
+// POST /api/attack/data/download — import MITRE's current Enterprise release
+router.post('/data/download', canManage, async (req, res) => {
+  try {
+    res.json(await downloadAttackBundle(req.user?.userId ?? null));
+  } catch (err) {
+    // No internet, a proxy, or a changed URL: say what happened
+    const e = err as Error & { status?: number };
+    console.warn(`[attack] download failed: ${e.message}`);
+    res.status(e.status && e.status < 500 ? e.status : 502).json({ error: `Could not download ATT&CK data: ${e.message}` });
+  }
+});
+
+// POST /api/attack/data/upload (multipart "file": enterprise-attack.json) — for servers without internet
+router.post('/data/upload', canManage, upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'Choose enterprise-attack.json' });
+    return;
+  }
+  let bundle: unknown;
+  try {
+    bundle = JSON.parse(req.file.buffer.toString('utf-8'));
+  } catch {
+    res.status(400).json({ error: 'The file is not JSON' });
+    return;
+  }
+  try {
+    res.json(await importAttackBundle(bundle, `upload: ${req.file.originalname}`.slice(0, 500), req.user?.userId ?? null, req.body?.allowOlder === 'true'));
+  } catch (err) {
+    const e = err as Error & { status?: number };
+    res.status(e.status ?? 400).json({ error: e.message });
+  }
+});
+
+// POST /api/attack/data/reset — go back to the release bundled with DetectKB
+router.post('/data/reset', canManage, async (_req, res) => {
+  res.json({ ruleMappings: await resetAttackData(), ...(await attackDataInfo()) });
+});
 
 interface CoveringRule {
   pageId: number;

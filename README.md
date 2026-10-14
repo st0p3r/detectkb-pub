@@ -103,7 +103,11 @@ cd sigma && python -m venv .venv && .venv/bin/pip install -r requirements.txt \
 The Sigma service is optional: without it Sigma import/export still works, only query
 conversion is unavailable.
 
-To refresh the bundled ATT&CK dataset (techniques, groups, software, mitigations) after a new MITRE release:
+A running server can switch to a newer ATT&CK release without a new DetectKB version:
+**Upstream Updates → MITRE ATT&CK data → Update from MITRE** (or **Upload STIX file** with
+`enterprise-attack.json` on servers without internet). The imported release is stored in the
+database and used at startup while it is newer than the bundled one (`ATTACK_STIX_URL` overrides the
+download address). To refresh the bundled dataset itself (techniques, groups, software, mitigations):
 ```bash
 cd backend && node scripts/update-attack-data.js
 ```
@@ -137,6 +141,7 @@ when running the backend directly on the host.
 | REFERENCE_AUTO_FETCH | true | Download LOLBAS / GTFOBins / LOLDrivers, Atomic Red Team tests and analytic story details on first start |
 | UPSTREAM_AUTO_CHECK | true | Check the rule repositories weekly for new and changed rules (also off when REFERENCE_AUTO_FETCH=false) |
 | D3FEND_FETCH | true | Look up D3FEND countermeasures on d3fend.mitre.org (cached 30 days per technique) |
+| ATTACK_STIX_URL | MITRE's enterprise-attack.json | Where **Update from MITRE** downloads ATT&CK from |
 | PORT | 3001 | Backend port |
 
 ## Importing rules

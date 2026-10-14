@@ -261,6 +261,8 @@ fs.mkdirSync(O, { recursive: true });
     await p.waitForSelector('text=/Atomic Red Team tests \\(/');
     await p.locator('text=/Atomic Red Team tests \\(/').scrollIntoViewIfNeeded();
   }, { wait: 1200 });
+  // After importing a newer enterprise-attack.json, so the card shows the change summary
+  await shot('69-attack-update', () => go('/upstream', 'text=MITRE ATT&CK data'), { clip: { x: 240, y: 56, width: 1200, height: 464 } });
   await shot('68-watchlist', () => go('/threat-groups?tab=watchlist', 'text=Draft rules to finish first'), { wait: 1200 });
   await shot('67-similar-rules', () => go('/similar-rules', 'text=/alike$/'), { wait: 1200 });
   await shot('64-health-validation', async () => {

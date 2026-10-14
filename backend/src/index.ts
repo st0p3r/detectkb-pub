@@ -39,6 +39,7 @@ import attackRouter from './routes/attack';
 import { authMiddleware, guard, requirePermission } from './middleware/auth';
 import { seedDatabase } from './lib/seed';
 import { syncAllDerivedLinks } from './lib/derived-links';
+import { loadStoredAttackData } from './lib/attack-update';
 import { fetchMissingReferenceData } from './lib/reference-bootstrap';
 
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -152,6 +153,8 @@ app.use((err: Error & { status?: number; expose?: boolean }, req: express.Reques
 
 // Seed and start
 seedDatabase()
+  // A newer ATT&CK release imported in the app, before techniques are resolved
+  .then(() => loadStoredAttackData())
   .then(() => syncAllDerivedLinks())
   .then(() => {
     app.listen(PORT, () => {
