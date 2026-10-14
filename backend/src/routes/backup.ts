@@ -99,7 +99,9 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
     select: { name: true, externalId: true, description: true, narrative: true, references: true, category: true, usecase: true, detailsFrom: true },
   });
 
-  const backup = { version: 1, exportedAt: new Date().toISOString(), pages, categories, tags, analyticStories };
+  const watchedGroups = await prisma.watchedGroup.findMany({ select: { groupId: true, note: true } });
+
+  const backup = { version: 1, exportedAt: new Date().toISOString(), pages, categories, tags, analyticStories, watchedGroups };
   const timestamp = Date.now();
   const fileName = `detectkb-backup-${timestamp}.json`;
   const filePath = path.join(BACKUP_DIR, fileName);
@@ -158,6 +160,7 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
     }[];
     categories?: { name: string; color?: string; parentId?: number | null }[];
     tags?: { name: string }[];
+    watchedGroups?: { groupId: string; note?: string | null }[];
     pages?: {
       title: string;
       slug: string;
@@ -421,6 +424,12 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
     } catch (e) {
       errors.push(`Analytic story "${st.name}": ${(e as Error).message}`);
     }
+  }
+
+  for (const w of backup.watchedGroups || []) {
+    if (typeof w?.groupId !== 'string') continue;
+    const note = typeof w.note === 'string' ? w.note.slice(0, 500) : null;
+    await prisma.watchedGroup.upsert({ where: { groupId: w.groupId.slice(0, 16) }, create: { groupId: w.groupId.slice(0, 16), note }, update: { note } });
   }
 
   await syncAllDerivedLinks();

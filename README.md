@@ -239,6 +239,12 @@ Every link carries its basis, shown in the UI and used by **Paths → Certain li
 attention: unknown or retired ATT&CK IDs, rules without telemetry or techniques, tool names found
 only outside the query, unknown data source names, rules needing several events at once, and more.
 
+**Watchlist** (Threat Groups → Watchlist): star the ATT&CK groups relevant to your sector or region
+(search group descriptions for sectors and countries). The watchlist ranks the techniques those groups
+use by coverage of production and testing rules (gaps first, pre-compromise techniques last) and lists
+the draft rules that would close the most groups' gaps. **ATT&CK Coverage → ★ Watchlist** highlights
+the watched groups' techniques on the matrix. The watchlist is shared and part of backups.
+
 **Similar Rules** (Tools menu) groups active rules mapped to the same techniques and reading the same
 telemetry, and compares their queries word by word (rare words — process names, paths, switches —
 count more than SPL boilerplate). Open two rules side by side, or deprecate the weaker ones of a group.

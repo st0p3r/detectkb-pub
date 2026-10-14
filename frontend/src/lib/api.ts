@@ -1246,6 +1246,8 @@ export interface ActorSummary {
 
 export interface GroupSummary extends ActorSummary {
   software: number;
+  /** On the organisation's watchlist */
+  watched: boolean;
 }
 
 export interface SoftwareSummary extends ActorSummary {
@@ -1277,6 +1279,8 @@ export interface GroupDetail {
   url: string;
   coverage: ActorCoverage;
   software: { id: string; name: string; type: 'malware' | 'tool'; total: number; covered: number; parentOnly: number; pct: number }[];
+  watched: boolean;
+  watchNote: string | null;
 }
 
 export interface SoftwareDetail {
@@ -1291,9 +1295,69 @@ export interface SoftwareDetail {
   groups: { id: string; name: string }[];
 }
 
-export async function listThreatGroups(params: { q?: string; status?: string } = {}) {
-  const { data } = await api.get('/api/threat-intel/groups', { params: { q: params.q || undefined, status: params.status || undefined } });
+/** `inDescription`: also search the groups' descriptions (targeted sectors and countries) */
+export async function listThreatGroups(params: { q?: string; status?: string; inDescription?: boolean } = {}) {
+  const { data } = await api.get('/api/threat-intel/groups', {
+    params: { q: params.q || undefined, status: params.status || undefined, desc: params.inDescription ? '1' : undefined },
+  });
   return data as GroupSummary[];
+}
+
+export interface WatchTechnique {
+  id: string;
+  name: string;
+  tactics: string[];
+  /** Watched groups using it */
+  groups: string[];
+  /** By deployed (production / testing) rules */
+  state: 'covered' | 'parent' | 'none';
+  deployedRules: number;
+  draftRules: number;
+  /** Only in Reconnaissance / Resource Development: rarely detectable with your telemetry */
+  preCompromise: boolean;
+}
+
+export interface WatchDraft {
+  pageId: number;
+  title: string;
+  slug: string;
+  severity: string;
+  /** Gap (or parent-only) techniques it would cover */
+  fills: string[];
+  /** Watched groups whose gaps it would close */
+  groups: string[];
+  /** Already covered techniques it adds depth to */
+  depth: string[];
+}
+
+export interface Watchlist {
+  groups: (ActorSummary & { note: string | null; addedAt: string })[];
+  summary: {
+    techniques: number;
+    covered: number;
+    parentOnly: number;
+    gaps: number;
+    /** Open techniques before the attacker reaches your systems */
+    preCompromise: number;
+    /** Open techniques (not pre-compromise) without a draft either */
+    openWithoutDraft: number;
+    draftsFillingGaps: number;
+  };
+  techniques: WatchTechnique[];
+  drafts: WatchDraft[];
+}
+
+export async function getWatchlist() {
+  const { data } = await api.get('/api/threat-intel/watchlist');
+  return data as Watchlist;
+}
+
+export async function watchGroup(id: string, note?: string) {
+  await api.put(`/api/threat-intel/watchlist/${id}`, note === undefined ? {} : { note });
+}
+
+export async function unwatchGroup(id: string) {
+  await api.delete(`/api/threat-intel/watchlist/${id}`);
 }
 
 export async function getThreatGroup(id: string, status?: string) {

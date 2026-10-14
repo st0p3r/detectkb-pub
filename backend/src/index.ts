@@ -76,7 +76,7 @@ app.use('/api', authMiddleware);
 // A successful write may change what the knowledge graph and the tool matches
 // are built from: mark those caches stale (lib/kb-cache). Writes that only
 // produce files or touch accounts don't count.
-const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$|upstream\/(check|check-upload|dismiss|sources)\b)/;
+const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$|upstream\/(check|check-upload|dismiss|sources)\b|threat-intel\/watchlist)/;
 app.use('/api', (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !WRITES_WITHOUT_KB_CHANGES.test(req.originalUrl.split('?')[0])) {
     res.on('finish', () => {
