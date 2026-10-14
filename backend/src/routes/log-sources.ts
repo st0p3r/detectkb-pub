@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { LOG_SOURCES } from '../lib/log-events';
 import { kbCache, kbCacheMap } from '../lib/kb-cache';
+import { requirePermission } from '../middleware/auth';
+import { createDataSourcePages, planDataSourcePages } from '../lib/data-source-pages';
 
 // Telemetry other than Sysmon for Windows: log sources, their events, and the
 // rules / data source pages that depend on each (links are derived from the
@@ -80,6 +82,21 @@ const eventsCache = kbCacheMap(
 );
 
 const sourcesCache = kbCache(buildSources, undefined, { warm: true, label: 'log sources' });
+
+// GET /api/log-sources/data-source-pages — log sources rules read, and the data source pages covering each
+router.get('/data-source-pages', async (_req, res) => {
+  res.json(await planDataSourcePages());
+});
+
+// POST /api/log-sources/data-source-pages { sources } — create pages for sources without one
+router.post('/data-source-pages', requirePermission('pages:create'), async (req, res) => {
+  const sources = Array.isArray(req.body?.sources) ? req.body.sources.filter((s: unknown): s is string => typeof s === 'string') : [];
+  if (!sources.length) {
+    res.status(400).json({ error: 'Choose the log sources' });
+    return;
+  }
+  res.json({ created: await createDataSourcePages(sources) });
+});
 
 // GET /api/log-sources — every log source with its event and rule counts,
 // plus Sysmon for Windows (which has its own page)

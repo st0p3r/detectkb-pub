@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertOctagon, AlertTriangle, ChevronDown, ChevronRight, HeartPulse, Info, Loader2, Wand2 } from 'lucide-react';
-import { apiErrorMessage, bulkUpdateRules, getDataHealth, type HealthCheck } from '@/lib/api';
+import { apiErrorMessage, bulkUpdateRules, getDataHealth, updateRule, type HealthCheck } from '@/lib/api';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
@@ -63,6 +63,59 @@ function ReplaceRetiredButton({ count }: { count: number }) {
   );
 }
 
+/** Writes a rule's false-positive notes from the Data Health list. */
+function FalsePositiveEditor({ ruleId }: { ruleId: number }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="text-xs text-primary hover:underline">
+        Add false positives
+      </button>
+    );
+  }
+  async function save() {
+    setSaving(true);
+    try {
+      await updateRule(ruleId, { falsePositives: text.trim() });
+      toast('False positives saved', 'success');
+      setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['data-health'] });
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not save'), 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="basis-full flex flex-col gap-1 mt-1 mb-2">
+      <textarea
+        autoFocus
+        rows={3}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="What benign activity triggers it, and how an analyst tells it apart (e.g. backup software reading LSASS from C:\Program Files\Veeam)"
+        className="w-full px-2 py-1.5 rounded-md border border-border bg-background text-sm"
+      />
+      <div className="flex gap-2">
+        <button
+          onClick={save}
+          disabled={!text.trim() || saving}
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50"
+        >
+          {saving && <Loader2 className="w-3 h-3 animate-spin" />} Save
+        </button>
+        <button onClick={() => setOpen(false)} className="px-2.5 py-1 rounded-md border border-border text-xs hover:bg-accent">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CheckCard({ check }: { check: HealthCheck }) {
   const { hasPermission } = useAuth();
   const [open, setOpen] = useState(false);
@@ -97,6 +150,7 @@ function CheckCard({ check }: { check: HealthCheck }) {
                   <span>{item.title}</span>
                 )}
                 {item.detail && <span className="text-xs text-muted-foreground font-mono break-all">{item.detail}</span>}
+                {item.ruleId !== undefined && hasPermission('rules:update') && <FalsePositiveEditor ruleId={item.ruleId} />}
               </li>
             ))}
           </ul>

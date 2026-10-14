@@ -6,6 +6,7 @@ import { loadReferenceMatchers, matchText } from './references';
 import { queryText } from './rule-text';
 import { VALIDATION_MAX_AGE_DAYS, loadValidation } from './validation';
 import { LIKELY_OVERLAP, loadSimilarGroups } from './similar-rules';
+import { planDataSourcePages } from './data-source-pages';
 
 export { queryText };
 
@@ -19,6 +20,8 @@ export interface HealthItem {
   title: string;
   slug: string;
   detail?: string;
+  /** The rule's id, where the item can be fixed in place (false positives) */
+  ruleId?: number;
 }
 
 export interface HealthCheck {
@@ -51,6 +54,7 @@ async function computeHealth() {
   const [rules, stories, dsPages, matchers] = await Promise.all([
     prisma.detectionRule.findMany({
       select: {
+        id: true,
         pageId: true,
         status: true,
         mitreTechniques: true,
@@ -128,7 +132,9 @@ async function computeHealth() {
       if (outside.length) add('tool-outside-query', r, outside.join(', '));
     }
 
-    if (r.status === 'production' && !r.falsePositives?.trim()) add('production-no-fp', r);
+    if (r.status === 'production' && !r.falsePositives?.trim()) {
+      (buckets['production-no-fp'] ??= []).push({ title: r.page.title, slug: r.page.slug, detail: r.sourceFormat ?? 'written here', ruleId: r.id });
+    }
     if (r.status !== 'deprecated') {
       const v = validation(r.pageId);
       if (v.status === 'failed') add('validation-failed', r, `not detected on ${day(v.lastRun!.executedAt)}`);
@@ -160,7 +166,12 @@ async function computeHealth() {
     check('unmapped-data-source', 'info', 'Data sources DetectKB does not know', 'Names in the rule\'s Data source field that are not linked to a log source; impact analysis marks such rules "at risk" instead of "lost".', '/log-sources'),
     check('validation-stale', 'info', 'Lab results to redo', `The query changed after the rule was tested, or the test is older than ${VALIDATION_MAX_AGE_DAYS} days.`),
     check('production-untested', 'info', 'Production rules never tested in the lab', 'No lab test result is recorded for them; the Atomic Red Team section of each rule lists tests to run.', '/atomic-tests'),
-    check('production-no-fp', 'info', 'Production rules without false positives', 'No false-positive notes for analysts.'),
+    check(
+      'production-no-fp',
+      'info',
+      'Production rules without false positives',
+      'No false-positive notes for analysts: what benign activity triggers the rule and how to tell it apart. Add them here or on the rule page.'
+    ),
     check('duplicate-title', 'info', 'Rules with the same title', 'Often the same detection imported from two sources.'),
   ];
   const upstreamChanged = await prisma.upstreamItem.findMany({
@@ -183,6 +194,17 @@ async function computeHealth() {
       detail: `${u.sourceKey}: ${(Array.isArray(u.changes) ? (u.changes as { label?: string }[]).map((c) => c.label) : []).join(', ')}`,
     })),
     link: '/upstream',
+  });
+  const withoutPage = (await planDataSourcePages()).filter((p) => !p.pages.length);
+  checks.push({
+    id: 'sources-without-page',
+    severity: 'info',
+    title: 'Log sources without a data source page',
+    description:
+      'Rules read these sources but no data source page describes them, so impact analysis can\'t pick them as a whole. Create the pages on the Data Sources page.',
+    count: withoutPage.length,
+    items: withoutPage.slice(0, ITEM_LIMIT).map((p) => ({ title: p.label, slug: '', detail: `${p.rules} rule${p.rules === 1 ? '' : 's'}` })),
+    link: '/data-sources',
   });
   const similar = (await loadSimilarGroups()).filter((g) => g.similarity >= LIKELY_OVERLAP);
   checks.push({

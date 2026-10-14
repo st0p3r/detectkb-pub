@@ -262,6 +262,11 @@ fs.mkdirSync(O, { recursive: true });
     await p.locator('text=/Atomic Red Team tests \\(/').scrollIntoViewIfNeeded();
   }, { wait: 1200 });
   // After importing a newer enterprise-attack.json, so the card shows the change summary
+  // Before creating data source pages, so the list of sources without one is shown
+  await shot('70-data-source-plan', async () => {
+    await go('/data-sources', 'text=/no data source page/');
+    await p.click('text=/no data source page/');
+  }, { clip: { x: 240, y: 56, width: 1200, height: 664 } });
   await shot('69-attack-update', () => go('/upstream', 'text=MITRE ATT&CK data'), { clip: { x: 240, y: 56, width: 1200, height: 464 } });
   await shot('68-watchlist', () => go('/threat-groups?tab=watchlist', 'text=Draft rules to finish first'), { wait: 1200 });
   await shot('67-similar-rules', () => go('/similar-rules', 'text=/alike$/'), { wait: 1200 });

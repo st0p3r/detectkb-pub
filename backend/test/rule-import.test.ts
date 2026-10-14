@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { parseRuleFile } from '../src/lib/rule-import';
+import { falsePositivesFromNote, parseRuleFile } from '../src/lib/rule-import';
 
 const fixture = (name: string) => fs.readFileSync(path.join(__dirname, 'fixtures', name), 'utf-8');
 const one = (name: string) => {
@@ -89,4 +89,40 @@ it('fits long values into database columns and keeps the full list in the page',
   const [e] = parseRuleFile('many.yml', yml);
   expect(e.rule!.dataSource!.length).toBeLessThanOrEqual(255);
   expect(e.rule!.contentMd).toContain('Windows Event Log Security 4639');
+});
+
+describe('Elastic false positives from the investigation guide', () => {
+  it('takes the "False positive analysis" section up to the next heading of the same level', () => {
+    const note = [
+      '## Triage and analysis',
+      '### Investigating it',
+      'Look at the process.',
+      '### False positive analysis',
+      '',
+      '- Backup tools dump LSASS.',
+      '#### Known tools',
+      '- Veeam',
+      '### Response and remediation',
+      '- Isolate the host.',
+    ].join('\n');
+    expect(falsePositivesFromNote(note)).toBe('- Backup tools dump LSASS.\n#### Known tools\n- Veeam');
+    expect(falsePositivesFromNote('## Triage\nnothing here')).toBeNull();
+    expect(falsePositivesFromNote('### False Positive Analysis\n\n### Next')).toBeNull();
+  });
+
+  it('fills an Elastic rule without false_positives from its note', () => {
+    const toml = [
+      '[metadata]',
+      'maturity = "production"',
+      '[rule]',
+      'name = "Test rule"',
+      'rule_id = "abc"',
+      'severity = "high"',
+      'type = "eql"',
+      'language = "eql"',
+      'query = "process where true"',
+      'note = """## Triage and analysis\n\n### False positive analysis\n\n- Admin scripts.\n\n### Response and remediation\n\n- Kill it.\n"""',
+    ].join('\n');
+    expect(parseRuleFile('r.toml', toml)[0].rule?.falsePositives).toBe('- Admin scripts.');
+  });
 });

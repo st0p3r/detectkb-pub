@@ -244,6 +244,13 @@ Every link carries its basis, shown in the UI and used by **Paths → Certain li
 attention: unknown or retired ATT&CK IDs, rules without telemetry or techniques, tool names found
 only outside the query, unknown data source names, rules needing several events at once, and more.
 
+**Data quality helpers.** Elastic rules get their false-positive notes from the "False positive
+analysis" section of their investigation guide (on import, and once at startup for rules imported
+earlier whose field is empty); Data Health lists the production rules still without notes, with an
+editor next to each. **Data Sources** offers to create a data source page for each log source the
+rules read that has none: the page lists and links the events rules use, so impact analysis can take
+the whole source away, and leaves the collection details (index, hosts, retention, owner) to fill in.
+
 **Watchlist** (Threat Groups → Watchlist): star the ATT&CK groups relevant to your sector or region
 (search group descriptions for sectors and countries). The watchlist ranks the techniques those groups
 use by coverage of production and testing rules (gaps first, pre-compromise techniques last) and lists
