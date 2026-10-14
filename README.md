@@ -238,6 +238,10 @@ Every link carries its basis, shown in the UI and used by **Paths → Certain li
 **Data Health** (Tools menu) shows how many links of each basis there are and lists what needs
 attention: unknown or retired ATT&CK IDs, rules without telemetry or techniques, tool names found
 only outside the query, unknown data source names, rules needing several events at once, and more.
+
+**Similar Rules** (Tools menu) groups active rules mapped to the same techniques and reading the same
+telemetry, and compares their queries word by word (rare words — process names, paths, switches —
+count more than SPL boilerplate). Open two rules side by side, or deprecate the weaker ones of a group.
 Retired ATT&CK IDs can be replaced with MITRE's replacements in one step from their check.
 In the impact analysis, users who can edit rules can set exactly the rules marked **Lost** to
 deprecated or draft — e.g. after selecting every EDR the organisation doesn't have.

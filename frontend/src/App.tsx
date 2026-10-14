@@ -40,6 +40,7 @@ const AnalyticStoriesPage = named(() => import('@/features/stories/AnalyticStori
 const AtomicTestsPage = named(() => import('@/features/atomics/AtomicTestsPage'), 'AtomicTestsPage');
 const UpstreamUpdatesPage = named(() => import('@/features/upstream/UpstreamUpdatesPage'), 'UpstreamUpdatesPage');
 const DataHealthPage = named(() => import('@/features/health/DataHealthPage'), 'DataHealthPage');
+const SimilarRulesPage = named(() => import('@/features/similar/SimilarRulesPage'), 'SimilarRulesPage');
 const KnowledgeGraphPage = lazy(() => import('@/features/graph/KnowledgeGraphPage'));
 
 export default function App() {
@@ -112,6 +113,7 @@ export default function App() {
             <Route path="/atomic-tests" element={<AtomicTestsPage />} />
             <Route path="/upstream" element={<UpstreamUpdatesPage />} />
             <Route path="/data-health" element={<DataHealthPage />} />
+            <Route path="/similar-rules" element={<SimilarRulesPage />} />
             <Route path="/activity" element={<ActivityPage />} />
             <Route path="/broken-links" element={<BrokenLinksPage />} />
             <Route path="/backups" element={<BackupPage />} />

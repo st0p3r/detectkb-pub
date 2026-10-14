@@ -1698,3 +1698,58 @@ export async function getDataHealth() {
   const { data } = await api.get('/api/data-health');
   return data as DataHealth;
 }
+
+// ── Similar rules ───────────────────────────────────────────────────────────
+
+export interface SimilarRule {
+  pageId: number;
+  title: string;
+  slug: string;
+  status: string;
+  severity: string;
+  sourceFormat: RuleSourceFormat | null;
+  /** The most similar other rule of the group (0–1) */
+  closest: { pageId: number; similarity: number } | null;
+}
+
+export interface SimilarGroup {
+  key: string;
+  techniques: string[];
+  telemetry: { key: string; label: string }[];
+  /** Highest similarity between two of its rules (0–1) */
+  similarity: number;
+  crossSource: boolean;
+  rules: SimilarRule[];
+}
+
+export interface SimilarRulesResponse {
+  summary: { groups: number; rules: number; likely: number; likelyThreshold: number; crossSource: number };
+  matching: number;
+  groups: SimilarGroup[];
+}
+
+export async function listSimilarRules(params: { min?: number; crossSource?: boolean; q?: string }) {
+  const { data } = await api.get('/api/similar-rules', {
+    params: { min: params.min || undefined, crossSource: params.crossSource ? '1' : undefined, q: params.q || undefined },
+  });
+  return data as SimilarRulesResponse;
+}
+
+export interface ComparedRule {
+  pageId: number;
+  status: string;
+  severity: string;
+  sourceFormat: RuleSourceFormat | null;
+  dataSource: string | null;
+  mitreTechniques: string | null;
+  falsePositives: string | null;
+  splQuery: string;
+  nativeQuery: string | null;
+  nativeLanguage: string | null;
+  page: { title: string; slug: string; updatedAt: string };
+}
+
+export async function compareRules(a: number, b: number) {
+  const { data } = await api.get('/api/similar-rules/compare', { params: { a, b } });
+  return data as [ComparedRule, ComparedRule];
+}
