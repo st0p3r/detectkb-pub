@@ -1,7 +1,21 @@
-import PDFDocument from 'pdfkit';
-import { createWriteStream, promises as fsp } from 'fs';
+import { promises as fsp, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { BACKUP_DIR } from '../lib/config';
+import { renderDetectionReport, renderMatrixPdf, renderPagePdf, type PdfPage, type PdfRule } from './pdf/reports';
+import { TACTICS } from '../lib/attack';
+import {
+  LANGUAGE_LABELS,
+  PAGE_TYPE_LABELS,
+  SEVERITIES,
+  SOURCE_LABELS,
+  STATUSES,
+  cap,
+  coveredTechniques,
+  description,
+  referenceItems,
+  tacticNames,
+  techniqueLines,
+} from './report-content';
 
 const DOCS_DIR = join(BACKUP_DIR, 'docs');
 
@@ -157,63 +171,71 @@ function mdToHtml(md: string): string {
   return html;
 }
 
-// Strip all markdown to plain text (for PDF where we can't render HTML)
-function mdToPlain(md: string): string {
-  return md
-    .replace(/```[\s\S]*?```/g, (m) => m.replace(/```\w*\n?/g, '').trim())
-    .replace(/^#{1,6} (.*)$/gm, '$1')
-    .replace(/\*\*\*(.+?)\*\*\*/g, '$1')
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/\*(.+?)\*/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/\[\[([^\]]+)\]\]/g, '$1')
-    .replace(/^[-*+]\s+/gm, '• ')
-    .replace(/^\d+\. /gm, '')
-    .replace(/^> /gm, '');
+/** Vazirmatn embedded, so Persian text renders the same everywhere (the report is one offline file). */
+function embeddedFonts(): string {
+  try {
+    const dir = join(dirname(require.resolve('vazirmatn/package.json')), 'fonts', 'webfonts');
+    const face = (file: string, weight: number) =>
+      `@font-face { font-family: 'Vazirmatn'; font-weight: ${weight}; font-display: swap; src: url(data:font/woff2;base64,${readFileSync(join(dir, file)).toString('base64')}) format('woff2'); }`;
+    return face('Vazirmatn-Regular.woff2', 400) + face('Vazirmatn-Bold.woff2', 700);
+  } catch {
+    return '';
+  }
 }
 
 function htmlStyles(): string {
   return `
+    ${embeddedFonts()}
+    :root { --ink: #111827; --text: #1f2937; --muted: #6b7280; --rule: #e5e7eb; --brand: #312e81; --brand-dark: #1e1b4b; --brand-soft: #eef2ff; --code: #f6f7f9; --link: #1d4ed8; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.7; color: #1f2937; background: #fff; padding: 2.5rem; max-width: 900px; margin: 0 auto; }
-    .cover { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 55vh; background: linear-gradient(135deg, #4f46e5, #1e1b4b); color: white; text-align: center; padding: 3rem; border-radius: 12px; margin-bottom: 3rem; page-break-after: always; }
-    .cover h1 { font-size: 2.5rem; margin-bottom: 1rem; font-weight: 700; }
-    .cover p { font-size: 1rem; opacity: 0.85; margin: 0.25rem 0; }
-    h1 { font-size: 1.8rem; color: #1e1b4b; margin: 2.5rem 0 0.75rem; font-weight: 700; }
-    h2 { font-size: 1.4rem; color: #312e81; margin: 2rem 0 0.5rem; font-weight: 600; border-bottom: 2px solid #e0e7ff; padding-bottom: 0.4rem; }
-    h3 { font-size: 1.15rem; color: #3730a3; margin: 1.5rem 0 0.3rem; font-weight: 600; }
-    h4, h5, h6 { font-size: 1rem; color: #374151; margin: 1rem 0 0.25rem; font-weight: 600; }
-    p { margin-bottom: 0.85rem; }
-    ul, ol { padding-left: 1.75rem; margin-bottom: 1rem; }
-    li { margin-bottom: 0.3rem; }
-    hr { border: none; border-top: 1px solid #e5e7eb; margin: 1.5rem 0; }
-    blockquote { border-left: 4px solid #6366f1; padding: 0.5rem 1rem; background: #f5f3ff; border-radius: 0 6px 6px 0; margin: 1rem 0; color: #4b5563; }
-    pre { background: #1e1b4b; color: #e0e7ff; padding: 1.25rem; border-radius: 8px; overflow-x: auto; margin: 1rem 0; font-size: 0.82rem; line-height: 1.6; }
-    code { font-family: 'Courier New', Consolas, monospace; background: #ede9fe; color: #4c1d95; padding: 0.15em 0.45em; border-radius: 4px; font-size: 0.88em; }
-    pre code { background: transparent; color: inherit; padding: 0; font-size: inherit; }
-    a { color: #4f46e5; }
-    .wiki-link { color: #6366f1; font-style: italic; }
-    .rule-card { border-left: 4px solid #4f46e5; padding: 1.25rem 1.5rem; margin: 1.75rem 0; background: #f5f3ff; border-radius: 0 8px 8px 0; page-break-inside: avoid; }
-    .spl-card { border-left: 4px solid #f59e0b; padding: 1.25rem 1.5rem; margin: 1.75rem 0; background: #fffbeb; border-radius: 0 8px 8px 0; page-break-inside: avoid; }
-    .rule-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin: 0.75rem 0; font-size: 0.9rem; color: #6b7280; }
-    .rule-meta > div { background: #fff; padding: 0.35rem 0.6rem; border-radius: 4px; border: 1px solid #e5e7eb; }
-    .severity-critical { color: #dc2626; font-weight: 700; }
-    .severity-high { color: #ea580c; font-weight: 700; }
-    .severity-medium { color: #d97706; font-weight: 700; }
-    .severity-low { color: #059669; font-weight: 700; }
-    .tag { display: inline-block; padding: 0.2em 0.65em; border-radius: 9999px; font-size: 0.72rem; color: white; margin: 0.15em; font-weight: 500; }
-    table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.9rem; }
-    th { background: #ede9fe; color: #312e81; padding: 0.6rem 1rem; border: 1px solid #c7d2fe; font-weight: 600; text-align: left; }
-    td { padding: 0.55rem 1rem; border: 1px solid #e5e7eb; }
-    tr:nth-child(even) td { background: #f9fafb; }
-    .toc { background: #f5f3ff; border: 1px solid #c7d2fe; padding: 1.5rem 2rem; border-radius: 8px; margin-bottom: 2rem; }
-    .toc ol { padding-left: 1.5rem; }
-    .toc li { margin: 0.35rem 0; color: #4f46e5; }
-    .page-section { margin: 2.5rem 0; page-break-inside: avoid; }
-    .field-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-top: 0.75rem; margin-bottom: 0.25rem; }
-    .field-block { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 0.5rem; font-size: 0.9rem; }
-    @media print { body { padding: 0; } .cover { min-height: 45vh; } }
+    html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { font-family: 'Vazirmatn', -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 14px; line-height: 1.65; color: var(--text); background: #f3f4f6; }
+    main { max-width: 920px; margin: 0 auto; padding: 0 24px 64px; }
+    a { color: var(--link); text-decoration: none; } a:hover { text-decoration: underline; }
+    p, li, td, th, h1, h2, h3, h4, blockquote { unicode-bidi: plaintext; }
+    .cover { background: var(--brand-dark); color: #fff; padding: 56px 0 0; }
+    .cover .inner { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+    .cover .bar { width: 46px; height: 4px; background: #a5b4fc; margin-bottom: 18px; }
+    .cover h1 { font-size: 34px; line-height: 1.25; font-weight: 700; color: #fff; }
+    .cover .sub { color: #c7d2fe; margin-top: 8px; }
+    .tiles { display: flex; gap: 12px; flex-wrap: wrap; background: var(--brand); margin-top: 40px; padding: 28px 0; }
+    .tiles .inner { display: flex; gap: 12px; flex-wrap: wrap; }
+    .tile { flex: 1 1 150px; background: rgba(255,255,255,.08); border-radius: 8px; padding: 14px 16px; }
+    .tile b { display: block; font-size: 26px; line-height: 1.2; }
+    .tile span { color: #c7d2fe; font-size: 12px; }
+    section { background: #fff; border: 1px solid var(--rule); border-radius: 10px; padding: 28px 32px; margin-top: 24px; }
+    h2.section { font-size: 22px; color: var(--brand-dark); margin-bottom: 18px; }
+    h2.section::after { content: ''; display: block; width: 40px; height: 3px; background: var(--brand); margin-top: 8px; }
+    .label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 6px; }
+    .bars { display: grid; grid-template-columns: 150px 1fr 40px; gap: 6px 12px; align-items: center; font-size: 13px; }
+    .bars .track { background: #f1f5f9; border-radius: 4px; height: 8px; } .bars .fill { height: 8px; border-radius: 4px; }
+    .bars .n { text-align: right; font-weight: 700; color: var(--ink); }
+    .toc ol { list-style: none; } .toc li { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-bottom: 1px dotted #e2e8f0; }
+    .toc .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+    .toc .group { font-weight: 700; color: var(--brand-dark); margin: 14px 0 4px; }
+    .rule { border-top: 1px solid var(--rule); padding-top: 22px; margin-top: 22px; } .rule:first-of-type { border: 0; padding-top: 0; margin-top: 0; }
+    .rule h3, .page h3 { font-size: 18px; color: var(--ink); line-height: 1.35; }
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 12px; }
+    .badge { font-size: 11px; font-weight: 700; padding: 1px 10px; border-radius: 999px; border: 1px solid currentColor; }
+    .badge.solid { color: #fff !important; border-color: transparent; }
+    dl.meta { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 13.5px; }
+    dl.meta dt { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 2px; }
+    dl.meta dd { white-space: pre-line; }
+    pre { background: var(--code); border-left: 3px solid var(--brand); border-radius: 4px; padding: 10px 14px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-all; color: var(--ink); }
+    code { font-family: 'SFMono-Regular', Consolas, monospace; background: var(--code); padding: 0 4px; border-radius: 3px; font-size: .9em; }
+    pre code { background: none; padding: 0; }
+    .md p { margin-bottom: 8px; } .md ul, .md ol { padding-inline-start: 22px; margin-bottom: 8px; } .md h1, .md h2, .md h3, .md h4 { font-size: 15px; margin: 14px 0 6px; color: var(--ink); }
+    .md table, table.grid { width: 100%; border-collapse: collapse; margin: 8px 0 12px; font-size: 13px; }
+    .md th, .md td { border-bottom: 1px solid var(--rule); padding: 6px 8px; text-align: start; } .md th { background: var(--brand-soft); color: var(--brand-dark); }
+    .md blockquote { border-inline-start: 3px solid var(--rule); padding-inline-start: 12px; color: var(--muted); }
+    .wiki-link { color: var(--brand); }
+    ul.refs { list-style: none; font-size: 13px; } ul.refs li { overflow-wrap: anywhere; padding: 1px 0; }
+    .page .meta { color: var(--muted); font-size: 12px; margin: 2px 0 12px; }
+    footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 32px; }
+    @media print {
+      body { background: #fff; } main { padding: 0; } section { border: 0; padding: 0; margin-top: 0; break-before: page; }
+      .rule, .page { break-inside: auto; } dl.meta, h3 { break-after: avoid; } .cover { break-after: page; min-height: 100vh; }
+    }
   `;
 }
 
@@ -253,7 +275,8 @@ export interface DocPage {
 
 export interface DocRule {
   id: number;
-  page: { title: string };
+  page: { title: string; contentMd?: string | null; tags?: { tag: { name: string } }[] };
+  sourceFormat?: string | null;
   severity?: string;
   status?: string;
   splQuery?: string;
@@ -268,10 +291,60 @@ export interface DocRule {
   testNotes?: string;
 }
 
-const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
-const QUERY_LANGUAGE_LABELS: Record<string, string> = { kql: 'KQL', eql: 'EQL', esql: 'ES|QL', kuery: 'KQL (Kibana)', lucene: 'Lucene' };
-const nativeLabel = (r: DocRule) => `${QUERY_LANGUAGE_LABELS[r.nativeLanguage ?? ''] ?? r.nativeLanguage ?? 'Native'} Query`;
+
+/** Paragraph-level elements pick their direction from their text (Persian notes read right to left). */
+const autoDir = (html: string) => html.replace(/<(p|li|h[1-6]|td|th|blockquote)(?=[\s>])/g, '<$1 dir="auto"');
+
+const SEVERITY_HEX: Record<string, string> = { critical: '#b91c1c', high: '#ea580c', medium: '#d97706', low: '#2563eb', info: '#64748b' };
+const STATUS_HEX: Record<string, string> = { production: '#15803d', testing: '#b45309', draft: '#475569', deprecated: '#b91c1c' };
+
+function barsHtml(rows: { label: string; count: number; color: string }[], total: number): string {
+  return `<div class="bars">${rows
+    .map(
+      (r) =>
+        `<div>${escapeHtml(r.label)}</div><div class="track"><div class="fill" style="width:${Math.max(2, (r.count / Math.max(total, 1)) * 100)}%;background:${r.color}"></div></div><div class="n">${r.count}</div>`
+    )
+    .join('')}</div>`;
+}
+
+function ruleHtml(r: DocRule, i: number): string {
+  const sev = r.severity ?? '';
+  const badges = [
+    sev && `<span class="badge solid" style="background:${SEVERITY_HEX[sev] ?? '#6b7280'}">${escapeHtml(sev.toUpperCase())}</span>`,
+    r.status && `<span class="badge" style="color:${STATUS_HEX[r.status] ?? '#6b7280'}">${escapeHtml(cap(r.status))}</span>`,
+    `<span class="badge" style="color:#6b7280">${escapeHtml(r.sourceFormat ? SOURCE_LABELS[r.sourceFormat] ?? r.sourceFormat : 'Written in DetectKB')}</span>`,
+  ].filter(Boolean);
+  const meta: [string, string][] = [
+    ['Tactics', tacticNames(r).join('\n')],
+    ['Techniques', techniqueLines(r.mitreTechniques).join('\n')],
+    ['Data source', r.dataSource ?? ''],
+    ['Tags', r.page.tags?.map((t) => t.tag.name).join(', ') ?? ''],
+  ];
+  const desc = description(r.page.contentMd);
+  const query = (label: string, q?: string | null) => (q?.trim() ? `<div class="label">${escapeHtml(label)}</div><pre><code>${escapeHtml(q)}</code></pre>` : '');
+  const md = (label: string, text?: string | null) => (text?.trim() ? `<div class="label">${label}</div><div class="md">${autoDir(mdToHtml(text))}</div>` : '');
+  const refs = r.references?.trim()
+    ? `<div class="label">References</div><ul class="refs">${referenceItems(r.references)
+        .map((it) => `<li>${it.link ? `<a href="${escapeHtml(it.link)}">${escapeHtml(it.text)}</a>` : escapeHtml(it.text)}</li>`)
+        .join('')}</ul>`
+    : '';
+  return `
+    <article class="rule" id="rule-${r.id}">
+      <h3 dir="auto">${i + 1}. ${escapeHtml(r.page.title)}</h3>
+      <div class="badges">${badges.join('')}</div>
+      <dl class="meta">${meta
+        .filter(([, v]) => v)
+        .map(([k, v]) => `<dt>${k}</dt><dd dir="auto">${escapeHtml(v)}</dd>`)
+        .join('')}</dl>
+      ${desc ? `<div class="label">Description</div><div class="md">${autoDir(mdToHtml(desc))}</div>` : ''}
+      ${query('SPL query', r.splQuery)}
+      ${query(`${LANGUAGE_LABELS[r.nativeLanguage ?? ''] ?? r.nativeLanguage ?? 'Native'} query`, r.nativeQuery)}
+      ${md('False positives', r.falsePositives)}
+      ${md('Test notes', r.testNotes)}
+      ${refs}
+    </article>`;
+}
 
 export async function generateHTMLReport(
   title: string,
@@ -280,61 +353,49 @@ export async function generateHTMLReport(
   opts?: { includeTableOfContents?: boolean }
 ): Promise<string> {
   const toc = opts?.includeTableOfContents !== false;
-  const timestamp = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const tiles: [string, number][] = [];
+  if (rules.length) {
+    tiles.push(['Detection rules', rules.length], ['ATT&CK techniques', coveredTechniques(rules).size], ['In production', rules.filter((r) => r.status === 'production').length]);
+  }
+  if (pages.length) tiles.push(['Knowledge pages', pages.length]);
+
+  let summary = '';
+  if (rules.length) {
+    const count = (f: (r: DocRule) => boolean) => rules.filter(f).length;
+    const bySeverity = SEVERITIES.map((s) => ({ label: cap(s), count: count((r) => r.severity === s), color: SEVERITY_HEX[s] })).filter((r) => r.count);
+    const byStatus = STATUSES.map((s) => ({ label: cap(s), count: count((r) => r.status === s), color: STATUS_HEX[s] })).filter((r) => r.count);
+    const byTactic = TACTICS.map((t) => ({ label: t.name, count: count((r) => tacticNames(r).some((n) => n.endsWith(`(${t.id})`))), color: '#312e81' })).filter((r) => r.count);
+    summary = `<section><h2 class="section">Summary</h2>
+      <div class="label">By severity</div>${barsHtml(bySeverity, rules.length)}
+      <div class="label">By status</div>${barsHtml(byStatus, rules.length)}
+      ${byTactic.length ? `<div class="label">By ATT&amp;CK tactic</div>${barsHtml(byTactic, rules.length)}` : ''}
+    </section>`;
+  }
 
   let tocHtml = '';
-  if (toc && (pages.length + rules.length > 0)) {
-    tocHtml = `<div class="toc"><h2 style="margin:0 0 0.75rem;border:none">Table of Contents</h2><ol>`;
-    if (pages.length) {
-      tocHtml += `<li>Wiki Pages<ol>${pages.map((p) => `<li>${escapeHtml(p.title)}</li>`).join('')}</ol></li>`;
-    }
-    if (rules.length) {
-      tocHtml += `<li>Detection Rules<ol>${rules.map((r) => `<li>${escapeHtml(r.page.title)}</li>`).join('')}</ol></li>`;
-    }
-    tocHtml += `</ol></div>`;
+  if (toc && rules.length + pages.length > 1) {
+    tocHtml = `<section class="toc"><h2 class="section">Contents</h2>
+      ${rules.length ? `<div class="group"><a href="#rules">Detection rules</a></div><ol>${rules
+        .map((r) => `<li dir="auto"><span class="dot" style="background:${SEVERITY_HEX[r.severity ?? ''] ?? '#cbd5e1'}"></span><a href="#rule-${r.id}">${escapeHtml(r.page.title)}</a></li>`)
+        .join('')}</ol>` : ''}
+      ${pages.length ? `<div class="group"><a href="#pages">Knowledge pages</a></div><ol>${pages.map((p) => `<li dir="auto"><a href="#page-${p.id}">${escapeHtml(p.title)}</a></li>`).join('')}</ol>` : ''}
+    </section>`;
   }
 
-  let pagesHtml = '';
-  if (pages.length) {
-    pagesHtml = `<h1>Wiki Pages</h1>`;
-    for (const p of pages) {
-      const tagBadges = (p.tags || [])
-        .map((t) => `<span class="tag" style="background:${escapeHtml(t.tag.color || '#6b7280')}">${escapeHtml(t.tag.name)}</span>`)
-        .join('');
-      const typeLabel = `<span style="font-size:0.75rem;background:#e0e7ff;color:#3730a3;padding:0.15em 0.6em;border-radius:4px;font-weight:600">${escapeHtml(p.type)}</span>`;
-      pagesHtml += `
-        <div class="page-section">
-          <h2>${escapeHtml(p.title)} ${typeLabel}</h2>
-          ${tagBadges ? `<div style="margin-bottom:0.75rem">${tagBadges}</div>` : ''}
-          ${mdToHtml(p.contentMd)}
-          ${p.splCommand ? renderSplCommandHtml(p.splCommand) : ''}
-        </div>`;
-    }
-  }
-
-  let rulesHtml = '';
-  if (rules.length) {
-    rulesHtml = `<h1>Detection Rules</h1>`;
-    for (const r of rules) {
-      const sevClass = `severity-${(r.severity || 'medium').toLowerCase()}`;
-      rulesHtml += `
-        <div class="rule-card">
-          <h3>${escapeHtml(r.page.title)}</h3>
-          <div class="rule-meta">
-            <div>Severity: <span class="${sevClass}">${escapeHtml(r.severity || 'N/A')}</span></div>
-            <div>Status: <strong>${escapeHtml(r.status || 'N/A')}</strong></div>
-            ${r.mitreTactics ? `<div>Tactics: ${escapeHtml(r.mitreTactics)}</div>` : ''}
-            ${r.mitreTechniques ? `<div>Techniques: ${escapeHtml(r.mitreTechniques)}</div>` : ''}
-            ${r.dataSource ? `<div>Data Source: ${escapeHtml(r.dataSource)}</div>` : ''}
-          </div>
-          ${r.splQuery ? `<div class="field-label">SPL Query</div><pre><code>${escapeHtml(r.splQuery)}</code></pre>` : ''}
-          ${r.nativeQuery ? `<div class="field-label">${escapeHtml(nativeLabel(r))}</div><pre><code>${escapeHtml(r.nativeQuery)}</code></pre>` : ''}
-          ${r.falsePositives ? `<div class="field-label">False Positives</div><div class="field-block">${escapeHtml(r.falsePositives)}</div>` : ''}
-          ${r.references ? `<div class="field-label">References</div><div class="field-block">${mdToHtml(r.references)}</div>` : ''}
-          ${r.testNotes ? `<div class="field-label">Test Notes</div><div class="field-block">${mdToHtml(r.testNotes)}</div>` : ''}
-        </div>`;
-    }
-  }
+  const rulesHtml = rules.length ? `<section id="rules"><h2 class="section">Detection rules</h2>${rules.map(ruleHtml).join('')}</section>` : '';
+  const pagesHtml = pages.length
+    ? `<section id="pages"><h2 class="section">Knowledge pages</h2>${pages
+        .map(
+          (p) => `<article class="page rule" id="page-${p.id}">
+            <h3 dir="auto">${escapeHtml(p.title)}</h3>
+            <div class="meta" dir="auto">${escapeHtml([PAGE_TYPE_LABELS[p.type] ?? p.type, ...(p.tags ?? []).map((t) => `#${t.tag.name}`)].join('   '))}</div>
+            <div class="md">${autoDir(mdToHtml(p.contentMd))}</div>
+            ${p.splCommand ? renderSplCommandHtml(p.splCommand) : ''}
+          </article>`
+        )
+        .join('')}</section>`
+    : '';
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -345,14 +406,21 @@ export async function generateHTMLReport(
   <style>${htmlStyles()}</style>
 </head>
 <body>
-  <div class="cover">
-    <h1>${escapeHtml(title)}</h1>
-    <p>Generated on ${timestamp}</p>
-    <p>${plural(pages.length, 'page')} &bull; ${plural(rules.length, 'detection rule')}</p>
-  </div>
-  ${tocHtml}
-  ${pagesHtml}
-  ${rulesHtml}
+  <header class="cover">
+    <div class="inner">
+      <div class="bar"></div>
+      <h1 dir="auto">${escapeHtml(title)}</h1>
+      <div class="sub">${rules.length ? 'Detection rules and coverage' : 'Knowledge base pages'} · ${date}</div>
+    </div>
+    ${tiles.length ? `<div class="tiles"><div class="inner" style="width:100%">${tiles.map(([l, n]) => `<div class="tile"><b>${n}</b><span>${escapeHtml(l)}</span></div>`).join('')}</div></div>` : ''}
+  </header>
+  <main>
+    ${summary}
+    ${tocHtml}
+    ${rulesHtml}
+    ${pagesHtml}
+    <footer>Generated by DetectKB on ${date}</footer>
+  </main>
 </body>
 </html>`;
 
@@ -365,327 +433,29 @@ export async function generateHTMLReport(
 
 function renderSplCommandHtml(spl: DocSplCommand): string {
   return `
-    <div class="spl-card">
-      <div style="font-weight:700;font-size:1rem;margin-bottom:0.5rem">SPL Command: <code>${escapeHtml(spl.command)}</code></div>
-      <div class="rule-meta">
-        <div>Group: <strong>${escapeHtml(spl.group)}</strong></div>
-      </div>
-      <div class="field-label">Syntax</div>
-      <pre><code>${escapeHtml(spl.syntax)}</code></pre>
-      <div class="field-label">Description</div>
-      <div>${mdToHtml(spl.description)}</div>
-      ${spl.examples ? `<div class="field-label">Examples</div><pre><code>${escapeHtml(spl.examples)}</code></pre>` : ''}
-      ${spl.pitfalls ? `<div class="field-label">Pitfalls</div><div class="field-block">${mdToHtml(spl.pitfalls)}</div>` : ''}
-    </div>`;
+    <div class="badges"><span class="badge solid" style="background:#92400e">SPL · ${escapeHtml(spl.group)}</span></div>
+    <div class="label">Syntax</div><pre><code>${escapeHtml(spl.syntax)}</code></pre>
+    ${spl.description ? `<div class="label">Description</div><div class="md">${autoDir(mdToHtml(spl.description))}</div>` : ''}
+    ${spl.examples ? `<div class="label">Examples</div><pre><code>${escapeHtml(spl.examples)}</code></pre>` : ''}
+    ${spl.pitfalls ? `<div class="label">Pitfalls</div><div class="md">${autoDir(mdToHtml(spl.pitfalls))}</div>` : ''}`;
 }
 
-export async function generatePDFReport(
-  title: string,
-  pages: DocPage[],
-  rules: DocRule[]
-): Promise<string> {
-  const filename = `${sanitizeFilename(title)}_${Date.now()}.pdf`;
-  const filePath = join(DOCS_DIR, filename);
+export async function generatePDFReport(title: string, pages: DocPage[], rules: DocRule[]): Promise<string> {
+  const filePath = join(DOCS_DIR, `${sanitizeFilename(title)}_${Date.now()}.pdf`);
   await ensureDir(filePath);
-
-  const doc = new PDFDocument({ size: 'A4', margin: 50 });
-  const stream = createWriteStream(filePath);
-  doc.pipe(stream);
-
-  // Cover
-  doc.rect(0, 0, doc.page.width, doc.page.height).fill('#1e1b4b');
-  doc.fill('#ffffff').fontSize(28).font('Helvetica-Bold').text(title, 50, 180, { align: 'center' });
-  doc.fontSize(12).font('Helvetica').text(
-    `Generated on ${new Date().toLocaleDateString()}`, 50, 240, { align: 'center' }
-  );
-  doc.fontSize(11).text(`${plural(pages.length, 'page')} · ${plural(rules.length, 'detection rule')}`, 50, 265, { align: 'center' });
-  doc.addPage();
-
-  // Table of contents
-  doc.fill('#000000').fontSize(18).font('Helvetica-Bold').text('Table of Contents');
-  doc.moveDown(0.5);
-  if (pages.length) {
-    doc.fontSize(12).font('Helvetica-Bold').text('Wiki Pages');
-    pages.forEach((p) => {
-      doc.fontSize(10).font('Helvetica').text(`  • ${p.title}`);
-    });
-    doc.moveDown(0.5);
-  }
-  if (rules.length) {
-    doc.fontSize(12).font('Helvetica-Bold').text('Detection Rules');
-    rules.forEach((r) => {
-      doc.fontSize(10).font('Helvetica').text(`  • ${r.page.title}`);
-    });
-  }
-
-  // Pages
-  if (pages.length) {
-    doc.addPage();
-    doc.fontSize(20).font('Helvetica-Bold').fill('#1e1b4b').text('Wiki Pages');
-    doc.fill('#000000').moveDown();
-
-    for (const p of pages) {
-      if (doc.y > 680) doc.addPage();
-      doc.fontSize(14).font('Helvetica-Bold').text(p.title);
-      doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke('#d1d5db');
-      doc.moveDown(0.3);
-      doc.fontSize(10).font('Helvetica').text(mdToPlain(p.contentMd), { lineGap: 2 });
-
-      // SPL Command section
-      if (p.splCommand) {
-        doc.moveDown(0.5);
-        doc.fontSize(11).font('Helvetica-Bold').fill('#b45309').text(`SPL Command: ${p.splCommand.command}`);
-        doc.fill('#000000').fontSize(10).font('Helvetica');
-        doc.text(`Group: ${p.splCommand.group}`);
-        doc.moveDown(0.3);
-        doc.fontSize(10).font('Helvetica-Bold').text('Syntax:');
-        doc.font('Courier').fontSize(9).text(p.splCommand.syntax, { lineGap: 1 });
-        if (p.splCommand.description) {
-          doc.font('Helvetica-Bold').fontSize(10).text('Description:');
-          doc.font('Helvetica').text(mdToPlain(p.splCommand.description), { lineGap: 1 });
-        }
-        if (p.splCommand.examples) {
-          doc.font('Helvetica-Bold').text('Examples:');
-          doc.font('Courier').fontSize(9).text(p.splCommand.examples, { lineGap: 1 });
-        }
-        if (p.splCommand.pitfalls) {
-          doc.font('Helvetica-Bold').fontSize(10).text('Pitfalls:');
-          doc.font('Helvetica').text(mdToPlain(p.splCommand.pitfalls), { lineGap: 1 });
-        }
-        doc.fill('#000000');
-      }
-
-      doc.moveDown();
-    }
-  }
-
-  // Rules
-  if (rules.length) {
-    doc.addPage();
-    doc.fontSize(20).font('Helvetica-Bold').fill('#1e1b4b').text('Detection Rules');
-    doc.fill('#000000').moveDown();
-
-    for (const r of rules) {
-      if (doc.y > 580) doc.addPage();
-      doc.fontSize(13).font('Helvetica-Bold').text(r.page.title);
-      doc.fontSize(10).font('Helvetica');
-      doc.text(`Severity: ${r.severity || 'N/A'}  |  Status: ${r.status || 'N/A'}`);
-      if (r.mitreTactics) doc.text(`Tactics: ${r.mitreTactics}`);
-      if (r.mitreTechniques) doc.text(`Techniques: ${r.mitreTechniques}`);
-      if (r.dataSource) doc.text(`Data Source: ${r.dataSource}`);
-      if (r.splQuery) {
-        doc.moveDown(0.3);
-        doc.fontSize(9).font('Courier-Bold').text('SPL Query:');
-        doc.font('Courier').text(r.splQuery, { lineGap: 1 });
-        doc.font('Helvetica');
-      }
-      if (r.nativeQuery) {
-        doc.moveDown(0.3);
-        doc.fontSize(9).font('Courier-Bold').text(`${nativeLabel(r)}:`);
-        doc.font('Courier').text(r.nativeQuery, { lineGap: 1 });
-        doc.font('Helvetica');
-      }
-      if (r.falsePositives) {
-        doc.moveDown(0.2);
-        doc.fontSize(10).font('Helvetica-Bold').text('False Positives:');
-        doc.font('Helvetica').text(r.falsePositives, { lineGap: 1 });
-      }
-      if (r.references) {
-        doc.moveDown(0.2);
-        doc.fontSize(10).font('Helvetica-Bold').text('References:');
-        doc.font('Helvetica').text(mdToPlain(r.references), { lineGap: 1 });
-      }
-      if (r.testNotes) {
-        doc.moveDown(0.2);
-        doc.fontSize(10).font('Helvetica-Bold').text('Test Notes:');
-        doc.font('Helvetica').text(mdToPlain(r.testNotes), { lineGap: 1 });
-      }
-      doc.moveDown();
-    }
-  }
-
-  doc.end();
-
-  return new Promise((resolve, reject) => {
-    stream.on('finish', () => resolve(filePath));
-    stream.on('error', reject);
-  });
+  return renderDetectionReport(filePath, title, pages as PdfPage[], rules as PdfRule[]);
 }
 
 export async function exportSinglePagePDF(page: DocPage): Promise<string> {
-  const filename = `${sanitizeFilename(page.title)}_${Date.now()}.pdf`;
-  const filePath = join(DOCS_DIR, filename);
+  const filePath = join(DOCS_DIR, `${sanitizeFilename(page.title)}_${Date.now()}.pdf`);
   await ensureDir(filePath);
-
-  const doc = new PDFDocument({ size: 'A4', margin: 50 });
-  const stream = createWriteStream(filePath);
-  doc.pipe(stream);
-
-  // Header
-  doc.rect(0, 0, doc.page.width, 80).fill('#1e1b4b');
-  doc.fill('#ffffff').fontSize(20).font('Helvetica-Bold').text(page.title, 50, 22, { width: 495 });
-  doc.fontSize(9).font('Helvetica').fillColor('rgba(255,255,255,0.8)').text(
-    `Type: ${page.type}  |  ${page.createdAt ? new Date(page.createdAt).toLocaleDateString() : ''}`,
-    50, 52, { width: 495 }
-  );
-  doc.y = 100;
-
-  // Tags
-  if (page.tags?.length) {
-    doc.fill('#374151').fontSize(9).font('Helvetica').text(`Tags: ${page.tags.map((t) => t.tag.name).join(', ')}`);
-    doc.moveDown(0.5);
-  }
-
-  doc.fillColor('#000000');
-
-  // Main content
-  doc.fontSize(11).font('Helvetica').text(mdToPlain(page.contentMd), { lineGap: 3 });
-
-  // Detection Rule section
-  if (page.rule) {
-    const r = page.rule;
-    doc.moveDown();
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke('#6366f1');
-    doc.moveDown(0.3);
-    doc.fontSize(13).font('Helvetica-Bold').fill('#312e81').text('Detection Rule');
-    doc.fill('#000000').fontSize(10).font('Helvetica');
-    doc.text(`Severity: ${r.severity || 'N/A'}  |  Status: ${r.status || 'N/A'}`);
-    if (r.mitreTactics) doc.text(`Tactics: ${r.mitreTactics}`);
-    if (r.mitreTechniques) doc.text(`Techniques: ${r.mitreTechniques}`);
-    if (r.dataSource) doc.text(`Data Source: ${r.dataSource}`);
-    if (r.splQuery) {
-      doc.moveDown(0.3);
-      doc.font('Helvetica-Bold').text('SPL Query:');
-      doc.font('Courier').fontSize(9).text(r.splQuery, { lineGap: 1 });
-      doc.font('Helvetica').fontSize(10);
-    }
-    if (r.falsePositives) {
-      doc.moveDown(0.2);
-      doc.font('Helvetica-Bold').text('False Positives:');
-      doc.font('Helvetica').text(r.falsePositives, { lineGap: 1 });
-    }
-    if (r.references) {
-      doc.moveDown(0.2);
-      doc.font('Helvetica-Bold').text('References:');
-      doc.font('Helvetica').text(mdToPlain(r.references), { lineGap: 1 });
-    }
-    if (r.testNotes) {
-      doc.moveDown(0.2);
-      doc.font('Helvetica-Bold').text('Test Notes:');
-      doc.font('Helvetica').text(mdToPlain(r.testNotes), { lineGap: 1 });
-    }
-  }
-
-  // SPL Command section
-  if (page.splCommand) {
-    const spl = page.splCommand;
-    doc.moveDown();
-    doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke('#f59e0b');
-    doc.moveDown(0.3);
-    doc.fontSize(13).font('Helvetica-Bold').fill('#92400e').text(`SPL Command: ${spl.command}`);
-    doc.fill('#000000').fontSize(10).font('Helvetica');
-    doc.text(`Group: ${spl.group}`);
-    doc.moveDown(0.3);
-    doc.font('Helvetica-Bold').text('Syntax:');
-    doc.font('Courier').fontSize(9).text(spl.syntax, { lineGap: 1 });
-    if (spl.description) {
-      doc.font('Helvetica-Bold').fontSize(10).text('Description:');
-      doc.font('Helvetica').text(mdToPlain(spl.description), { lineGap: 1 });
-    }
-    if (spl.examples) {
-      doc.font('Helvetica-Bold').text('Examples:');
-      doc.font('Courier').fontSize(9).text(spl.examples, { lineGap: 1 });
-    }
-    if (spl.pitfalls) {
-      doc.font('Helvetica-Bold').fontSize(10).text('Pitfalls:');
-      doc.font('Helvetica').text(mdToPlain(spl.pitfalls), { lineGap: 1 });
-    }
-  }
-
-  doc.end();
-
-  return new Promise((resolve, reject) => {
-    stream.on('finish', () => resolve(filePath));
-    stream.on('error', reject);
-  });
+  return renderPagePdf(filePath, page as PdfPage);
 }
 
 export async function exportDetectionMatrix(rules: DocRule[], title = 'Detection Matrix'): Promise<string> {
-  const filename = `${sanitizeFilename(title)}_${Date.now()}.pdf`;
-  const filePath = join(DOCS_DIR, filename);
+  const filePath = join(DOCS_DIR, `${sanitizeFilename(title)}_${Date.now()}.pdf`);
   await ensureDir(filePath);
-
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30 });
-  const stream = createWriteStream(filePath);
-  doc.pipe(stream);
-
-  const severities = ['critical', 'high', 'medium', 'low'];
-  const severityColors: Record<string, string> = {
-    critical: '#dc2626', high: '#ea580c', medium: '#f59e0b', low: '#10b981',
-  };
-
-  // Group by technique (all techniques, not just first)
-  const byTechnique: Record<string, DocRule[]> = {};
-  for (const r of rules) {
-    const techs = (r.mitreTechniques || 'Uncategorized')
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean);
-    for (const tech of techs) {
-      if (!byTechnique[tech]) byTechnique[tech] = [];
-      byTechnique[tech].push(r);
-    }
-  }
-
-  doc.fontSize(18).font('Helvetica-Bold').text(title);
-  doc.fontSize(10).font('Helvetica').text(
-    `Generated on ${new Date().toLocaleDateString()} · ${rules.length} rules · ${Object.keys(byTechnique).length} techniques`
-  );
-  doc.moveDown();
-
-  const colW = 130;
-  const rowH = 22;
-  const startX = 30;
-  let y = doc.y;
-
-  // Header row
-  doc.rect(startX, y, colW * 2, rowH).fill('#1e1b4b');
-  doc.fill('#ffffff').fontSize(9).text('MITRE Technique', startX + 5, y + 6, { width: colW * 2 - 10 });
-  severities.forEach((sev, i) => {
-    const x = startX + colW * 2 + colW * i;
-    doc.rect(x, y, colW, rowH).fill('#334155');
-    doc.fill('#ffffff').text(sev.charAt(0).toUpperCase() + sev.slice(1), x + 5, y + 6, { width: colW - 10 });
-  });
-  y += rowH;
-
-  // Data rows
-  const techniques = Object.keys(byTechnique).sort();
-  for (let idx = 0; idx < techniques.length; idx++) {
-    if (y > 530) { doc.addPage(); y = 30; }
-    const tech = techniques[idx];
-    const bg = idx % 2 === 0 ? '#f8fafc' : '#ffffff';
-    doc.rect(startX, y, colW * 2, rowH).fill(bg);
-    doc.fill('#1f2937').fontSize(8).text(tech.slice(0, 35), startX + 5, y + 7, { width: colW * 2 - 10 });
-
-    severities.forEach((sev, i) => {
-      const x = startX + colW * 2 + colW * i;
-      const count = byTechnique[tech].filter((r) => (r.severity || '').toLowerCase() === sev).length;
-      doc.rect(x, y, colW, rowH).fill(bg);
-      if (count > 0) {
-        doc.rect(x + 2, y + 2, colW - 4, rowH - 4).fill(severityColors[sev]);
-        doc.fill('#ffffff').text(String(count), x + 5, y + 7, { width: colW - 10, align: 'center' });
-      } else {
-        doc.fill('#9ca3af').text('0', x + 5, y + 7, { width: colW - 10, align: 'center' });
-      }
-    });
-    y += rowH;
-  }
-
-  doc.end();
-  return new Promise((resolve, reject) => {
-    stream.on('finish', () => resolve(filePath));
-    stream.on('error', reject);
-  });
+  return renderMatrixPdf(filePath, title, rules);
 }
 
 export async function getFileSize(filePath: string): Promise<number> {
