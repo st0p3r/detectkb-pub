@@ -65,7 +65,7 @@ const runsCache = kbCache(async () => {
     : [];
   const hashes = new Map(rules.map((r) => [r.pageId, ruleQueryHash(queryText(r))]));
   return { byPage, hashes };
-});
+}, undefined, { warm: true, label: 'lab validation' });
 
 /** A function giving each rule's validation status (rules without runs: never tested). */
 export async function loadValidation(now = new Date()): Promise<(pageId: number) => RuleValidation> {

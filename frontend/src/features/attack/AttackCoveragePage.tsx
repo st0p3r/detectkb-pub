@@ -14,6 +14,7 @@ import {
   listThreatGroups,
   type ActorCoverage,
   type AttackTechnique,
+  type CoverageConfidence,
   type CoveringRule,
 } from '@/lib/api';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
@@ -41,6 +42,35 @@ const HEAT = [
 ];
 const NO_COVERAGE = 'bg-muted/40 text-muted-foreground border-border';
 
+// Confidence scale: the best rule of the technique (and its sub-techniques)
+const CONFIDENCE: Record<CoverageConfidence, { label: string; hint: string; cell: string; bar: string }> = {
+  validated: {
+    label: 'Proven in lab',
+    hint: 'A production or testing rule whose latest lab test detected the attack',
+    cell: 'bg-emerald-700 text-white border-emerald-800',
+    bar: 'bg-emerald-700',
+  },
+  production: {
+    label: 'Production',
+    hint: 'A production rule, not proven in the lab',
+    cell: 'bg-emerald-300 text-emerald-950 border-emerald-400 dark:bg-emerald-600 dark:text-white dark:border-emerald-500',
+    bar: 'bg-emerald-400',
+  },
+  testing: {
+    label: 'Testing only',
+    hint: 'Only rules still in testing',
+    cell: 'bg-amber-200 text-amber-950 border-amber-300 dark:bg-amber-600 dark:text-white dark:border-amber-500',
+    bar: 'bg-amber-300',
+  },
+  draft: {
+    label: 'Draft only',
+    hint: 'Only draft rules: nothing runs for this technique yet',
+    cell: 'bg-orange-50 text-orange-900 border-orange-300 border-dashed dark:bg-orange-950/50 dark:text-orange-200 dark:border-orange-700',
+    bar: 'bg-orange-300',
+  },
+};
+const CONFIDENCE_ORDER: CoverageConfidence[] = ['validated', 'production', 'testing', 'draft'];
+
 function heatClass(count: number) {
   return HEAT.find((h) => count >= h.min)?.cell ?? NO_COVERAGE;
 }
@@ -52,6 +82,7 @@ interface ParentCell {
   subs: AttackTechnique[];
   /** Rules on the technique itself or any sub-technique (each rule once). */
   count: number;
+  confidence: CoverageConfidence | null;
 }
 
 /** The techniques (as parent IDs) a group (G…) or software (S…) uses. */
@@ -74,7 +105,11 @@ export function AttackCoveragePage() {
   const { toast } = useToast();
   const [params, setParams] = useSearchParams();
   const actorId = params.get('actor');
-  const [status, setStatus] = useState('');
+  // Rules that run (or are about to): drafts would make coverage look better than it is
+  const [status, setStatus] = useState('production,testing');
+  const [colorBy, setColorBy] = useState<'confidence' | 'count'>('confidence');
+  const cellClass = (c: ParentCell) =>
+    colorBy === 'confidence' ? (c.confidence ? CONFIDENCE[c.confidence].cell : NO_COVERAGE) : heatClass(c.count);
   // Proven coverage: only rules whose latest lab test detected the attack
   const [validatedOnly, setValidatedOnly] = useState(false);
   const [onlyCovered, setOnlyCovered] = useState(false);
@@ -102,6 +137,7 @@ export function AttackCoveragePage() {
       technique: t,
       subs: subsByParent.get(t.id) ?? [],
       count: data.parentCounts[t.id] ?? 0,
+      confidence: data.parentConfidence[t.id] ?? null,
     });
     const parents = data.techniques.filter((t) => !t.id.includes('.')).map(cellFor);
     return data.tactics.map((tactic) => {
@@ -178,6 +214,15 @@ export function AttackCoveragePage() {
                 </option>
               ))}
           </select>
+          <select
+            value={colorBy}
+            onChange={(e) => setColorBy(e.target.value as 'confidence' | 'count')}
+            aria-label="Color cells by"
+            className="px-3 py-2 rounded-md border border-border bg-background text-sm"
+          >
+            <option value="confidence">Color: confidence</option>
+            <option value="count">Color: rule count</option>
+          </select>
           <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm cursor-pointer">
             <input type="checkbox" checked={onlyCovered} onChange={(e) => setOnlyCovered(e.target.checked)} />
             Only covered
@@ -223,6 +268,38 @@ export function AttackCoveragePage() {
               </div>
             ))}
           </div>
+
+          {data.summary.coveredTechniques > 0 && (
+            <div className="mb-5 rounded-lg border border-border bg-card px-4 py-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm mb-2">
+                <span className="font-medium">Coverage confidence</span>
+                <span className="text-xs text-muted-foreground">covered techniques by their best rule</span>
+              </div>
+              <div className="flex h-2.5 rounded-full overflow-hidden bg-muted">
+                {CONFIDENCE_ORDER.map((l) =>
+                  data.summary.confidence[l] ? (
+                    <span
+                      key={l}
+                      className={CONFIDENCE[l].bar}
+                      style={{ width: `${(data.summary.confidence[l] / data.summary.totalTechniques) * 100}%` }}
+                      title={`${data.summary.confidence[l]} ${CONFIDENCE[l].label.toLowerCase()}`}
+                    />
+                  ) : null
+                )}
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                {CONFIDENCE_ORDER.map((l) => (
+                  <span key={l} title={CONFIDENCE[l].hint}>
+                    <span className={cn('inline-block w-2.5 h-2.5 rounded-sm mr-1 align-middle', CONFIDENCE[l].bar)} />
+                    <b className="text-foreground tabular-nums">{data.summary.confidence[l]}</b> {CONFIDENCE[l].label.toLowerCase()}
+                  </span>
+                ))}
+                <span>
+                  <b className="text-foreground tabular-nums">{data.summary.totalTechniques - data.summary.coveredTechniques}</b> not covered
+                </span>
+              </div>
+            </div>
+          )}
 
           {data.unknownTechniques.length > 0 && (
             <div className="flex items-start gap-2 mb-5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
@@ -293,15 +370,27 @@ export function AttackCoveragePage() {
           )}
 
           {/* Legend */}
-          <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-muted-foreground">
-            <span>Rules per technique (incl. sub-techniques):</span>
-            <span className="flex items-center gap-1"><span className={cn('w-4 h-4 rounded border', NO_COVERAGE)} /> 0</span>
-            {[...HEAT].reverse().map((h) => (
-              <span key={h.label} className="flex items-center gap-1">
-                <span className={cn('w-4 h-4 rounded border', h.cell)} /> {h.label}
-              </span>
-            ))}
-          </div>
+          {colorBy === 'confidence' ? (
+            <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-muted-foreground">
+              <span>Best rule of the technique (incl. sub-techniques):</span>
+              {CONFIDENCE_ORDER.map((l) => (
+                <span key={l} className="flex items-center gap-1" title={CONFIDENCE[l].hint}>
+                  <span className={cn('w-4 h-4 rounded border', CONFIDENCE[l].cell)} /> {CONFIDENCE[l].label}
+                </span>
+              ))}
+              <span className="flex items-center gap-1"><span className={cn('w-4 h-4 rounded border', NO_COVERAGE)} /> No rule</span>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-muted-foreground">
+              <span>Rules per technique (incl. sub-techniques):</span>
+              <span className="flex items-center gap-1"><span className={cn('w-4 h-4 rounded border', NO_COVERAGE)} /> 0</span>
+              {[...HEAT].reverse().map((h) => (
+                <span key={h.label} className="flex items-center gap-1">
+                  <span className={cn('w-4 h-4 rounded border', h.cell)} /> {h.label}
+                </span>
+              ))}
+            </div>
+          )}
 
           {/* Matrix */}
           <div className="overflow-x-auto pb-3 rounded-lg border border-border bg-card">
@@ -330,10 +419,10 @@ export function AttackCoveragePage() {
                         <button
                           key={c.technique.id}
                           onClick={() => setSelected(c.technique.id === selected ? null : c.technique.id)}
-                          title={`${c.technique.id} ${c.technique.name} — ${c.count} rule${c.count === 1 ? '' : 's'}${used ? ` · used by ${actor!.name}` : ''}`}
+                          title={`${c.technique.id} ${c.technique.name} — ${c.count} rule${c.count === 1 ? '' : 's'}${c.confidence ? ` · ${CONFIDENCE[c.confidence].label.toLowerCase()}` : ''}${used ? ` · used by ${actor!.name}` : ''}`}
                           className={cn(
                             'w-full text-left px-1.5 py-1 rounded border text-[11px] leading-tight transition-shadow hover:ring-2 hover:ring-primary/40',
-                            heatClass(c.count),
+                            cellClass(c),
                             actor && !used && 'opacity-20',
                             used && !c.count && 'ring-2 ring-red-500',
                             selected === c.technique.id && 'ring-2 ring-primary'

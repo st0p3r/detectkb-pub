@@ -17,6 +17,7 @@ import {
 } from '../lib/atomic';
 import { RuleTelemetry, alternatives, loadRuleTelemetry, loadTelemetryInfo } from '../lib/coverage-analysis';
 import { describeLogEventKey } from '../lib/log-events';
+import { kbCache } from '../lib/kb-cache';
 
 // Atomic Red Team tests and the rules each one is expected to trigger.
 
@@ -60,7 +61,10 @@ const rulesByTechnique = (() => {
       const index = new Map<string, RuleTelemetry[]>();
       for (const r of rules) {
         if (r.status === 'deprecated') continue;
-        for (const t of new Set(r.techniques)) index.set(t, [...(index.get(t) ?? []), r]);
+        for (const t of new Set(r.techniques)) {
+          if (!index.has(t)) index.set(t, []);
+          index.get(t)!.push(r);
+        }
       }
       cached = { rules, index };
     }
@@ -126,43 +130,61 @@ function summarize(t: ListRow, rules: RuleTelemetry[]) {
   };
 }
 
-// GET /api/atomics?q=&technique=&platform=&executor=&match= — tests with how many rules each should trigger
+// Every test with how many rules it should trigger, and the import's age
+// (cached until data changes: rules, their telemetry or the tests)
+const listCache = kbCache(
+  async () => {
+    const [rows, rules, last] = await Promise.all([
+      prisma.atomicTest.findMany({ select: listSelect, orderBy: [{ techniqueId: 'asc' }, { testNumber: 'asc' }] }),
+      loadRuleTelemetry(),
+      prisma.atomicTest.findFirst({ orderBy: { updatedAt: 'desc' }, select: { updatedAt: true, source: true } }),
+    ]);
+    return {
+      tests: rows.map((t) => summarize(t, rules)),
+      techniques: new Set(rows.map((t) => t.techniqueId)).size,
+      updatedAt: last?.updatedAt ?? null,
+      source: last?.source ?? null,
+    };
+  },
+  undefined,
+  { warm: true, label: 'atomic tests' }
+);
+
+const LIST_LIMIT = 200;
+
+// GET /api/atomics?q=&technique=&platform=&executor=&match=&limit= — tests with how many rules each should
+// trigger; the first `limit` matching tests (default 200), `matching` says how many there are
 router.get('/', async (req, res) => {
-  const q = String(req.query.q ?? '').trim();
+  const q = String(req.query.q ?? '').trim().toLowerCase();
   const technique = String(req.query.technique ?? '').trim().toUpperCase();
   const platform = String(req.query.platform ?? '').trim();
   const executor = String(req.query.executor ?? '').trim();
   const match = String(req.query.match ?? '').trim();
-  const [rows, rules, total, allTechniques, last] = await Promise.all([
-    prisma.atomicTest.findMany({
-      where: {
-        AND: [
-          q ? { OR: [{ name: { contains: q } }, { techniqueId: { contains: q } }, { guid: q }] } : {},
-          technique ? { OR: [{ techniqueId: technique }, { techniqueId: { startsWith: `${technique}.` } }] } : {},
-          executor ? { executor } : {},
-        ],
-      },
-      select: listSelect,
-      orderBy: [{ techniqueId: 'asc' }, { testNumber: 'asc' }],
-    }),
-    loadRuleTelemetry(),
-    prisma.atomicTest.count(),
-    prisma.atomicTest.findMany({ distinct: ['techniqueId'], select: { techniqueId: true } }),
-    prisma.atomicTest.findFirst({ orderBy: { updatedAt: 'desc' }, select: { updatedAt: true, source: true } }),
-  ]);
-  let tests = rows.map((t) => summarize(t, rules));
-  if (platform) tests = tests.filter((t) => t.platforms.includes(platform));
-  if (match === 'telemetry') tests = tests.filter((t) => t.rules.telemetry > 0);
-  else if (match === 'none') tests = tests.filter((t) => !t.rules.telemetry && !t.rules.edr && !t.rules['other-telemetry'] && !t.rules.unknown);
-  else if (match === 'no-telemetry-match') tests = tests.filter((t) => !t.rules.telemetry);
+  const limit = Math.min(Math.max(Number(req.query.limit) || LIST_LIMIT, 1), 5000);
+  const all = await listCache.get();
+  const tests = all.tests.filter(
+    (t) =>
+      (!q || t.name.toLowerCase().includes(q) || t.techniqueId.toLowerCase().includes(q) || t.guid === q) &&
+      (!technique || t.techniqueId === technique || t.techniqueId.startsWith(`${technique}.`)) &&
+      (!executor || t.executor === executor) &&
+      (!platform || t.platforms.includes(platform)) &&
+      (match === 'telemetry'
+        ? t.rules.telemetry > 0
+        : match === 'none'
+          ? !t.rules.telemetry && !t.rules.edr && !t.rules['other-telemetry'] && !t.rules.unknown
+          : match === 'no-telemetry-match'
+            ? !t.rules.telemetry
+            : true)
+  );
   res.json({
     repository: ATOMIC_REPO,
     indexUrl: ATOMIC_INDEX_URL,
-    total,
-    techniques: allTechniques.length,
-    updatedAt: last?.updatedAt ?? null,
-    source: last?.source ?? null,
-    tests,
+    total: all.tests.length,
+    techniques: all.techniques,
+    updatedAt: all.updatedAt,
+    source: all.source,
+    matching: tests.length,
+    tests: tests.slice(0, limit),
   });
 });
 

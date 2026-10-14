@@ -87,7 +87,11 @@ router.get('/chain', async (req, res) => {
 
   const [rules, dataSources, refs, info] = await Promise.all([
     prisma.detectionRule.findMany({
-      where: status ? { status: { in: status } } : { status: { not: 'deprecated' } },
+      where: {
+        ...(status ? { status: { in: status } } : { status: { not: 'deprecated' } }),
+        // Only rules on the technique (by its technique rows, indexed)
+        page: { techniques: { some: { techniqueId: { in: scope } } } },
+      },
       select: {
         status: true,
         severity: true,

@@ -14,6 +14,8 @@ import { relativeTime } from '@/lib/time';
 import { AtomicValidation, ExportSavedSearchesButton } from '@/features/validation/AtomicValidation';
 import { cn } from '@/lib/utils';
 
+/** Tests listed at a time (the server caps at its own limit) */
+const LIST_STEP = 200;
 const SECTION = 'text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2';
 
 export function CopyText({ text, label = 'Copy' }: { text: string; label?: string }) {
@@ -265,14 +267,18 @@ export function AtomicTestsPage() {
   const [platform, setPlatform] = useState('');
   const [executor, setExecutor] = useState('');
   const [match, setMatch] = useState('');
+  // How many tests to list; a new filter starts from the first ones again
+  const filterKey = [q, technique, platform, executor, match].join('|');
+  const [more, setMore] = useState({ key: filterKey, limit: LIST_STEP });
+  const limit = more.key === filterKey ? more.limit : LIST_STEP;
   const { hasPermission } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['atomics', q, technique, platform, executor, match],
-    queryFn: () => listAtomicTests({ q, technique, platform, executor, match }),
+    queryKey: ['atomics', q, technique, platform, executor, match, limit],
+    queryFn: () => listAtomicTests({ q, technique, platform, executor, match, limit }),
     placeholderData: keepPreviousData,
   });
   const tests = useMemo(() => data?.tests ?? [], [data]);
@@ -410,7 +416,7 @@ export function AtomicTestsPage() {
                   </select>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{tests.length.toLocaleString()} tests</span>
+                  <span>{(data?.matching ?? tests.length).toLocaleString()} tests</span>
                   {technique && (
                     <button onClick={() => setParam('technique', null)} className="ml-auto px-1.5 rounded bg-primary/10 text-primary font-mono">
                       {technique} ✕
@@ -457,6 +463,13 @@ export function AtomicTestsPage() {
                       </li>
                     );
                   })}
+                  {(data?.matching ?? 0) > tests.length && (
+                    <li className="px-3 py-2">
+                      <button onClick={() => setMore({ key: filterKey, limit: limit + LIST_STEP })} className="text-sm text-primary hover:underline">
+                        Show more ({((data?.matching ?? 0) - tests.length).toLocaleString()} left)
+                      </button>
+                    </li>
+                  )}
                 </ul>
               )}
             </div>

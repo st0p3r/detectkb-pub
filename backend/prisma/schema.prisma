@@ -115,6 +115,7 @@ model Page {
   telemetryAll TelemetryGroup[]
   stories      RuleStory[]
   testRuns     RuleTestRun[]
+  techniques   RuleTechnique[]
   isPinned     Boolean           @default(false)
   createdById  Int?
   createdAt    DateTime          @default(now())
@@ -211,6 +212,23 @@ model DetectionRule {
   // Filters and sorts of the rule list (GET /api/rules?page=…)
   @@index([status])
   @@index([severity])
+}
+
+// A rule's ATT&CK techniques, one row per ID in DetectionRule.mitreTechniques
+// (derived, see lib/rule-techniques.ts) so rules can be looked up by technique
+model RuleTechnique {
+  pageId      Int
+  // As written in the rule (may be retired, or unknown to ATT&CK)
+  rawId       String  @db.VarChar(16)
+  // Current ATT&CK ID (retired IDs resolved to their replacement); null if unknown
+  techniqueId String? @db.VarChar(16)
+  // Parent technique of techniqueId (T1003 for T1003.001 and for T1003)
+  parentId    String? @db.VarChar(16)
+  page        Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, rawId])
+  @@index([techniqueId])
+  @@index([parentId])
 }
 
 model SplCommand {

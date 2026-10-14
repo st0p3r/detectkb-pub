@@ -2,30 +2,28 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { requirePermission } from '../middleware/auth';
 import { TECHNIQUE_BY_ID, parseTechniqueIds, resolveTechniqueId } from '../lib/attack';
+import { kbCache } from '../lib/kb-cache';
 import { STORY_REPO_RAW, fetchStoryDetails, importStoryFiles } from '../lib/stories';
 
 // Splunk analytic stories: the scenarios ESCU detections belong to.
 
 const router = Router();
 
-// GET /api/stories?q= — every story with rule counts
-router.get('/', async (req, res) => {
-  const q = String(req.query.q ?? '').trim();
-  const stories = await prisma.analyticStory.findMany({
-    where: q ? { OR: [{ name: { contains: q } }, { description: { contains: q } }] } : {},
-    select: {
-      id: true,
-      name: true,
-      category: true,
-      usecase: true,
-      description: true,
-      rules: { select: { page: { select: { rule: { select: { status: true, mitreTechniques: true } } } } } },
-    },
-    orderBy: { name: 'asc' },
-  });
-  res.json({
-    source: STORY_REPO_RAW,
-    stories: stories.map((s) => {
+// Every story with its rule counts (cached until data changes)
+const storiesCache = kbCache(
+  async () => {
+    const stories = await prisma.analyticStory.findMany({
+      select: {
+        id: true,
+        name: true,
+        category: true,
+        usecase: true,
+        description: true,
+        rules: { select: { page: { select: { rule: { select: { status: true, mitreTechniques: true } } } } } },
+      },
+      orderBy: { name: 'asc' },
+    });
+    return stories.map((s) => {
       const rules = s.rules.map((r) => r.page.rule).filter((r): r is NonNullable<typeof r> => !!r);
       const active = rules.filter((r) => r.status !== 'deprecated');
       const techniques = new Set(active.flatMap((r) => parseTechniqueIds(r.mitreTechniques).map(resolveTechniqueId).filter(Boolean)));
@@ -41,7 +39,19 @@ router.get('/', async (req, res) => {
         production: rules.filter((r) => r.status === 'production').length,
         techniques: techniques.size,
       };
-    }),
+    });
+  },
+  undefined,
+  { warm: true, label: 'analytic stories' }
+);
+
+// GET /api/stories?q= — every story with rule counts
+router.get('/', async (req, res) => {
+  const q = String(req.query.q ?? '').trim().toLowerCase();
+  const stories = await storiesCache.get();
+  res.json({
+    source: STORY_REPO_RAW,
+    stories: q ? stories.filter((s) => s.name.toLowerCase().includes(q) || !!s.description?.toLowerCase().includes(q)) : stories,
   });
 });
 

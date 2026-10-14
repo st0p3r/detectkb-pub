@@ -1,4 +1,5 @@
 import { Router, Request } from 'express';
+import { kbCacheMap } from '../lib/kb-cache';
 import { prisma } from '../lib/prisma';
 import {
   ATTACK_VERSION,
@@ -9,6 +10,7 @@ import {
   resolveTechniqueId,
 } from '../lib/attack';
 import { ValidationStatus, loadValidation } from '../lib/validation';
+import { CONFIDENCE_LEVELS, CoverageConfidence, bestConfidence } from '../lib/coverage-confidence';
 
 const router = Router();
 
@@ -23,20 +25,34 @@ interface CoveringRule {
 }
 
 /** ?status=production,testing — defaults to every status except deprecated. */
-function statusFilter(req: Request) {
-  const raw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+function statusFilter(raw: string) {
   if (raw === 'all') return {};
   if (raw) return { status: { in: raw.split(',').map((s) => s.trim()).filter(Boolean) } };
   return { status: { not: 'deprecated' } };
 }
 
+// Coverage per filter (cached until data changes; shared, so read-only)
+const coverageCache = kbCacheMap(
+  (key) => {
+    const [status, validation] = key.split('|');
+    return buildCoverage(status, validation === 'validated');
+  },
+  { warm: true, label: 'ATT&CK coverage' }
+);
+
+/** technique ID → rules that reference it, for ?status= and ?validation=validated */
+function computeCoverage(req: Request) {
+  const raw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const status = raw === 'all' ? raw : raw.split(',').map((s) => s.trim()).filter(Boolean).sort().join(',');
+  return coverageCache.get(`${status}|${req.query.validation === 'validated' ? 'validated' : ''}`);
+}
+
 /** technique ID → rules that reference it (IDs not in ATT&CK are returned separately). */
-async function computeCoverage(req: Request) {
-  const validation = await loadValidation();
+async function buildCoverage(status: string, onlyValidated: boolean) {
   // ?validation=validated — proven coverage: only rules a lab test showed firing
-  const onlyValidated = req.query.validation === 'validated';
+  const validation = await loadValidation();
   const all = await prisma.detectionRule.findMany({
-    where: statusFilter(req),
+    where: statusFilter(status),
     select: {
       status: true,
       severity: true,
@@ -88,25 +104,34 @@ router.get('/coverage', async (req, res) => {
   const parentTotal = TECHNIQUES.filter((t) => !t.id.includes('.')).length;
 
   // Parent cell = rules on the technique or any sub-technique, each rule once
-  const parentRules = new Map<string, Set<number>>();
+  const parentRules = new Map<string, Map<number, CoveringRule>>();
   for (const [id, rules] of byTechnique) {
     const parent = parentTechniqueId(id);
-    if (!parentRules.has(parent)) parentRules.set(parent, new Set());
-    for (const r of rules) parentRules.get(parent)!.add(r.pageId);
+    if (!parentRules.has(parent)) parentRules.set(parent, new Map());
+    for (const r of rules) parentRules.get(parent)!.set(r.pageId, r);
   }
+  // Best confidence per technique and per parent cell, and how many covered
+  // (parent) techniques reach each level
+  const confidence = Object.fromEntries(Array.from(byTechnique, ([id, rules]) => [id, bestConfidence(rules)]));
+  const parentConfidence = Object.fromEntries(Array.from(parentRules, ([id, rules]) => [id, bestConfidence(rules.values())]));
+  const confidenceCounts = Object.fromEntries(CONFIDENCE_LEVELS.map((l) => [l, 0])) as Record<CoverageConfidence, number>;
+  for (const level of Object.values(parentConfidence)) if (level) confidenceCounts[level]++;
 
   res.json({
     attackVersion: ATTACK_VERSION,
     tactics: TACTICS,
     techniques: TECHNIQUES,
     counts: Object.fromEntries(Array.from(byTechnique, ([id, rules]) => [id, rules.length])),
-    parentCounts: Object.fromEntries(Array.from(parentRules, ([id, pages]) => [id, pages.size])),
+    parentCounts: Object.fromEntries(Array.from(parentRules, ([id, rules]) => [id, rules.size])),
+    confidence,
+    parentConfidence,
     unknownTechniques: Array.from(unknown, ([id, rules]) => ({ id, rules })),
     retiredTechniques: Array.from(retired, ([id, v]) => ({ id, ...v })),
     summary: {
       rulesAnalyzed: ruleCount,
       coveredTechniques: coveredParents.size,
       totalTechniques: parentTotal,
+      confidence: confidenceCounts,
     },
   });
 });

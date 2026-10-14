@@ -295,7 +295,7 @@ export interface ReferenceMatches {
   techniques: Map<string, string[]>;
 }
 
-const matchesCache = kbCache(buildReferenceMatches);
+const matchesCache = kbCache(buildReferenceMatches, undefined, { warm: true, label: 'attacker tool matches' });
 
 /** For every rule: which reference entries it mentions (cached until data changes). */
 export function computeReferenceMatches(): Promise<ReferenceMatches> {

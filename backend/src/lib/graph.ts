@@ -1,7 +1,7 @@
 import { prisma } from './prisma';
 import { TECHNIQUE_BY_ID, parseTechniqueIds, resolveTechniqueId } from './attack';
 import { REFERENCE_KINDS, computeReferenceMatches } from './references';
-import { kbCache, onDataChanged } from './kb-cache';
+import { kbCache } from './kb-cache';
 import { GROUPS, MITIGATIONS, SOFTWARE, attackObjectUrl } from './attack-cti';
 
 // The knowledge graph: pages, wiki links, ATT&CK techniques, Sysmon and other
@@ -259,29 +259,12 @@ async function buildGraph(): Promise<Graph> {
   return { nodes, edges: valid, adjacency };
 }
 
-const graphCache = kbCache(buildGraph);
-let lastUsed = 0;
+// Rebuilt in the background after changes, so the next graph view doesn't wait
+const graphCache = kbCache(buildGraph, undefined, { warm: true, label: 'knowledge graph' });
 
 export function getGraph(): Promise<Graph> {
-  lastUsed = Date.now();
   return graphCache.get();
 }
-
-// After a change, rebuild in the background once writes settle (an import
-// makes hundreds), so the next graph view doesn't wait for it. Only while
-// someone has used the graph recently.
-const WARM_DELAY_MS = 3_000;
-const WARM_IF_USED_WITHIN_MS = 30 * 60_000;
-let warmTimer: NodeJS.Timeout | null = null;
-onDataChanged(() => {
-  if (Date.now() - lastUsed > WARM_IF_USED_WITHIN_MS) return;
-  if (warmTimer) clearTimeout(warmTimer);
-  warmTimer = setTimeout(() => {
-    warmTimer = null;
-    graphCache.get().catch((err) => console.error('Graph rebuild failed:', err));
-  }, WARM_DELAY_MS);
-  warmTimer.unref();
-});
 
 /** Subgraph restricted to the given layers (see LAYERS). */
 export function filterLayers(graph: Graph, layers: string[]) {
