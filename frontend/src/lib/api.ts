@@ -844,8 +844,23 @@ export interface AttackCoverage {
   parentCounts: Record<string, number>;
   unknownTechniques: { id: string; rules: CoveringRule[] }[];
   retiredTechniques: { id: string; replacedBy: string; rules: CoveringRule[] }[];
-  summary: { rulesAnalyzed: number; coveredTechniques: number; totalTechniques: number };
+  /** Best confidence among the rules of each technique / sub-technique, and of each parent cell */
+  confidence: Record<string, CoverageConfidence | null>;
+  parentConfidence: Record<string, CoverageConfidence | null>;
+  summary: {
+    rulesAnalyzed: number;
+    coveredTechniques: number;
+    totalTechniques: number;
+    /** Covered (parent) techniques by their best rule's confidence */
+    confidence: Record<CoverageConfidence, number>;
+  };
 }
+
+/**
+ * How far a technique's coverage can be trusted, from its best rule: a deployed
+ * (production / testing) rule proven in the lab, production, testing, draft.
+ */
+export type CoverageConfidence = 'validated' | 'production' | 'testing' | 'draft';
 
 /** `validatedOnly`: proven coverage — only rules whose latest lab test detected the attack */
 export async function getAttackCoverage(status?: string, validatedOnly = false) {
@@ -1440,10 +1455,12 @@ export interface AtomicList {
   techniques: number;
   updatedAt: string | null;
   source: string | null;
+  /** Tests matching the filters; `tests` holds the first `limit` of them */
+  matching: number;
   tests: AtomicTestSummary[];
 }
 
-export async function listAtomicTests(params: { q?: string; technique?: string; platform?: string; executor?: string; match?: string } = {}) {
+export async function listAtomicTests(params: { q?: string; technique?: string; platform?: string; executor?: string; match?: string; limit?: number } = {}) {
   const { data } = await api.get('/api/atomics', { params: Object.fromEntries(Object.entries(params).filter(([, v]) => v)) });
   return data as AtomicList;
 }

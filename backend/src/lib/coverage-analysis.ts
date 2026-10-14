@@ -108,7 +108,7 @@ const telemetryCache = kbCache(async (): Promise<TelemetryData> => {
       };
     }),
   };
-});
+}, undefined, { warm: true, label: 'rule telemetry' });
 
 /** Every rule's techniques and telemetry (cached until data changes). */
 export async function loadRuleTelemetry(): Promise<RuleTelemetry[]> {

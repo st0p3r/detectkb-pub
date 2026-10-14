@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { kbCache, markDataChanged, onDataChanged } from '../src/lib/kb-cache';
+import { WARM_DELAY_MS, WARM_IF_USED_WITHIN_MS, kbCache, kbCacheMap, markDataChanged, onDataChanged } from '../src/lib/kb-cache';
 
 afterEach(() => vi.useRealTimers());
 
@@ -68,4 +68,47 @@ describe('kbCache', () => {
     markDataChanged();
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it('rebuilds a used warm cache in the background once writes settle', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    const c = kbCache(async () => ++n, 60 * 60_000, { warm: true });
+    expect(await c.get()).toBe(1);
+    markDataChanged();
+    markDataChanged(); // several writes: one rebuild
+    expect(n).toBe(1);
+    await vi.advanceTimersByTimeAsync(WARM_DELAY_MS + 10);
+    expect(n).toBe(2);
+    expect(c.isFresh()).toBe(true);
+    expect(await c.get()).toBe(2);
+  });
+
+  it('does not rebuild a warm cache nobody used recently', async () => {
+    vi.useFakeTimers();
+    let n = 0;
+    const c = kbCache(async () => ++n, 24 * 60 * 60_000, { warm: true });
+    await c.get();
+    vi.advanceTimersByTime(WARM_IF_USED_WITHIN_MS + 1);
+    markDataChanged();
+    await vi.advanceTimersByTimeAsync(WARM_DELAY_MS + 10);
+    expect(n).toBe(1);
+  });
 });
+
+describe('kbCacheMap', () => {
+  it('caches per key and drops the oldest key past maxKeys', async () => {
+    const build = vi.fn(async (k: string) => `v:${k}`);
+    const m = kbCacheMap(build, { maxKeys: 2 });
+    expect(await m.get('a')).toBe('v:a');
+    await m.get('a');
+    await m.get('b');
+    expect(build).toHaveBeenCalledTimes(2);
+    await m.get('c'); // drops a
+    await m.get('a');
+    expect(build).toHaveBeenCalledTimes(4);
+    markDataChanged();
+    await m.get('a');
+    expect(build).toHaveBeenCalledTimes(5);
+  });
+});
+

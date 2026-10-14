@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { LOG_SOURCES } from '../lib/log-events';
+import { kbCache, kbCacheMap } from '../lib/kb-cache';
 
 // Telemetry other than Sysmon for Windows: log sources, their events, and the
 // rules / data source pages that depend on each (links are derived from the
@@ -37,9 +38,7 @@ async function eventRows(where: { source?: string } = {}): Promise<EventRow[]> {
   return events.map(({ id, ...e }) => ({ ...e, ...(counts.get(id) ?? { rules: 0, dataSources: 0 }) }));
 }
 
-// GET /api/log-sources — every log source with its event and rule counts,
-// plus Sysmon for Windows (which has its own page)
-router.get('/', async (_req, res) => {
+async function buildSources() {
   const [events, sysmonRules] = await Promise.all([
     eventRows(),
     prisma.detectionRule.count({ where: { page: { sysmonEvents: { some: {} } } } }),
@@ -66,17 +65,33 @@ router.get('/', async (_req, res) => {
     bySource.set(e.source, entry);
   }
   const sysmonEvents = await prisma.sysmonEvent.count({ where: { pages: { some: {} } } });
-  res.json([
+  return [
     { key: 'sysmon', label: 'Sysmon', platform: 'Windows', events: sysmonEvents, rules: sysmonRules },
     ...Array.from(bySource.values()).sort((a, b) => b.rules - a.rules || a.label.localeCompare(b.label)),
-  ]);
+  ];
+}
+
+const eventsCache = kbCacheMap(
+  async (source) =>
+    (await eventRows({ source })).sort(
+      (a, b) => Number(a.code !== '*') - Number(b.code !== '*') || b.rules - a.rules || a.code.localeCompare(b.code, 'en', { numeric: true })
+    ),
+  { label: 'log source events', maxKeys: 40 }
+);
+
+const sourcesCache = kbCache(buildSources, undefined, { warm: true, label: 'log sources' });
+
+// GET /api/log-sources — every log source with its event and rule counts,
+// plus Sysmon for Windows (which has its own page)
+router.get('/', async (_req, res) => {
+  res.json(await sourcesCache.get());
 });
 
 // GET /api/log-sources/:source/events — a source's events with rule counts
 router.get('/:source/events', async (req, res) => {
-  const rows = await eventRows({ source: req.params.source });
-  res.json(rows.sort((a, b) => Number(a.code !== '*') - Number(b.code !== '*') || b.rules - a.rules || a.code.localeCompare(b.code, 'en', { numeric: true })));
+  res.json(await eventsCache.get(req.params.source));
 });
+
 
 // GET /api/log-sources/events/pages?key=windows-security:4688 — rules and data sources using an event
 router.get('/events/pages', async (req, res) => {

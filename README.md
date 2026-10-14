@@ -12,7 +12,9 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
 - **Sigma**: import `.yml` rules (single or multi-document), export one or all rules, and convert
   Sigma to SPL (Splunk), KQL (Defender XDR / Sentinel ASIM), EQL and Lucene (Elastic) via pySigma
 - **ATT&CK coverage heatmap** of your rules (ATT&CK Enterprise v19) with per-technique drill-down and
-  export as an [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) layer
+  export as an [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) layer; coloured
+  by *confidence* — the best rule of each technique: proven in the lab, production, testing only or
+  draft only (production + testing rules are counted by default)
 - **Sysmon ↔ rules ↔ data sources**: each Sysmon event lists the rules and data sources that depend
   on it (e.g. "which rules need Event ID 10?"), inferred from the SPL / Sigma logsource or set manually
 - **Log sources beyond Sysmon**: Windows Security / System / PowerShell / Defender events, Sysmon for
@@ -107,6 +109,12 @@ cd backend && node scripts/update-attack-data.js
 ```
 
 The database schema is managed with `prisma db push` (there are no migration files).
+
+Views computed from the whole knowledge base (graph, coverage, Data Health, threat groups, Atomic
+tests, analytic stories, log sources) are cached in memory until data changes, and rebuilt in the
+background a few seconds after the last write, so pages don't wait for them. Rules' ATT&CK
+techniques are also kept as rows (`RuleTechnique`, derived on save and at startup) so rules are
+looked up by technique through an index.
 
 ## Environment Variables
 

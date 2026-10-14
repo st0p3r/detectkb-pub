@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { techniquePageWhere } from './rule-techniques';
 
 // Query building for the paged rule list (GET /api/rules?page=…).
 
@@ -58,7 +59,7 @@ export function ruleWhere(f: RuleListQuery, omit?: 'status'): Prisma.DetectionRu
   if (f.severity) and.push({ severity: { in: f.severity.split(',') } });
   if (f.source === 'manual') and.push({ sourceFormat: null });
   else if (f.source) and.push({ sourceFormat: f.source });
-  if (f.technique) and.push({ mitreTechniques: { contains: f.technique } });
+  if (f.technique) and.push({ page: techniquePageWhere(f.technique) });
   if (f.tactic) and.push({ mitreTactics: { contains: f.tactic } });
   if (f.dataSource) and.push({ dataSource: { contains: f.dataSource } });
   if (f.story) and.push({ page: { stories: { some: { storyId: f.story } } } });

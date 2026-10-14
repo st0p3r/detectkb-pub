@@ -12,6 +12,7 @@ import {
   attackObjectUrl,
 } from '../lib/attack-cti';
 import { loadRuleTelemetry } from '../lib/coverage-analysis';
+import { kbCacheMap } from '../lib/kb-cache';
 import { getD3fend } from '../lib/d3fend';
 
 // ATT&CK threat groups and software, and how well the rules cover the
@@ -20,19 +21,28 @@ import { getD3fend } from '../lib/d3fend';
 
 const router = Router();
 
-/** ?status=production,testing | all — default: every status except deprecated. */
-async function rulesByTechnique(req: Request): Promise<Map<string, Set<number>>> {
-  const raw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
-  const statuses = raw && raw !== 'all' ? raw.split(',').map((s) => s.trim()) : null;
-  const out = new Map<string, Set<number>>();
-  for (const r of await loadRuleTelemetry()) {
-    if (statuses ? !statuses.includes(r.status) : raw !== 'all' && r.status === 'deprecated') continue;
-    for (const t of r.techniques) {
-      if (!out.has(t)) out.set(t, new Set());
-      out.get(t)!.add(r.pageId);
+// technique → rules, per status filter (cached until data changes; shared, so read-only)
+const byTechniqueCache = kbCacheMap(
+  async (raw) => {
+    const statuses = raw && raw !== 'all' ? raw.split(',') : null;
+    const out = new Map<string, Set<number>>();
+    for (const r of await loadRuleTelemetry()) {
+      if (statuses ? !statuses.includes(r.status) : raw !== 'all' && r.status === 'deprecated') continue;
+      for (const t of r.techniques) {
+        if (!out.has(t)) out.set(t, new Set());
+        out.get(t)!.add(r.pageId);
+      }
     }
-  }
-  return out;
+    return out;
+  },
+  { warm: true, label: 'rules by technique' }
+);
+
+/** ?status=production,testing | all — default: every status except deprecated. */
+function rulesByTechnique(req: Request): Promise<ReadonlyMap<string, ReadonlySet<number>>> {
+  const raw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
+  const key = raw === 'all' ? raw : raw.split(',').map((s) => s.trim()).filter(Boolean).sort().join(',');
+  return byTechniqueCache.get(key);
 }
 
 const matches = (q: string, ...fields: (string | string[])[]) =>

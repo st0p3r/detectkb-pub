@@ -1,5 +1,6 @@
 import 'express-async-errors';
 import express from 'express';
+import { Prisma } from '@prisma/client';
 import cors from 'cors';
 import fs from 'fs';
 import { BACKUP_DIR, CORS_ORIGIN, PORT } from './lib/config';
@@ -130,6 +131,17 @@ app.use((err: Error & { status?: number; expose?: boolean }, req: express.Reques
   // anything else is logged and answered with a generic message so internals don't leak
   if (err.status && err.status >= 400 && err.status < 500) {
     res.status(err.status).json({ error: err.expose ? err.message : 'Bad request' });
+    return;
+  }
+  // A malformed id in the URL (/api/stories/abc) reaches Prisma as NaN
+  if (err instanceof Prisma.PrismaClientValidationError) {
+    console.warn(`${req.method} ${req.originalUrl}: invalid query (${err.message.split('\n').filter(Boolean).pop()})`);
+    res.status(400).json({ error: 'Invalid request' });
+    return;
+  }
+  // Updating or deleting a record that doesn't exist
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+    res.status(404).json({ error: 'Not found' });
     return;
   }
   console.error(`${req.method} ${req.originalUrl}:`, err);

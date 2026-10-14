@@ -73,14 +73,26 @@ export interface ActorTechnique {
  * How well rules cover the techniques a group or software uses.
  * `rulesByTechnique`: technique ID → rules mapped to exactly that ID.
  */
-export function actorCoverage(techniques: string[], rulesByTechnique: Map<string, Set<number>>) {
-  const subRules = new Map<string, Set<number>>();
-  for (const [id, rules] of rulesByTechnique) {
-    if (!id.includes('.')) continue;
-    const parent = parentTechniqueId(id);
-    if (!subRules.has(parent)) subRules.set(parent, new Set());
-    for (const r of rules) subRules.get(parent)!.add(r);
+// Rules on any sub-technique of each parent, per rulesByTechnique map (lists
+// compute the coverage of hundreds of groups / software from the same map)
+const subRulesMemo = new WeakMap<ReadonlyMap<string, ReadonlySet<number>>, Map<string, Set<number>>>();
+function subRulesOf(rulesByTechnique: ReadonlyMap<string, ReadonlySet<number>>) {
+  let subRules = subRulesMemo.get(rulesByTechnique);
+  if (!subRules) {
+    subRules = new Map();
+    for (const [id, rules] of rulesByTechnique) {
+      if (!id.includes('.')) continue;
+      const parent = parentTechniqueId(id);
+      if (!subRules.has(parent)) subRules.set(parent, new Set());
+      for (const r of rules) subRules.get(parent)!.add(r);
+    }
+    subRulesMemo.set(rulesByTechnique, subRules);
   }
+  return subRules;
+}
+
+export function actorCoverage(techniques: string[], rulesByTechnique: ReadonlyMap<string, ReadonlySet<number>>) {
+  const subRules = subRulesOf(rulesByTechnique);
   const list: ActorTechnique[] = techniques.map((id) => {
     const t = TECHNIQUE_BY_ID.get(id);
     const own = rulesByTechnique.get(id)?.size ?? 0;

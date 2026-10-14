@@ -40,7 +40,7 @@ export interface Provenance {
 
 const ITEM_LIMIT = 100;
 
-const healthCache = kbCache(computeHealth);
+const healthCache = kbCache(computeHealth, undefined, { warm: true, label: 'data health' });
 
 export function loadDataHealth() {
   return healthCache.get();
