@@ -16,9 +16,10 @@ import {
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { useDebounced } from '@/hooks/useDebounced';
 import { cn } from '@/lib/utils';
+import { WatchStar, WatchlistView } from './WatchlistView';
 import { safeHref } from '@/lib/safeUrl';
 
-type Tab = 'groups' | 'software';
+type Tab = 'watchlist' | 'groups' | 'software';
 type Sort = 'techniques' | 'coverage' | 'gaps' | 'name';
 
 const STATUS_FILTERS = [
@@ -119,12 +120,29 @@ function Stats({ coverage }: { coverage: ActorCoverage }) {
   );
 }
 
-function ActorHeader({ id, name, aliases, description, url, node }: { id: string; name: string; aliases: string[]; description: string; url: string; node: string }) {
+function ActorHeader({
+  id,
+  name,
+  aliases,
+  description,
+  url,
+  node,
+  actions,
+}: {
+  id: string;
+  name: string;
+  aliases: string[];
+  description: string;
+  url: string;
+  node: string;
+  actions?: React.ReactNode;
+}) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-baseline gap-2">
         <h2 className="text-xl font-semibold">{name}</h2>
         <span className="font-mono text-sm text-muted-foreground">{id}</span>
+        {actions}
         <div className="ml-auto flex flex-wrap gap-3 text-sm">
           <Link to={`/attack-coverage?actor=${id}`} className="inline-flex items-center gap-1 text-primary hover:underline">
             <Grid3x3 className="w-4 h-4" /> In the ATT&CK matrix
@@ -158,7 +176,8 @@ function GroupDetail({ id, status, onSoftware }: { id: string; status: string; o
   if (error || !data) return <p className="text-sm text-destructive">{apiErrorMessage(error, 'Could not load the group')}</p>;
   return (
     <div className="space-y-5">
-      <ActorHeader {...data} node={`group:${data.id}`} />
+      <ActorHeader {...data} node={`group:${data.id}`} actions={<WatchStar id={data.id} watched={data.watched} withLabel />} />
+      {data.watchNote && <p className="text-xs text-amber-700 dark:text-amber-300">Watchlist note: {data.watchNote}</p>}
       <Stats coverage={data.coverage} />
       <section>
         <div className="flex items-center gap-3 mb-2">
@@ -230,15 +249,22 @@ function SoftwareDetail({ id, status, onGroup }: { id: string; status: string; o
 /** ATT&CK threat groups and software, and how well the rules cover the techniques each uses. */
 export function ThreatGroupsPage() {
   const [params, setParams] = useSearchParams();
-  const tab: Tab = params.get('tab') === 'software' ? 'software' : 'groups';
+  const tab: Tab = params.get('tab') === 'software' ? 'software' : params.get('tab') === 'watchlist' ? 'watchlist' : 'groups';
   const selected = tab === 'groups' ? params.get('group') : params.get('software');
   const [search, setSearch] = useState('');
   const q = useDebounced(search.trim(), 250);
   const [status, setStatus] = useState('');
   const [sort, setSort] = useState<Sort>('techniques');
   const [swType, setSwType] = useState('');
+  // Search group descriptions too: targeted sectors and countries
+  const [inDescription, setInDescription] = useState(false);
 
-  const groups = useQuery({ queryKey: ['threat-groups', q, status], queryFn: () => listThreatGroups({ q, status }), enabled: tab === 'groups', placeholderData: keepPreviousData });
+  const groups = useQuery({
+    queryKey: ['threat-groups', q, status, inDescription],
+    queryFn: () => listThreatGroups({ q, status, inDescription }),
+    enabled: tab === 'groups',
+    placeholderData: keepPreviousData,
+  });
   const software = useQuery({
     queryKey: ['software-list', q, status, swType],
     queryFn: () => listSoftware({ q, status, type: swType }),
@@ -246,7 +272,7 @@ export function ThreatGroupsPage() {
     placeholderData: keepPreviousData,
   });
   const list = useMemo(() => {
-    const items: (ActorSummary & { sub?: string })[] =
+    const items: (ActorSummary & { sub?: string; watched?: boolean })[] =
       tab === 'groups'
         ? (groups.data ?? []).map((g) => ({ ...g, sub: g.aliases.slice(0, 3).join(', ') }))
         : (software.data ?? []).map((s) => ({ ...s, sub: `${s.type}${s.platforms.length ? ` · ${s.platforms.slice(0, 3).join(', ')}` : ''}` }));
@@ -256,14 +282,14 @@ export function ThreatGroupsPage() {
 
   const open = (next: { tab?: Tab; group?: string; software?: string }) => {
     const t = next.tab ?? tab;
-    const p: Record<string, string> = t === 'software' ? { tab: 'software' } : {};
+    const p: Record<string, string> = t === 'groups' ? {} : { tab: t };
     if (next.group) p.group = next.group;
     if (next.software) p.software = next.software;
     setParams(p);
   };
   useEffect(() => {
     // Opening the first entry keeps the detail panel from being empty
-    if (!selected && list.length && !q) open(tab === 'groups' ? { group: list[0].id } : { software: list[0].id });
+    if (tab !== 'watchlist' && !selected && list.length && !q) open(tab === 'groups' ? { group: list[0].id } : { software: list[0].id });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the list first arrives
   }, [list.length > 0, tab]);
 
@@ -281,6 +307,7 @@ export function ThreatGroupsPage() {
         <div className="ml-auto flex rounded-lg border border-border bg-card p-0.5" role="tablist">
           {(
             [
+              ['watchlist', 'Watchlist'],
               ['groups', 'Groups'],
               ['software', 'Malware & tools'],
             ] as const
@@ -298,83 +325,94 @@ export function ThreatGroupsPage() {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-[24rem_1fr] gap-4 items-start">
-        <div className="rounded-lg border border-border bg-card">
-          <div className="p-3 space-y-2 border-b border-border">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <input
-                data-page-search
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={tab === 'groups' ? 'Name or alias (APT34, OilRig)…' : 'Name or alias (Mimikatz)…'}
-                aria-label="Search"
-                className="w-full pl-9 pr-3 py-2 rounded-md border border-border bg-background text-sm"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort" className="flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-xs">
-                <option value="techniques">Most techniques</option>
-                <option value="gaps">Most gaps</option>
-                <option value="coverage">Best covered</option>
-                <option value="name">Name</option>
-              </select>
-              <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Rule status" className="flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-xs">
-                {STATUS_FILTERS.map((f) => (
-                  <option key={f.value} value={f.value}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-              {tab === 'software' && (
-                <select value={swType} onChange={(e) => setSwType(e.target.value)} aria-label="Type" className="flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-xs">
-                  <option value="">Malware and tools</option>
-                  <option value="malware">Malware</option>
-                  <option value="tool">Tools</option>
+      {tab === 'watchlist' ? (
+        <WatchlistView onGroup={(id) => open({ tab: 'groups', group: id })} />
+      ) : (
+        <div className="grid lg:grid-cols-[24rem_1fr] gap-4 items-start">
+          <div className="rounded-lg border border-border bg-card">
+            <div className="p-3 space-y-2 border-b border-border">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  data-page-search
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={tab === 'groups' ? 'Name or alias (APT34, OilRig)…' : 'Name or alias (Mimikatz)…'}
+                  aria-label="Search"
+                  className="w-full pl-9 pr-3 py-2 rounded-md border border-border bg-background text-sm"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort" className="flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-xs">
+                  <option value="techniques">Most techniques</option>
+                  <option value="gaps">Most gaps</option>
+                  <option value="coverage">Best covered</option>
+                  <option value="name">Name</option>
                 </select>
+                <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Rule status" className="flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-xs">
+                  {STATUS_FILTERS.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+                {tab === 'software' && (
+                  <select value={swType} onChange={(e) => setSwType(e.target.value)} aria-label="Type" className="flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-xs">
+                    <option value="">Malware and tools</option>
+                    <option value="malware">Malware</option>
+                    <option value="tool">Tools</option>
+                  </select>
+                )}
+              </div>
+              {tab === 'groups' && (
+                <label className="flex items-center gap-1.5 text-xs" title="Also match the group descriptions: targeted sectors and countries">
+                  <input type="checkbox" checked={inDescription} onChange={(e) => setInDescription(e.target.checked)} />
+                  Search descriptions (sector, country)
+                </label>
               )}
+              <div className="text-xs text-muted-foreground">{list.length.toLocaleString()} {tab === 'groups' ? 'groups' : 'entries'}</div>
             </div>
-            <div className="text-xs text-muted-foreground">{list.length.toLocaleString()} {tab === 'groups' ? 'groups' : 'entries'}</div>
+            {loading ? (
+              <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+              </p>
+            ) : (
+              <ul className="max-h-[calc(100vh-17rem)] overflow-y-auto divide-y divide-border">
+                {list.map((a) => (
+                  <li key={a.id}>
+                    <button
+                      onClick={() => open(tab === 'groups' ? { group: a.id } : { software: a.id })}
+                      aria-current={selected === a.id}
+                      className={cn('w-full text-left px-3 py-2 hover:bg-accent/50', selected === a.id && 'bg-primary/10')}
+                    >
+                      <div className="flex items-baseline gap-2">
+                        {tab === 'groups' && <WatchStar id={a.id} watched={!!a.watched} />}
+                        <span className="font-medium truncate">{a.name}</span>
+                        <span className="font-mono text-[11px] text-muted-foreground">{a.id}</span>
+                        <span className="ml-auto text-xs tabular-nums text-muted-foreground" title={`${a.covered} of ${a.total} techniques covered`}>
+                          {a.covered}/{a.total}
+                        </span>
+                      </div>
+                      {a.sub && <div className="text-[11px] text-muted-foreground truncate">{a.sub}</div>}
+                      <CoverageBar c={a} className="mt-1.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {loading ? (
-            <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-            </p>
-          ) : (
-            <ul className="max-h-[calc(100vh-17rem)] overflow-y-auto divide-y divide-border">
-              {list.map((a) => (
-                <li key={a.id}>
-                  <button
-                    onClick={() => open(tab === 'groups' ? { group: a.id } : { software: a.id })}
-                    aria-current={selected === a.id}
-                    className={cn('w-full text-left px-3 py-2 hover:bg-accent/50', selected === a.id && 'bg-primary/10')}
-                  >
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-medium truncate">{a.name}</span>
-                      <span className="font-mono text-[11px] text-muted-foreground">{a.id}</span>
-                      <span className="ml-auto text-xs tabular-nums text-muted-foreground" title={`${a.covered} of ${a.total} techniques covered`}>
-                        {a.covered}/{a.total}
-                      </span>
-                    </div>
-                    {a.sub && <div className="text-[11px] text-muted-foreground truncate">{a.sub}</div>}
-                    <CoverageBar c={a} className="mt-1.5" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
 
-        <div className="rounded-lg border border-border bg-card p-5 min-w-0">
-          {!selected ? (
-            <p className="text-sm text-muted-foreground">Pick a {tab === 'groups' ? 'group' : 'malware or tool'} to see its techniques and your coverage.</p>
-          ) : tab === 'groups' ? (
-            <GroupDetail id={selected} status={status} onSoftware={(id) => open({ tab: 'software', software: id })} />
-          ) : (
-            <SoftwareDetail id={selected} status={status} onGroup={(id) => open({ tab: 'groups', group: id })} />
-          )}
+          <div className="rounded-lg border border-border bg-card p-5 min-w-0">
+            {!selected ? (
+              <p className="text-sm text-muted-foreground">Pick a {tab === 'groups' ? 'group' : 'malware or tool'} to see its techniques and your coverage.</p>
+            ) : tab === 'groups' ? (
+              <GroupDetail id={selected} status={status} onSoftware={(id) => open({ tab: 'software', software: id })} />
+            ) : (
+              <SoftwareDetail id={selected} status={status} onGroup={(id) => open({ tab: 'groups', group: id })} />
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

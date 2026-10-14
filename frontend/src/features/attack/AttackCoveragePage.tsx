@@ -11,6 +11,7 @@ import {
   getTechniqueContext,
   getTechniqueRules,
   getThreatGroup,
+  getWatchlist,
   listThreatGroups,
   type ActorCoverage,
   type AttackTechnique,
@@ -85,14 +86,31 @@ interface ParentCell {
   confidence: CoverageConfidence | null;
 }
 
-/** The techniques (as parent IDs) a group (G…) or software (S…) uses. */
+/** The techniques (as parent IDs) a group (G…), software (S…) or the watchlist (every watched group) uses. */
 function useActor(actor: string | null, status: string) {
   const isGroup = actor?.startsWith('G');
   const { data } = useQuery({
     queryKey: ['attack-actor', actor, status],
-    queryFn: async (): Promise<{ id: string; name: string; coverage: ActorCoverage }> =>
-      isGroup ? getThreatGroup(actor!, status) : getSoftware(actor!, status),
-    enabled: !!actor && /^[GS]\d{4}$/.test(actor),
+    queryFn: async (): Promise<{ id: string; name: string; coverage: ActorCoverage }> => {
+      if (actor === 'watchlist') {
+        // Coverage by production / testing rules, whatever the status filter
+        const w = await getWatchlist();
+        const s = w.summary;
+        return {
+          id: 'watchlist',
+          name: `the watchlist (${w.groups.length} group${w.groups.length === 1 ? '' : 's'})`,
+          coverage: {
+            techniques: w.techniques.map((t) => ({ id: t.id, name: t.name, tactics: t.tactics, rules: t.deployedRules, state: t.state })),
+            total: s.techniques,
+            covered: s.covered,
+            parentOnly: s.parentOnly,
+            pct: s.techniques ? Math.round((s.covered / s.techniques) * 100) : 0,
+          },
+        };
+      }
+      return isGroup ? getThreatGroup(actor!, status) : getSoftware(actor!, status);
+    },
+    enabled: !!actor && (actor === 'watchlist' || /^[GS]\d{4}$/.test(actor)),
   });
   return useMemo(() => {
     if (!data) return null;
@@ -200,12 +218,13 @@ export function AttackCoveragePage() {
             ))}
           </select>
           <select
-            value={actorId?.startsWith('G') ? actorId : ''}
+            value={actorId?.startsWith('G') || actorId === 'watchlist' ? actorId : ''}
             onChange={(e) => setActor(e.target.value || null)}
             aria-label="Highlight a threat group"
             className="px-3 py-2 rounded-md border border-border bg-background text-sm max-w-[14rem]"
           >
             <option value="">Highlight a threat group…</option>
+            <option value="watchlist">★ Watchlist (all watched groups)</option>
             {[...groups]
               .sort((a, b) => a.name.localeCompare(b.name))
               .map((g) => (
@@ -356,10 +375,18 @@ export function AttackCoveragePage() {
               <Skull className="w-4 h-4 text-rose-500" />
               <span>
                 Techniques used by{' '}
-                <Link to={`/threat-groups?${actor.id.startsWith('G') ? 'group' : 'tab=software&software'}=${actor.id}`} className="font-medium text-primary hover:underline">
+                <Link
+                  to={actor.id === 'watchlist' ? '/threat-groups?tab=watchlist' : `/threat-groups?${actor.id.startsWith('G') ? 'group' : 'tab=software&software'}=${actor.id}`}
+                  className="font-medium text-primary hover:underline"
+                >
                   {actor.name}
-                </Link>{' '}
-                <span className="font-mono text-xs text-muted-foreground">{actor.id}</span>: {actor.coverage.covered} of {actor.coverage.total} covered (
+                </Link>
+                {actor.id !== 'watchlist' && (
+                  <>
+                    {' '}
+                    <span className="font-mono text-xs text-muted-foreground">{actor.id}</span>
+                  </>
+                )}: {actor.coverage.covered} of {actor.coverage.total} covered (
                 {actor.coverage.pct}%){actor.coverage.parentOnly > 0 && `, ${actor.coverage.parentOnly} only through the parent technique`}. Other
                 techniques are dimmed; red outlines are the gaps.
               </span>

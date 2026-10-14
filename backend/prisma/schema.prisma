@@ -382,6 +382,15 @@ model ReferenceDataset {
   fetchedAt DateTime @default(now())
 }
 
+// ATT&CK groups the organisation watches (relevant to its sector or region).
+// Gaps and draft rules are prioritized by the techniques these groups use.
+model WatchedGroup {
+  groupId   String   @id @db.VarChar(16)
+  note      String?  @db.VarChar(500)
+  addedById Int?
+  createdAt DateTime @default(now())
+}
+
 // A user's saved list view: filters, sort and view state of /rules, /pages or
 // /graph, as the URL query string. Shown in the sidebar.
 model SavedView {

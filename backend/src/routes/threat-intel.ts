@@ -13,6 +13,9 @@ import {
 } from '../lib/attack-cti';
 import { loadRuleTelemetry } from '../lib/coverage-analysis';
 import { kbCacheMap } from '../lib/kb-cache';
+import { prisma } from '../lib/prisma';
+import { requirePermission } from '../middleware/auth';
+import { prioritize } from '../lib/watchlist';
 import { getD3fend } from '../lib/d3fend';
 
 // ATT&CK threat groups and software, and how well the rules cover the
@@ -48,15 +51,71 @@ function rulesByTechnique(req: Request): Promise<ReadonlyMap<string, ReadonlySet
 const matches = (q: string, ...fields: (string | string[])[]) =>
   !q || fields.flat().some((f) => f.toLowerCase().includes(q));
 
-// GET /api/threat-intel/groups?q=&status= — groups with their coverage
+// GET /api/threat-intel/groups?q=&desc=1&watched=1&status= — groups with their coverage;
+// desc=1 also searches the descriptions (targeted sectors and countries)
 router.get('/groups', async (req, res) => {
-  const byTech = await rulesByTechnique(req);
+  const [byTech, watched] = await Promise.all([rulesByTechnique(req), watchedIds()]);
   const q = String(req.query.q ?? '').trim().toLowerCase();
-  const groups = GROUPS.filter((g) => matches(q, g.id, g.name, g.aliases)).map((g) => {
+  const inDescription = req.query.desc === '1';
+  const groups = GROUPS.filter(
+    (g) => (req.query.watched !== '1' || watched.has(g.id)) && (matches(q, g.id, g.name, g.aliases) || (inDescription && matches(q, g.description)))
+  ).map((g) => {
     const { total, covered, parentOnly, pct } = actorCoverage(g.techniques, byTech);
-    return { id: g.id, name: g.name, aliases: g.aliases, total, covered, parentOnly, pct, software: g.software.length };
+    return { id: g.id, name: g.name, aliases: g.aliases, total, covered, parentOnly, pct, software: g.software.length, watched: watched.has(g.id) };
   });
   res.json(groups);
+});
+
+const watchedIds = async () => new Set((await prisma.watchedGroup.findMany({ select: { groupId: true } })).map((w) => w.groupId));
+
+// GET /api/threat-intel/watchlist — watched groups, the techniques they use with
+// coverage by deployed (production / testing) rules, and drafts ranked by the gaps they'd close
+router.get('/watchlist', async (_req, res) => {
+  const [rows, rules] = await Promise.all([prisma.watchedGroup.findMany({ orderBy: { createdAt: 'asc' } }), loadRuleTelemetry()]);
+  const watched = rows.map((w) => ({ row: w, group: GROUP_BY_ID.get(w.groupId) })).filter((w): w is { row: typeof w.row; group: NonNullable<typeof w.group> } => !!w.group);
+  const deployed = await byTechniqueCache.get('production,testing');
+  const { techniques, drafts, summary } = prioritize(
+    watched.map((w) => w.group),
+    rules
+  );
+  res.json({
+    groups: watched.map(({ row, group }) => ({
+      id: group.id,
+      name: group.name,
+      aliases: group.aliases,
+      note: row.note,
+      addedAt: row.createdAt,
+      ...pick(actorCoverage(group.techniques, deployed)),
+    })),
+    summary,
+    techniques,
+    drafts: drafts.slice(0, 300),
+  });
+});
+
+// PUT /api/threat-intel/watchlist/G0049 { note? } — watch a group (or change its note)
+router.put('/watchlist/:id', requirePermission('rules:update'), async (req, res) => {
+  const g = GROUP_BY_ID.get(req.params.id.toUpperCase());
+  if (!g) {
+    res.status(404).json({ error: 'Unknown group' });
+    return;
+  }
+  const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 500) || null : undefined;
+  await prisma.watchedGroup.upsert({
+    where: { groupId: g.id },
+    create: { groupId: g.id, note: note ?? null, addedById: req.user?.userId ?? null },
+    update: note === undefined ? {} : { note },
+  });
+  await prisma.auditLog.create({ data: { userId: req.user?.userId ?? null, action: 'WATCHLIST_ADD', resourceType: 'threat-group', newValue: { group: g.id, note } } });
+  res.json({ ok: true });
+});
+
+// DELETE /api/threat-intel/watchlist/G0049
+router.delete('/watchlist/:id', requirePermission('rules:update'), async (req, res) => {
+  const id = req.params.id.toUpperCase();
+  const { count } = await prisma.watchedGroup.deleteMany({ where: { groupId: id } });
+  if (count) await prisma.auditLog.create({ data: { userId: req.user?.userId ?? null, action: 'WATCHLIST_REMOVE', resourceType: 'threat-group', newValue: { group: id } } });
+  res.json({ removed: count });
 });
 
 // GET /api/threat-intel/groups/G0049?status= — a group, the coverage of each technique it uses, its software
@@ -66,10 +125,12 @@ router.get('/groups/:id', async (req, res) => {
     res.status(404).json({ error: 'Unknown group' });
     return;
   }
-  const byTech = await rulesByTechnique(req);
+  const [byTech, watched] = await Promise.all([rulesByTechnique(req), prisma.watchedGroup.findUnique({ where: { groupId: g.id } })]);
   res.json({
     ...g,
     url: attackObjectUrl(g.id),
+    watched: !!watched,
+    watchNote: watched?.note ?? null,
     coverage: actorCoverage(g.techniques, byTech),
     software: g.software
       .map((id) => SOFTWARE_BY_ID.get(id))
