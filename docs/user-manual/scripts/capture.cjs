@@ -261,6 +261,7 @@ fs.mkdirSync(O, { recursive: true });
     await p.waitForSelector('text=/Atomic Red Team tests \\(/');
     await p.locator('text=/Atomic Red Team tests \\(/').scrollIntoViewIfNeeded();
   }, { wait: 1200 });
+  await shot('67-similar-rules', () => go('/similar-rules', 'text=/alike$/'), { wait: 1200 });
   await shot('64-health-validation', async () => {
     await go('/data-health', 'text=Rules that did not fire in the lab');
     await p.locator('text=Rules that did not fire in the lab').scrollIntoViewIfNeeded();

@@ -9,6 +9,7 @@ import pagesRouter from './routes/pages';
 import categoriesRouter from './routes/categories';
 import linksRouter from './routes/links';
 import rulesRouter from './routes/rules';
+import similarRulesRouter from './routes/similar-rules';
 import splRouter from './routes/spl';
 import searchRouter from './routes/search';
 import tagsRouter from './routes/tags';
@@ -88,6 +89,7 @@ app.use('/api', (req, res, next) => {
 app.use('/api/pages', guard('pages', { checkReads: true }), pagesRouter);
 app.use('/api/categories', guard('pages'), categoriesRouter);
 app.use('/api/rules', guard('rules', { checkReads: true }), rulesRouter);
+app.use('/api/similar-rules', guard('rules', { checkReads: true }), similarRulesRouter);
 app.use('/api/spl', guard('pages'), splRouter);
 app.use('/api/tags', guard('tags', { checkReads: true }), tagsRouter);
 app.use('/api/links', linksRouter);

@@ -5,6 +5,7 @@ import { otherDataSources } from './coverage-analysis';
 import { loadReferenceMatchers, matchText } from './references';
 import { queryText } from './rule-text';
 import { VALIDATION_MAX_AGE_DAYS, loadValidation } from './validation';
+import { LIKELY_OVERLAP, loadSimilarGroups } from './similar-rules';
 
 export { queryText };
 
@@ -182,6 +183,20 @@ async function computeHealth() {
       detail: `${u.sourceKey}: ${(Array.isArray(u.changes) ? (u.changes as { label?: string }[]).map((c) => c.label) : []).join(', ')}`,
     })),
     link: '/upstream',
+  });
+  const similar = (await loadSimilarGroups()).filter((g) => g.similarity >= LIKELY_OVERLAP);
+  checks.push({
+    id: 'similar-rules',
+    severity: 'info',
+    title: 'Overlapping rules',
+    description: `Rules with the same techniques and telemetry whose queries are at least ${LIKELY_OVERLAP * 100}% alike — often the same detection twice. Compare them and keep the better one.`,
+    count: similar.length,
+    items: similar.slice(0, ITEM_LIMIT).map((g) => ({
+      title: g.rules[0].title,
+      slug: g.rules[0].slug,
+      detail: `${g.rules.length} rules · ${Math.round(g.similarity * 100)}% alike`,
+    })),
+    link: '/similar-rules',
   });
   checks.push({
     id: 'stories-no-details',
