@@ -119,7 +119,7 @@ interface SimNode {
  * d3-style force that keeps rectangular cards from overlapping by pushing
  * overlapping pairs apart along the axis of least overlap.
  */
-export function rectCollide(width: number, height: number, padding = 18, strength = 1, iterations = 3) {
+export function rectCollide(width: number, height: number, padding = 26, strength = 1, iterations = 6) {
   let nodes: SimNode[] = [];
   const force = (alpha: number) => {
     const w = width + padding;
@@ -135,7 +135,7 @@ export function rectCollide(width: number, height: number, padding = 18, strengt
         const oy = h - Math.abs(dy);
         if (ox <= 0 || oy <= 0) continue;
         // Positional correction (not only velocity) so overlaps resolve even as the simulation cools
-        const k = strength * Math.max(alpha, 0.1);
+        const k = strength * Math.max(alpha, 0.35);
         if (ox / w < oy / h) {
           const s = (dx < 0 ? -1 : 1) * ox * 0.5 * k;
           a.x = (a.x ?? 0) - s;
@@ -146,6 +146,25 @@ export function rectCollide(width: number, height: number, padding = 18, strengt
           b.y = (b.y ?? 0) + s;
         }
       }
+    }
+  };
+  force.initialize = (ns: SimNode[]) => {
+    nodes = ns;
+  };
+  return force;
+}
+
+/**
+ * d3-style force pulling every node gently towards the centre, so pages
+ * without links and separate clusters stay in the picture instead of
+ * drifting apart until everything is a dot.
+ */
+export function gravity(strength = 0.04) {
+  let nodes: SimNode[] = [];
+  const force = (alpha: number) => {
+    for (const n of nodes) {
+      n.vx = (n.vx ?? 0) - (n.x ?? 0) * strength * alpha;
+      n.vy = (n.vy ?? 0) - (n.y ?? 0) * strength * alpha;
     }
   };
   force.initialize = (ns: SimNode[]) => {
