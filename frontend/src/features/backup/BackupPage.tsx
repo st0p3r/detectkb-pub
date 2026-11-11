@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { HardDrive, Download, Trash2, Upload, AlertTriangle, RefreshCw } from 'lucide-react';
-import { BackupLog, createJsonBackup, listBackups, deleteBackup, restoreFromJson, downloadBackup } from '@/lib/api';
+import { BackupLog, type BackupPolicy, apiErrorMessage, cleanupBackups, createJsonBackup, getBackupPolicy, listBackups, deleteBackup, restoreFromJson, downloadBackup } from '@/lib/api';
 import { useToast } from '@/hooks/useToast';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -27,10 +27,17 @@ export function BackupPage() {
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
+  const [policy, setPolicy] = useState<BackupPolicy | null>(null);
+  // Removing old backups in one go: how old, and what that would remove
+  const [cleanupDays, setCleanupDays] = useState(90);
+  const [cleanupPreview, setCleanupPreview] = useState<{ count: number; freedBytes: number } | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+
   const fetchBackups = useCallback(async () => {
     try {
       const data = await listBackups();
       setBackups(data);
+      getBackupPolicy().then(setPolicy).catch(() => {});
     } catch {
       toast('Failed to load backups', 'error');
     } finally {
@@ -95,6 +102,33 @@ export function BackupPage() {
     }
   };
 
+  const previewCleanup = async () => {
+    setCleaning(true);
+    try {
+      const r = await cleanupBackups(cleanupDays, true);
+      if (r.count) setCleanupPreview(r);
+      else toast(`No backup is older than ${cleanupDays} days (the three newest always stay)`, 'info');
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not check the backups'), 'error');
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  const runCleanup = async () => {
+    setCleanupPreview(null);
+    setCleaning(true);
+    try {
+      const r = await cleanupBackups(cleanupDays);
+      toast(`Removed ${r.count} backup${r.count === 1 ? '' : 's'} (${formatBytes(r.freedBytes)})`, 'success');
+      await fetchBackups();
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not remove the backups'), 'error');
+    } finally {
+      setCleaning(false);
+    }
+  };
+
   const lastBackup = backups[0];
 
   return (
@@ -130,9 +164,62 @@ export function BackupPage() {
       </div>
 
       {/* Scheduled note */}
-      <div className="text-sm text-muted-foreground bg-muted/40 border border-border rounded-md px-4 py-2">
-        Automatic daily backup is scheduled.
+      <div className="text-sm text-muted-foreground bg-muted/40 border border-border rounded-md px-4 py-3 space-y-2">
+        <p>
+          A backup is made automatically every day.
+          {policy && (
+            <>
+              {' '}
+              The newest <b className="text-foreground">{policy.keepDaily}</b> automatic backups are kept
+              {policy.keepWeekly > 0 && (
+                <>
+                  , then one a week for <b className="text-foreground">{policy.keepWeekly}</b> weeks
+                </>
+              )}
+              ; older ones are removed. Backups you make with “Backup Now” are never removed automatically.
+            </>
+          )}
+        </p>
+        {policy && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <span>
+              <b className="text-foreground tabular-nums">{policy.count}</b> backup{policy.count === 1 ? '' : 's'} ·{' '}
+              <b className="text-foreground tabular-nums">{formatBytes(policy.totalBytes)}</b> on disk
+            </span>
+            <span className="ml-auto flex items-center gap-2">
+              <label htmlFor="cleanup-days">Remove backups older than</label>
+              <select
+                id="cleanup-days"
+                value={cleanupDays}
+                onChange={(e) => setCleanupDays(Number(e.target.value))}
+                className="px-2 py-1 rounded-md border border-border bg-background text-sm text-foreground"
+              >
+                {[30, 90, 180, 365].map((d) => (
+                  <option key={d} value={d}>
+                    {d} days
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={previewCleanup}
+                disabled={cleaning}
+                className="px-3 py-1 rounded-md border border-border bg-background text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50"
+              >
+                {cleaning ? 'Checking…' : 'Clean up…'}
+              </button>
+            </span>
+          </div>
+        )}
       </div>
+
+      <ConfirmDialog
+        open={cleanupPreview !== null}
+        title={`Remove ${cleanupPreview?.count ?? 0} old backup${cleanupPreview?.count === 1 ? '' : 's'}?`}
+        message={`Every backup older than ${cleanupDays} days is deleted from the server (${formatBytes(cleanupPreview?.freedBytes ?? 0)}), automatic or made by hand. The three newest backups always stay. This can't be undone — download the ones you want to keep first.`}
+        confirmLabel="Remove them"
+        onConfirm={runCleanup}
+        onCancel={() => setCleanupPreview(null)}
+      />
 
       {/* Backup list */}
       <div className="rounded-md border border-border overflow-hidden">
@@ -165,8 +252,11 @@ export function BackupPage() {
               <tr key={b.id} className="border-t border-border hover:bg-muted/30 transition-colors">
                 <td className="px-4 py-3 font-mono text-xs truncate max-w-[240px]">{b.fileName}</td>
                 <td className="px-4 py-3">
-                  <span className="inline-block px-2 py-0.5 rounded bg-primary/10 text-primary text-xs font-medium uppercase">
-                    {b.type}
+                  <span
+                    className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${b.type === 'scheduled' ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}
+                    title={b.type === 'scheduled' ? 'Made by the daily schedule; thinned out automatically' : 'Made with “Backup Now”; kept until you delete it'}
+                  >
+                    {b.type === 'scheduled' ? 'Automatic' : 'Manual'}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{formatBytes(b.sizeBytes)}</td>

@@ -53,11 +53,8 @@ export function CommandPalette() {
       return;
     }
     search(debouncedQ).then((data) => {
-      const flat = [
-        ...data.pages,
-        ...data.rules,
-        ...data.splCommands,
-      ].slice(0, 8);
+      // The best matches of every kind, best first
+      const flat = [...data.pages, ...data.rules, ...data.splCommands].sort((a, b) => b.score - a.score).slice(0, 8);
       setResults(flat);
       setSelectedIdx(0);
     });
@@ -96,6 +93,11 @@ export function CommandPalette() {
     if (e.key === 'Enter' && results[selectedIdx]) {
       goTo(results[selectedIdx].slug);
       return;
+    }
+    // Nothing to pick (yet): the full results page
+    if (e.key === 'Enter' && query.trim().length >= 2) {
+      navigate(`/search?q=${encodeURIComponent(query.trim())}`);
+      close();
     }
   }
 
@@ -144,12 +146,25 @@ export function CommandPalette() {
                   onMouseEnter={() => setSelectedIdx(i)}
                   onClick={() => goTo(r.slug)}
                 >
-                  <span className="flex-1 text-sm font-medium truncate">{r.title}</span>
+                  <span dir="auto" className="flex-1 text-sm font-medium truncate">{r.title}</span>
+                  {r.matchedIn !== 'Title' && <span className="text-xs text-muted-foreground whitespace-nowrap">in {r.matchedIn.toLowerCase()}</span>}
                   <TypeBadge type={r.type as PageType} />
                 </button>
               </li>
             ))}
           </ul>
+        )}
+
+        {results.length > 0 && (
+          <button
+            onClick={() => {
+              navigate(`/search?q=${encodeURIComponent(query.trim())}`);
+              close();
+            }}
+            className="w-full px-4 py-2 border-t border-border text-left text-xs text-primary hover:bg-accent"
+          >
+            All results for “{query.trim()}” →
+          </button>
         )}
 
         {query.length >= 2 && results.length === 0 && (

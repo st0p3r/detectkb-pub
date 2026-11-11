@@ -58,9 +58,12 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
   them; a renamed page stays reachable at its old address
 - Role-based access (admin / editor / viewer) enforced by the API
 - SPL command cheat-sheet library with searchable cards
-- Global search (Cmd+K) across all content
+- Global search (Cmd+K): every word has to match; finds rules by title, query (SPL / KQL / EQL /
+  Sigma), ATT&CK technique ID or name, the telemetry they read ("4688", "cloudtrail"), tags, false
+  positives and runbook steps; best matches first, each saying where it matched
 - Tag and category organization
-- JSON backup and restore
+- JSON backup and restore; a backup is made every day and old automatic ones are thinned out
+  (`BACKUP_KEEP_DAILY`, `BACKUP_KEEP_WEEKLY`), so they don't fill the disk
 - Dark mode, keyboard shortcuts, collapsible sidebar
 
 ## Installation (recommended)

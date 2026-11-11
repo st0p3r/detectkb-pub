@@ -13,7 +13,7 @@ import similarRulesRouter from './routes/similar-rules';
 import splRouter from './routes/spl';
 import searchRouter from './routes/search';
 import tagsRouter from './routes/tags';
-import backupRouter, { runJsonBackup } from './routes/backup';
+import backupRouter, { scheduledBackup } from './routes/backup';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
 import docsRouter from './routes/docs';
@@ -79,7 +79,7 @@ app.use('/api', authMiddleware);
 // A successful write may change what the knowledge graph and the tool matches
 // are built from: mark those caches stale (lib/kb-cache). Writes that only
 // produce files or touch accounts don't count.
-const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$|upstream\/(check|check-upload|dismiss|sources)\b|threat-intel\/watchlist|attack\/coverage\/snapshot)/;
+const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/(json$|older-than)|upstream\/(check|check-upload|dismiss|sources)\b|threat-intel\/watchlist|attack\/coverage\/snapshot)/;
 app.use('/api', (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !WRITES_WITHOUT_KB_CHANGES.test(req.originalUrl.split('?')[0])) {
     res.on('finish', () => {
@@ -120,9 +120,11 @@ app.use('/api/users', usersRouter);
 app.use('/api/docs', docsRouter);
 app.use('/api/activity', requirePermission('audit:read'), activityRouter);
 
-setInterval(() => {
-  runJsonBackup().catch((err) => console.error('Scheduled backup failed:', err));
-}, 86400000);
+// One automatic backup a day; checked hourly (and soon after start), so a
+// restart doesn't put it off by another day. Old automatic backups are thinned out.
+const dailyBackup = () => scheduledBackup().catch((err) => console.error('Scheduled backup failed:', err));
+setTimeout(dailyBackup, 5 * 60000).unref();
+setInterval(dailyBackup, 3600000).unref();
 
 // Upstream rule repositories: checked weekly in the background (UPSTREAM_AUTO_CHECK=false turns it off)
 if (process.env.UPSTREAM_AUTO_CHECK !== 'false' && process.env.REFERENCE_AUTO_FETCH !== 'false') {

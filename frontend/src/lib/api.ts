@@ -605,12 +605,25 @@ export interface SearchResult {
   slug: string;
   type: string;
   snippet: string;
+  /** Where the words were found: "Title", "SPL query", "False positives", … */
+  matchedIn: string;
+  /** Higher is a better match (to merge the kinds into one list) */
+  score: number;
+  /** Rules only */
+  status?: string;
+  severity?: string;
 }
 
 export interface SearchResults {
   pages: SearchResult[];
   rules: SearchResult[];
   splCommands: SearchResult[];
+  /** ATT&CK techniques matching by ID or name, with the rules mapped to each */
+  techniques: { id: string; name: string; rules: number }[];
+  /** How many match in all (more than are listed when the query is broad) */
+  totals: { pages: number; rules: number; splCommands: number };
+  /** The words searched for, lower-cased */
+  terms: string[];
 }
 
 export async function search(q: string) {
@@ -634,6 +647,27 @@ export async function createJsonBackup() {
 export async function listBackups() {
   const { data } = await api.get('/api/backup/list');
   return data as BackupLog[];
+}
+
+export interface BackupPolicy {
+  /** Newest automatic backups kept */
+  keepDaily: number;
+  /** Then one a week, for this many weeks */
+  keepWeekly: number;
+  count: number;
+  scheduled: number;
+  totalBytes: number;
+}
+
+export async function getBackupPolicy() {
+  const { data } = await api.get('/api/backup/policy');
+  return data as BackupPolicy;
+}
+
+/** Removes backups older than `days` (the three newest always stay); `dryRun` only counts them. */
+export async function cleanupBackups(days: number, dryRun = false) {
+  const { data } = await api.delete(`/api/backup/older-than/${days}`, { params: { dryRun: dryRun ? 1 : undefined } });
+  return data as { count: number; freedBytes: number; deleted: boolean };
 }
 
 export async function deleteBackup(id: number) {

@@ -68,6 +68,8 @@ services:
       ATTACK_STIX_URL: ${ATTACK_STIX_URL:-}
       UPSTREAM_AUTO_CHECK: ${UPSTREAM_AUTO_CHECK:-true}
       REVIEW_INTERVAL_DAYS: ${REVIEW_INTERVAL_DAYS:-180}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-14}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-8}
     volumes:
       - ./backups:/backups
     healthcheck:
