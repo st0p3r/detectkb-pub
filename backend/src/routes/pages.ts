@@ -1,9 +1,9 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { generateUniqueSlug } from '../lib/slug';
-import { resolveWikiLinks, syncPageLinks } from '../lib/links';
-import { syncDerivedLinks } from '../lib/derived-links';
+import { resolveWikiLinks } from '../lib/links';
+import { isAdmin } from '../middleware/auth';
+import { SaveError, getRevision, listRevisions, restoreRevision, savePage } from '../lib/page-save';
 
 const router = Router();
 
@@ -116,79 +116,93 @@ router.get('/titles', async (req, res) => {
 });
 
 router.get('/:slug', async (req, res) => {
-  const page = await prisma.page.findUnique({
+  let page = await prisma.page.findUnique({
     where: { slug: req.params.slug },
     include: PAGE_INCLUDE,
   });
+  // A renamed page: its old address still opens it (the response carries the new slug)
+  if (!page) {
+    const alias = await prisma.pageSlugAlias.findUnique({ where: { slug: req.params.slug }, select: { pageId: true } });
+    if (alias) page = await prisma.page.findUnique({ where: { id: alias.pageId }, include: PAGE_INCLUDE });
+  }
 
   if (!page) return res.status(404).json({ error: 'Page not found' });
   res.json({ ...page, wikiLinks: await resolveWikiLinks(page.contentMd) });
 });
 
-router.post('/', async (req, res) => {
-  const { title, contentMd = '', type = 'NOTE', categoryId, isPinned = false, tagNames = [] } = req.body;
+const can = (req: Request, permission: string) => !!req.user && (isAdmin(req.user) || req.user.permissions.includes(permission));
 
-  if (!title) return res.status(400).json({ error: 'title is required' });
-
-  const slug = await generateUniqueSlug(title);
-
-  const page = await prisma.page.create({
-    data: {
-      title,
-      slug,
-      contentMd,
-      type,
-      categoryId: categoryId || null,
-      isPinned,
-      tags: {
-        create: await buildTagConnections(tagNames),
+/**
+ * Saves a page from a request body: the page's own fields and, when sent,
+ * `rule`, `splCommand` and `sysmonEventIds` — all or nothing (lib/page-save).
+ * `expectedUpdatedAt` refuses the save (409) when someone else saved since.
+ */
+async function saveFromRequest(req: Request, res: Response, id?: number) {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const obj = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+  const rule = obj(body.rule);
+  if (rule && !can(req, id ? 'rules:update' : 'rules:create')) {
+    res.status(403).json({ error: 'Forbidden: you may not change detection rules' });
+    return;
+  }
+  try {
+    const pageId = await savePage(
+      {
+        id,
+        title: body.title === undefined ? undefined : String(body.title ?? ''),
+        contentMd: body.contentMd === undefined ? undefined : String(body.contentMd ?? ''),
+        type: body.type === undefined ? undefined : String(body.type),
+        categoryId: body.categoryId === undefined ? undefined : Number(body.categoryId) || null,
+        isPinned: body.isPinned === undefined ? undefined : Boolean(body.isPinned),
+        tagNames: body.tagNames === undefined ? undefined : Array.isArray(body.tagNames) ? body.tagNames.map(String) : [],
+        rule,
+        splCommand: obj(body.splCommand),
+        sysmonEventIds: Array.isArray(body.sysmonEventIds) ? (body.sysmonEventIds as number[]) : undefined,
+        expectedUpdatedAt: typeof body.expectedUpdatedAt === 'string' ? body.expectedUpdatedAt : undefined,
+        force: body.force === true,
       },
-    },
-    include: PAGE_INCLUDE,
-  });
+      req.user ? { userId: req.user.userId, username: req.user.username } : null
+    );
+    const page = await prisma.page.findUnique({ where: { id: pageId }, include: PAGE_INCLUDE });
+    res.status(id ? 200 : 201).json(page);
+  } catch (err) {
+    if (err instanceof SaveError) {
+      res.status(err.status).json({ error: err.message, ...err.extra });
+      return;
+    }
+    throw err;
+  }
+}
 
-  await syncPageLinks(page.id, contentMd);
-  await syncDerivedLinks(page.id);
+router.post('/', (req, res) => saveFromRequest(req, res));
 
-  res.status(201).json(page);
+router.put('/:id', (req, res) => saveFromRequest(req, res, Number(req.params.id)));
+
+// GET /api/pages/:id/revisions — the page's versions, newest first
+router.get('/:id/revisions', async (req, res) => {
+  res.json(await listRevisions(Number(req.params.id)));
 });
 
-router.put('/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  const { title, contentMd, type, categoryId, isPinned, tagNames } = req.body;
+// GET /api/pages/:id/revisions/:revisionId — one version, and the one before it
+router.get('/:id/revisions/:revisionId', async (req, res) => {
+  const revision = await getRevision(Number(req.params.id), Number(req.params.revisionId));
+  if (!revision) return res.status(404).json({ error: 'Version not found' });
+  res.json(revision);
+});
 
-  const existing = await prisma.page.findUnique({ where: { id } });
-  if (!existing) return res.status(404).json({ error: 'Page not found' });
-
-  const slug = title && title !== existing.title
-    ? await generateUniqueSlug(title, id)
-    : existing.slug;
-
-  if (tagNames !== undefined) {
-    await prisma.tagsOnPages.deleteMany({ where: { pageId: id } });
+// PUT /api/pages/:id/revisions/:revisionId/restore — make that version the page again
+router.put('/:id/revisions/:revisionId/restore', async (req, res) => {
+  const pageId = Number(req.params.id);
+  if ((await prisma.detectionRule.findUnique({ where: { pageId }, select: { id: true } })) && !can(req, 'rules:update')) {
+    return res.status(403).json({ error: 'Forbidden: you may not change detection rules' });
   }
-
-  const page = await prisma.page.update({
-    where: { id },
-    data: {
-      ...(title !== undefined && { title }),
-      slug,
-      ...(contentMd !== undefined && { contentMd }),
-      ...(type !== undefined && { type }),
-      ...(categoryId !== undefined && { categoryId: categoryId || null }),
-      ...(isPinned !== undefined && { isPinned }),
-      ...(tagNames !== undefined && {
-        tags: { create: await buildTagConnections(tagNames) },
-      }),
-    },
-    include: PAGE_INCLUDE,
-  });
-
-  await syncPageLinks(id, contentMd ?? existing.contentMd);
-  await syncDerivedLinks(id);
-  if (tagNames !== undefined) await pruneOrphanedTags();
-
-  res.json(page);
+  try {
+    await restoreRevision(pageId, Number(req.params.revisionId), req.user ? { userId: req.user.userId, username: req.user.username } : null);
+  } catch (err) {
+    if (err instanceof SaveError) return res.status(err.status).json({ error: err.message, ...err.extra });
+    throw err;
+  }
+  res.json(await prisma.page.findUnique({ where: { id: pageId }, include: PAGE_INCLUDE }));
 });
 
 router.get('/:slug/backlinks', async (req, res) => {
@@ -215,23 +229,6 @@ async function pruneOrphanedTags() {
   await prisma.tag.deleteMany({
     where: { pages: { none: {} } },
   });
-}
-
-async function buildTagConnections(tagNames: string[]) {
-  const names: string[] = Array.isArray(tagNames)
-    ? tagNames.map((n) => n.trim()).filter(Boolean)
-    : [];
-
-  return Promise.all(
-    names.map(async (name) => {
-      const tag = await prisma.tag.upsert({
-        where: { name },
-        create: { name },
-        update: {},
-      });
-      return { tagId: tag.id };
-    })
-  );
 }
 
 export default router;

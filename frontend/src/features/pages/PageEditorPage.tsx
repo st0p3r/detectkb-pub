@@ -1,24 +1,20 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useBlocker, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import MDEditor from '@uiw/react-md-editor';
 import rehypeSanitize from 'rehype-sanitize';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getPage,
-  createPage,
-  updatePage,
+  savePage,
+  saveConflict,
   searchPageTitles,
   listCategories,
-  upsertSplCommand,
-  updateSplCommand,
-  upsertRule,
-  updateRule,
+  type SaveConflict,
   type Page,
   type PageType,
   type SplCommandData,
   type DetectionRuleData,
   type Category,
-  setPageSysmonLinks,
   apiErrorMessage,
 } from '@/lib/api';
 import { SplCommandForm } from '@/features/spl/SplCommandForm';
@@ -26,6 +22,49 @@ import { RuleForm } from '@/features/rules/RuleForm';
 import { SysmonEventPicker } from '@/features/sysmon/SysmonEventPicker';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { usePageTypes } from '@/context/PageTypesContext';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { relativeTime } from '@/lib/time';
+
+/** Everything the form holds, as saved in a draft and compared to tell whether there are changes. */
+interface FormState {
+  title: string;
+  type: PageType;
+  tags: string;
+  isPinned: boolean;
+  categoryId: number | null;
+  contentMd: string;
+  splData: Partial<SplCommandData>;
+  ruleData: Partial<DetectionRuleData>;
+  manualSysmon: number[];
+}
+
+interface Draft {
+  savedAt: number;
+  /** updatedAt of the page the draft was started from (null: a new page) */
+  baseUpdatedAt: string | null;
+  form: FormState;
+}
+
+const draftKey = (slug: string | undefined) => `detectkb.draft:${slug ?? 'new'}`;
+
+function readDraft(key: string): Draft | null {
+  try {
+    const d = JSON.parse(localStorage.getItem(key) || 'null');
+    return d && typeof d === 'object' && d.form && typeof d.form.title === 'string' ? (d as Draft) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDraft(key: string, draft: Draft | null) {
+  try {
+    if (draft) localStorage.setItem(key, JSON.stringify(draft));
+    else localStorage.removeItem(key);
+  } catch {
+    // storage full or blocked: there is no draft, the leave warning still protects the edit
+  }
+}
 
 interface AutocompleteState {
   open: boolean;
@@ -78,8 +117,70 @@ export function PageEditorPage() {
   // Sysmon events (manual selection; auto links come from the server)
   const [manualSysmon, setManualSysmon] = useState<number[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
-  // A new page created by a save whose later steps failed: retry by updating it
-  const createdPageRef = useRef<Page | null>(null);
+  // Someone else saved the page while it was being edited here
+  const [conflict, setConflict] = useState<SaveConflict | null>(null);
+
+  // Unsaved changes: the form as it is now against the form as loaded / last saved
+  const form: FormState = { title, type, tags, isPinned, categoryId, contentMd, splData, ruleData, manualSysmon };
+  const formJson = JSON.stringify(form);
+  const [baseline, setBaseline] = useState<string | null>(isEdit ? null : formJson);
+  const dirty = baseline !== null && formJson !== baseline;
+  const key = draftKey(slug);
+  // A draft left behind by an earlier visit (closed tab, expired session, crash)
+  const [foundDraft, setFoundDraft] = useState<Draft | null>(null);
+  // Set while saving succeeded and the editor is being left on purpose
+  const leaving = useRef(false);
+
+  function applyForm(f: FormState) {
+    setTitle(f.title);
+    setType(f.type);
+    setTags(f.tags);
+    setIsPinned(f.isPinned);
+    setCategoryId(f.categoryId);
+    setContentMd(f.contentMd);
+    setSplData(f.splData);
+    setRuleData(f.ruleData);
+    setManualSysmon(f.manualSysmon);
+  }
+
+  // The baseline is taken once the loaded page is in the form (new pages: at once)
+  const loadedRef = useRef(!isEdit);
+  useEffect(() => {
+    if (loading || loadedRef.current) return;
+    loadedRef.current = true;
+    setBaseline(formJson);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when loading ends
+  }, [loading]);
+  useEffect(() => {
+    if (baseline === null) return;
+    const d = readDraft(key);
+    if (d && JSON.stringify(d.form) !== baseline) setFoundDraft(d);
+    else if (d) writeDraft(key, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, when the baseline exists
+  }, [baseline === null]);
+
+  // Keep a draft on this device while there are changes
+  useEffect(() => {
+    if (!dirty || foundDraft) return;
+    const t = window.setTimeout(() => writeDraft(key, { savedAt: Date.now(), baseUpdatedAt: page?.updatedAt ?? null, form: JSON.parse(formJson) }), 800);
+    return () => window.clearTimeout(t);
+  }, [dirty, formJson, key, page?.updatedAt, foundDraft]);
+
+  // Closing the tab or reloading with changes: the browser asks first
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+
+  // Following a link inside the app with changes: ask first
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => dirty && !leaving.current && currentLocation.pathname !== nextLocation.pathname);
+
+  useDocumentTitle(isEdit ? (page ? `${dirty ? '● ' : ''}Edit: ${page.title}` : null) : `${dirty ? '● ' : ''}New page`);
 
   // All page titles for autocomplete
   const [autocomplete, setAutocomplete] = useState<AutocompleteState>(CLOSED_AUTOCOMPLETE);
@@ -147,7 +248,7 @@ export function PageEditorPage() {
       .finally(() => setLoading(false));
   }, [slug, isEdit]);
 
-  async function handleSave() {
+  async function handleSave(force = false) {
     if (!title.trim()) return;
     setSaving(true);
     setSaveError(null);
@@ -156,74 +257,59 @@ export function PageEditorPage() {
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean);
-
-      const payload = { title: title.trim(), type, isPinned, categoryId, contentMd, tagNames };
-
-      let savedPage: Page;
-      const existingPage = isEdit && page ? page : createdPageRef.current;
-      if (existingPage) {
-        savedPage = await updatePage(existingPage.id, payload);
-      } else {
-        savedPage = await createPage(payload);
-        createdPageRef.current = savedPage;
-      }
-
-      // Save SPL Command data if type is SPL_COMMAND
-      if (type === 'SPL_COMMAND' && splData.command) {
-        const splPayload = {
-          pageId: savedPage.id,
-          command: splData.command ?? '',
-          group: splData.group ?? 'Other',
-          syntax: splData.syntax ?? '',
-          description: splData.description ?? '',
-          examples: splData.examples ?? '',
-          pitfalls: splData.pitfalls,
-          isFavorite: splData.isFavorite ?? false,
-        };
-
-        if (splData.id) {
-          await updateSplCommand(splData.id, splPayload);
-        } else {
-          await upsertSplCommand(splPayload);
-        }
-      }
-
-      // Save Detection Rule data if type is RULE
-      if (type === 'RULE') {
-        const rulePayload: Omit<DetectionRuleData, 'id'> = {
-          pageId: savedPage.id,
-          status: ruleData.status ?? 'draft',
-          severity: ruleData.severity ?? 'medium',
-          splQuery: ruleData.splQuery ?? '',
-          mitreTactics: ruleData.mitreTactics || undefined,
-          mitreTechniques: ruleData.mitreTechniques || undefined,
-          dataSource: ruleData.dataSource || undefined,
-          falsePositives: ruleData.falsePositives || undefined,
-          references: ruleData.references || undefined,
-          testNotes: ruleData.testNotes || undefined,
-          sigmaYaml: ruleData.sigmaYaml ?? null,
-          nativeQuery: ruleData.nativeQuery ?? null,
-          nativeLanguage: ruleData.nativeLanguage ?? null,
-          triage: ruleData.triage ?? null,
-          response: ruleData.response ?? null,
-          ownerId: ruleData.ownerId ?? null,
-          nextReviewAt: ruleData.nextReviewAt ?? null,
-        };
-        if (ruleData.id) {
-          await updateRule(ruleData.id, rulePayload);
-        } else {
-          await upsertRule(rulePayload);
-        }
-      }
-
       const hadSysmonLinks = (page?.sysmonEvents ?? []).some((l) => l.source === 'manual');
-      if ((type === 'RULE' || type === 'DATA_SOURCE') && (manualSysmon.length || hadSysmonLinks)) {
-        await setPageSysmonLinks(savedPage.id, manualSysmon);
-      }
 
-      navigate(`/pages/${savedPage.slug}`);
+      // The page, its rule or SPL command and its Sysmon links are saved together: all of it, or nothing
+      const saved = await savePage(page?.id ?? null, {
+        title: title.trim(),
+        type,
+        isPinned,
+        categoryId,
+        contentMd,
+        tagNames,
+        ...(type === 'RULE' && {
+          rule: {
+            status: ruleData.status ?? 'draft',
+            severity: ruleData.severity ?? 'medium',
+            splQuery: ruleData.splQuery ?? '',
+            mitreTactics: ruleData.mitreTactics ?? '',
+            mitreTechniques: ruleData.mitreTechniques ?? '',
+            dataSource: ruleData.dataSource ?? '',
+            falsePositives: ruleData.falsePositives ?? '',
+            references: ruleData.references ?? '',
+            testNotes: ruleData.testNotes ?? '',
+            sigmaYaml: ruleData.sigmaYaml ?? null,
+            nativeQuery: ruleData.nativeQuery ?? null,
+            nativeLanguage: ruleData.nativeLanguage ?? null,
+            triage: ruleData.triage ?? null,
+            response: ruleData.response ?? null,
+            ownerId: ruleData.ownerId ?? null,
+            nextReviewAt: ruleData.nextReviewAt ?? null,
+          },
+        }),
+        ...(type === 'SPL_COMMAND' &&
+          splData.command && {
+            splCommand: {
+              command: splData.command,
+              group: splData.group ?? 'Other',
+              syntax: splData.syntax ?? '',
+              description: splData.description ?? '',
+              examples: splData.examples ?? '',
+              pitfalls: splData.pitfalls,
+              isFavorite: splData.isFavorite ?? false,
+            },
+          }),
+        ...((type === 'RULE' || type === 'DATA_SOURCE') && (manualSysmon.length || hadSysmonLinks) && { sysmonEventIds: manualSysmon }),
+        ...(page && { expectedUpdatedAt: page.updatedAt, force }),
+      });
+
+      writeDraft(key, null);
+      leaving.current = true;
+      navigate(`/pages/${saved.slug}`);
     } catch (err) {
-      setSaveError(apiErrorMessage(err, 'Could not save the page'));
+      const other = saveConflict(err);
+      if (other) setConflict(other);
+      else setSaveError(apiErrorMessage(err, 'Could not save the page — nothing was changed'));
     } finally {
       setSaving(false);
     }
@@ -337,6 +423,7 @@ export function PageEditorPage() {
           {isEdit ? 'Edit Page' : 'New Page'}
         </h1>
         <div className="flex items-center gap-2">
+          {dirty && <span className="text-xs text-muted-foreground" title="Kept as a draft on this device until you save">Unsaved changes</span>}
           <button
             onClick={() => navigate(isEdit && page ? `/pages/${page.slug}` : '/pages')}
             className="px-4 py-2 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors"
@@ -344,7 +431,7 @@ export function PageEditorPage() {
             Cancel
           </button>
           <button
-            onClick={handleSave}
+            onClick={() => handleSave()}
             disabled={saving || !title.trim()}
             className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
@@ -359,6 +446,69 @@ export function PageEditorPage() {
         </div>
       )}
 
+      {foundDraft && (
+        <div role="status" className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+          <span className="flex-1 min-w-[16rem]">
+            You have unsaved changes to this page from {relativeTime(new Date(foundDraft.savedAt).toISOString())}, kept on this device.
+            {page && foundDraft.baseUpdatedAt && foundDraft.baseUpdatedAt !== page.updatedAt && ' The page was saved by someone since then: review before saving.'}
+          </span>
+          <button
+            onClick={() => {
+              applyForm(foundDraft.form);
+              setFoundDraft(null);
+            }}
+            className="px-3 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90"
+          >
+            Restore them
+          </button>
+          <button
+            onClick={() => {
+              writeDraft(key, null);
+              setFoundDraft(null);
+            }}
+            className="px-3 py-1 rounded-md border border-border text-xs font-medium hover:bg-accent"
+          >
+            Discard
+          </button>
+        </div>
+      )}
+
+      {conflict && page && (
+        <div role="alert" className="mb-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm space-y-2">
+          <p>
+            <b>{conflict.updatedBy ?? 'Someone'}</b> saved this page {conflict.updatedAt ? relativeTime(conflict.updatedAt) : 'just now'}, after you opened it.
+            Saving now would replace their version with yours. Nothing was saved yet; your changes are still here.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <a href={`/pages/${page.slug}`} target="_blank" rel="noreferrer" className="px-3 py-1 rounded-md border border-border bg-background text-xs font-medium hover:bg-accent">
+              Open their version in a new tab
+            </a>
+            <button
+              onClick={() => {
+                setConflict(null);
+                void handleSave(true);
+              }}
+              className="px-3 py-1 rounded-md bg-red-600 text-white text-xs font-medium hover:bg-red-700"
+            >
+              Save mine anyway
+            </button>
+            <button onClick={() => setConflict(null)} className="px-3 py-1 rounded-md border border-border text-xs font-medium hover:bg-accent">
+              Keep editing
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">Their version stays in the page history either way.</p>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={blocker.state === 'blocked'}
+        title="Leave without saving?"
+        message="Your changes are not saved yet. They are kept as a draft on this device, and offered again when you come back to this page."
+        confirmLabel="Leave"
+        onConfirm={() => blocker.proceed?.()}
+        onCancel={() => blocker.reset?.()}
+      />
+
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium mb-1.5">
@@ -368,6 +518,7 @@ export function PageEditorPage() {
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            dir="auto"
             placeholder="Page title"
             className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
@@ -446,6 +597,8 @@ export function PageEditorPage() {
                 value={contentMd}
                 onChange={(val) => setContentMd(val ?? '')}
                 height={480}
+                // Persian and other right-to-left text: each paragraph in its own direction
+                textareaProps={{ dir: 'auto' }}
                 preview="live"
                 // The preview renders raw HTML; strip scripts, event handlers and javascript: links
                 previewOptions={{ rehypePlugins: [[rehypeSanitize]] }}

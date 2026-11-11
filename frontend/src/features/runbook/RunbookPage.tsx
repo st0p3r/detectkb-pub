@@ -16,10 +16,11 @@ import { useAuth } from '@/features/auth/AuthContext';
 import { safeHref } from '@/lib/safeUrl';
 import { relativeDay } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 function Markdown({ children }: { children: string }) {
   return (
-    <div dir="auto" className="rb-md text-sm leading-relaxed">
+    <div className="rb-md md-auto text-sm leading-relaxed">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
         {children}
       </ReactMarkdown>
@@ -139,6 +140,7 @@ export function RunbookPage() {
   const { data: page, error: pageError } = useQuery({ queryKey: ['page', slug], queryFn: () => getPage(slug), staleTime: 30_000 });
   const { data: rb, error } = useQuery({ queryKey: ['runbook', page?.id], queryFn: () => getRunbook(page!.id), enabled: !!page?.id });
   const failure = pageError || error;
+  useDocumentTitle(rb ? `Runbook: ${rb.title}` : null);
 
   if (failure) {
     return (

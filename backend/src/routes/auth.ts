@@ -121,6 +121,18 @@ router.post('/verify', authMiddleware, (req, res) => {
   res.json({ valid: true, username, roles, permissions, mustChangePassword });
 });
 
+// POST /api/auth/refresh — a fresh token for a session that is still valid, so
+// someone who keeps working isn't signed out in the middle of an edit
+router.post('/refresh', authMiddleware, async (req, res) => {
+  const user = await findUserWithRoles(req.user!.username);
+  if (!user || !user.isActive) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const { token, roles, permissions } = buildToken(user);
+  res.json({ token, username: user.username, roles, permissions });
+});
+
 // PUT /api/auth/password — change own password
 router.put('/password', authMiddleware, async (req, res) => {
   const { currentPassword, newPassword } = req.body as {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { api, apiErrorMessage } from '@/lib/api';
+import { api, apiErrorMessage, takeNextPath } from '@/lib/api';
 import { useAuth } from './AuthContext';
 
 export function LoginPage() {
@@ -28,7 +28,9 @@ export function LoginPage() {
         mustChangePassword?: boolean;
       }>('/api/auth/login', { username, password });
       login(data.token, data.username, data.roles || [], data.permissions || [], !!data.mustChangePassword);
-      navigate(data.mustChangePassword ? '/change-password' : '/', { replace: true });
+      // Signed out in the middle of something: back to where that was
+      const next = takeNextPath();
+      navigate(data.mustChangePassword ? '/change-password' : next ?? '/', { replace: true });
     } catch (err) {
       const status = (err as { response?: { status?: number } }).response?.status;
       setError(
