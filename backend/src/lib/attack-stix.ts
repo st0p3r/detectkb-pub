@@ -1,9 +1,12 @@
 import type { AttackTactic, AttackTechnique } from './attack';
+import type { TechniqueDetail } from './attack-details';
 import type { AttackGroup, AttackMitigation, AttackSoftware } from './attack-cti';
 
 // Converts MITRE's ATT&CK Enterprise STIX 2.1 bundle (enterprise-attack.json,
 // github.com/mitre-attack/attack-stix-data) into the compact dataset DetectKB
-// uses: tactics, techniques, revoked IDs, groups, software and mitigations.
+// uses: tactics, techniques (with platforms), revoked IDs, groups, software,
+// mitigations, and per technique its description and MITRE's detection
+// strategy (the analytics and the log sources each one reads).
 // Used by scripts/update-attack-data.js and by the in-app update.
 
 export interface AttackDataset {
@@ -15,6 +18,11 @@ export interface AttackDataset {
   groups: AttackGroup[];
   software: AttackSoftware[];
   mitigations: AttackMitigation[];
+  /**
+   * Technique ID → description and detection guidance. Missing in datasets
+   * imported by DetectKB versions that didn't keep them.
+   */
+  details?: Record<string, TechniqueDetail>;
 }
 
 interface StixObject {
@@ -35,6 +43,11 @@ interface StixObject {
   relationship_type?: string;
   source_ref?: string;
   target_ref?: string;
+  x_mitre_analytic_refs?: string[];
+  x_mitre_log_source_references?: { x_mitre_data_component_ref?: string; name?: string; channel?: string }[];
+  x_mitre_mutable_elements?: { field?: string; description?: string }[];
+  /** Technique detection text of ATT&CK releases before detection strategies (v17 and older) */
+  x_mitre_detection?: string;
 }
 
 const externalId = (o: StixObject | undefined) => o?.external_references?.find((r) => r.source_name === 'mitre-attack')?.external_id;
@@ -76,6 +89,7 @@ export function convertStixBundle(bundle: unknown): AttackDataset {
       id: externalId(o)!,
       name: o.name ?? '',
       tactics: (o.kill_chain_phases || []).filter((p) => p.kill_chain_name === 'mitre-attack').map((p) => p.phase_name),
+      platforms: o.x_mitre_platforms || [],
     }))
     .sort(byIdOrder);
   if (!techniques.length) throw new Error('The bundle has no techniques');
@@ -147,5 +161,50 @@ export function convertStixBundle(bundle: unknown): AttackDataset {
     .map((o) => ({ id: externalId(o)!, name: o.name ?? '', description: summary(o.description), techniques: techniquesOf(mitigates, o) }))
     .sort(byIdOrder);
 
-  return { version: collection?.x_mitre_version ?? null, tactics, techniques, revoked, groups, software, mitigations };
+  // Detection strategies (ATT&CK v18+): strategy —detects→ technique, each
+  // strategy listing analytics per platform with the log sources they read.
+  const detects = new Map<string, StixObject[]>();
+  for (const rel of all) {
+    if (rel.type !== 'relationship' || rel.relationship_type !== 'detects' || rel.revoked || rel.x_mitre_deprecated) continue;
+    const strategy = byStixId.get(rel.source_ref ?? '');
+    const technique = byStixId.get(rel.target_ref ?? '');
+    if (strategy?.type !== 'x-mitre-detection-strategy' || !active(strategy) || !technique) continue;
+    detects.set(technique.id, [...(detects.get(technique.id) ?? []), strategy]);
+  }
+  const text = (t: string | undefined) => summary(t, 2000);
+  const details: Record<string, TechniqueDetail> = {};
+  for (const o of all) {
+    if (o.type !== 'attack-pattern' || !active(o)) continue;
+    const id = externalId(o);
+    if (!id) continue;
+    const detection = (detects.get(o.id) ?? [])
+      .map((st) => ({
+        id: externalId(st) ?? '',
+        name: st.name ?? '',
+        analytics: (st.x_mitre_analytic_refs ?? [])
+          .map((ref) => byStixId.get(ref))
+          .filter((a): a is StixObject => !!a && active(a))
+          .map((a) => ({
+            id: externalId(a) ?? '',
+            platforms: a.x_mitre_platforms || [],
+            description: text(a.description),
+            logSources: (a.x_mitre_log_source_references ?? []).map((l) => ({
+              name: l.name ?? '',
+              channel: l.channel ?? '',
+              component: byStixId.get(l.x_mitre_data_component_ref ?? '')?.name ?? '',
+            })),
+            tunables: (a.x_mitre_mutable_elements ?? []).filter((m) => m.field).map((m) => ({ field: m.field!, description: m.description ?? '' })),
+          }))
+          .sort(byIdOrder),
+      }))
+      .sort(byIdOrder);
+    details[id] = {
+      description: summary(o.description, 900),
+      ...(detection.length && { detection }),
+      // Older releases: free text on the technique itself
+      ...(!detection.length && o.x_mitre_detection && { detectionText: text(o.x_mitre_detection) }),
+    };
+  }
+
+  return { version: collection?.x_mitre_version ?? null, tactics, techniques, revoked, groups, software, mitigations, details };
 }

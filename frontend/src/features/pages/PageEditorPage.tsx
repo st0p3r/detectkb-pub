@@ -137,6 +137,10 @@ export function PageEditorPage() {
             nativeLanguage: p.rule.nativeLanguage ?? '',
             sourceFormat: p.rule.sourceFormat ?? null,
             sourceId: p.rule.sourceId ?? null,
+            triage: p.rule.triage ?? '',
+            response: p.rule.response ?? '',
+            ownerId: p.rule.ownerId ?? null,
+            nextReviewAt: p.rule.nextReviewAt ?? null,
           });
         }
       })
@@ -200,6 +204,10 @@ export function PageEditorPage() {
           sigmaYaml: ruleData.sigmaYaml ?? null,
           nativeQuery: ruleData.nativeQuery ?? null,
           nativeLanguage: ruleData.nativeLanguage ?? null,
+          triage: ruleData.triage ?? null,
+          response: ruleData.response ?? null,
+          ownerId: ruleData.ownerId ?? null,
+          nextReviewAt: ruleData.nextReviewAt ?? null,
         };
         if (ruleData.id) {
           await updateRule(ruleData.id, rulePayload);

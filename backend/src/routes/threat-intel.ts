@@ -1,3 +1,4 @@
+import { TECHNIQUE_DETAILS } from '../lib/attack-details';
 import { Router, Request } from 'express';
 import { TECHNIQUE_BY_ID, parentTechniqueId, resolveTechniqueId } from '../lib/attack';
 import {
@@ -12,6 +13,7 @@ import {
   attackObjectUrl,
 } from '../lib/attack-cti';
 import { loadRuleTelemetry } from '../lib/coverage-analysis';
+import { loadRuleFeeds } from '../lib/collection';
 import { kbCacheMap } from '../lib/kb-cache';
 import { prisma } from '../lib/prisma';
 import { requirePermission } from '../middleware/auth';
@@ -71,9 +73,18 @@ const watchedIds = async () => new Set((await prisma.watchedGroup.findMany({ sel
 // GET /api/threat-intel/watchlist — watched groups, the techniques they use with
 // coverage by deployed (production / testing) rules, and drafts ranked by the gaps they'd close
 router.get('/watchlist', async (_req, res) => {
-  const [rows, rules] = await Promise.all([prisma.watchedGroup.findMany({ orderBy: { createdAt: 'asc' } }), loadRuleTelemetry()]);
+  const [rows, all, feeds] = await Promise.all([prisma.watchedGroup.findMany({ orderBy: { createdAt: 'asc' } }), loadRuleTelemetry(), loadRuleFeeds()]);
   const watched = rows.map((w) => ({ row: w, group: GROUP_BY_ID.get(w.groupId) })).filter((w): w is { row: typeof w.row; group: NonNullable<typeof w.group> } => !!w.group);
-  const deployed = await byTechniqueCache.get('production,testing');
+  // Rules whose logs aren't collected can't fire: they cover nothing, deployed or not
+  const rules = all.filter((r) => feeds.feed(r.pageId) !== 'blind');
+  const deployed = new Map<string, Set<number>>();
+  for (const r of rules) {
+    if (r.status !== 'production' && r.status !== 'testing') continue;
+    for (const t of r.techniques) {
+      if (!deployed.has(t)) deployed.set(t, new Set());
+      deployed.get(t)!.add(r.pageId);
+    }
+  }
   const { techniques, drafts, summary } = prioritize(
     watched.map((w) => w.group),
     rules
@@ -87,7 +98,7 @@ router.get('/watchlist', async (_req, res) => {
       addedAt: row.createdAt,
       ...pick(actorCoverage(group.techniques, deployed)),
     })),
-    summary,
+    summary: { ...summary, rulesWithoutLogs: all.filter((r) => r.status !== 'deprecated').length - rules.filter((r) => r.status !== 'deprecated').length },
     techniques,
     drafts: drafts.slice(0, 300),
   });
@@ -174,7 +185,8 @@ router.get('/software/:id', async (req, res) => {
   });
 });
 
-// GET /api/threat-intel/techniques/T1003 — mitigations, and the groups / software
+// GET /api/threat-intel/techniques/T1003 — description, platforms, MITRE's detection
+// strategy, mitigations, and the groups / software
 // using the technique (for a parent: or any of its sub-techniques)
 router.get('/techniques/:id', (req, res) => {
   const id = resolveTechniqueId(req.params.id.toUpperCase());
@@ -188,9 +200,15 @@ router.get('/techniques/:id', (req, res) => {
     for (const t of ids) for (const item of index.get(t) ?? []) out.set(item.id, { item, via: [...(out.get(item.id)?.via ?? []), t] });
     return Array.from(out.values());
   };
+  const detail = TECHNIQUE_DETAILS.get(id);
   res.json({
     id,
     name: TECHNIQUE_BY_ID.get(id)?.name ?? id,
+    platforms: TECHNIQUE_BY_ID.get(id)?.platforms ?? [],
+    description: detail?.description ?? null,
+    // MITRE's detection strategy: analytics per platform with the log sources they read
+    detection: detail?.detection ?? [],
+    detectionText: detail?.detectionText ?? null,
     mitigations: collect(MITIGATIONS_BY_TECHNIQUE)
       .map(({ item: m, via }) => ({ id: m.id, name: m.name, description: m.description, url: attackObjectUrl(m.id), via }))
       .sort((a, b) => a.id.localeCompare(b.id)),

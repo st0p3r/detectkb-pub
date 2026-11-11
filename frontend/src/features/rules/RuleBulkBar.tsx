@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, FileDown, Loader2, Tag, Trash2, X } from 'lucide-react';
-import { apiErrorMessage, bulkDeleteRules, bulkUpdateRules, downloadSigmaRules, type RuleBulkAction, type RuleBulkTarget } from '@/lib/api';
+import { CalendarCheck, ChevronDown, FileDown, Loader2, Tag, Trash2, UserRound, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { apiErrorMessage, bulkDeleteRules, bulkUpdateRules, downloadSigmaRules, listRuleOwners, type RuleBulkAction, type RuleBulkTarget } from '@/lib/api';
 import { useToast } from '@/hooks/useToast';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -27,7 +28,8 @@ const btn =
 /** Floating bar with actions for the selected rules. */
 export function RuleBulkBar({ count, target, canUpdate, canDelete, selectAll, onClear, onDone }: RuleBulkBarProps) {
   const { toast } = useToast();
-  const [menu, setMenu] = useState<'status' | 'severity' | 'tag' | 'export' | null>(null);
+  const [menu, setMenu] = useState<'status' | 'severity' | 'tag' | 'owner' | 'export' | null>(null);
+  const { data: owners } = useQuery({ queryKey: ['rule-owners'], queryFn: listRuleOwners, enabled: menu === 'owner', staleTime: 60 * 1000 });
   const [tagName, setTagName] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -211,6 +213,44 @@ export function RuleBulkBar({ count, target, canUpdate, canDelete, selectAll, on
                   </form>
                 )}
               </div>
+              <div className="relative">
+                <button className={btn} disabled={busy} onClick={() => setMenu(menu === 'owner' ? null : 'owner')} aria-haspopup="menu" aria-expanded={menu === 'owner'}>
+                  <UserRound className="w-3.5 h-3.5" /> Owner <ChevronDown className="w-3 h-3" />
+                </button>
+                {menu === 'owner' && (
+                  <div role="menu" className={`${menuBox} max-h-64 overflow-y-auto`}>
+                    {!owners && <div className="px-3 py-1.5 text-muted-foreground">Loading…</div>}
+                    {owners?.owners.map((o) => (
+                      <button
+                        key={o.id}
+                        role="menuitem"
+                        className="w-full text-left px-3 py-1.5 hover:bg-accent"
+                        onClick={() => run('owner', String(o.id), (n) => `${n} rule${n === 1 ? '' : 's'} assigned to ${o.username}`)}
+                      >
+                        {o.username}
+                        {o.name && <span className="text-muted-foreground"> · {o.name}</span>}
+                      </button>
+                    ))}
+                    {owners && (
+                      <button
+                        role="menuitem"
+                        className="w-full text-left px-3 py-1.5 border-t border-border text-muted-foreground hover:bg-accent"
+                        onClick={() => run('owner', '', (n) => `Owner removed from ${n} rule${n === 1 ? '' : 's'}`)}
+                      >
+                        No owner
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                className={btn}
+                disabled={busy}
+                title="These rules were looked at and still hold: sets the review date to today and schedules the next one"
+                onClick={() => run('markReviewed', '', (n) => `${n} rule${n === 1 ? '' : 's'} marked as reviewed`)}
+              >
+                <CalendarCheck className="w-3.5 h-3.5" /> Reviewed
+              </button>
             </>
           )}
 

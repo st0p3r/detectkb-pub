@@ -76,6 +76,12 @@ export function AttackDataCard({ canManage }: { canManage: boolean }) {
               {data.imported
                 ? `imported ${relativeTime(data.imported.importedAt)} (${data.imported.source.startsWith('upload') ? 'uploaded file' : 'downloaded from MITRE'}); bundled: v${data.bundledVersion}`
                 : 'bundled with DetectKB'}
+              {!data.hasDetails && (
+                <span className="block text-amber-600 dark:text-amber-400">
+                  This import has no technique descriptions, platforms or detection guidance (it was made by an older DetectKB). Download or upload the
+                  release again to get them.
+                </span>
+              )}
             </div>
           )}
         </div>

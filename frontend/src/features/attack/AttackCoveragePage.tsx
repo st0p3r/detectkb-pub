@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Download, ExternalLink, Grid3x3, Loader2, ShieldCheck, Skull, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, CircleOff, Download, ExternalLink, Grid3x3, Loader2, Radar, ScrollText, ShieldCheck, Skull, X } from 'lucide-react';
 import {
   apiErrorMessage,
   downloadNavigatorLayer,
@@ -15,9 +15,13 @@ import {
   listThreatGroups,
   type ActorCoverage,
   type AttackTechnique,
+  type AttackAnalytic,
   type CoverageConfidence,
+  type CoverageFilters,
   type CoveringRule,
 } from '@/lib/api';
+import { FeedBadge } from '@/features/collection/CollectionBadge';
+import { CoverageTrend } from './CoverageTrend';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
@@ -84,6 +88,65 @@ interface ParentCell {
   /** Rules on the technique itself or any sub-technique (each rule once). */
   count: number;
   confidence: CoverageConfidence | null;
+  /** How many of those rules can't fire: their logs aren't collected */
+  blind: number;
+}
+
+const PLATFORMS_KEY = 'coveragePlatforms';
+
+/** The ATT&CK platforms the matrix is limited to (remembered per browser). */
+function usePlatforms() {
+  const [platforms, set] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PLATFORMS_KEY) || '[]');
+      return Array.isArray(saved) ? saved.filter((p): p is string => typeof p === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const setPlatforms = (next: string[]) => {
+    set(next);
+    try {
+      localStorage.setItem(PLATFORMS_KEY, JSON.stringify(next));
+    } catch {
+      // private mode: the choice lasts for this visit
+    }
+  };
+  return [platforms, setPlatforms] as const;
+}
+
+/** "All platforms" / "Windows, Linux" with a checklist. */
+function PlatformFilter({ all, value, onChange }: { all: string[]; value: string[]; onChange: (v: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const toggle = (p: string) => onChange(value.includes(p) ? value.filter((x) => x !== p) : [...value, p]);
+  const label = value.length === 0 ? 'All platforms' : value.length <= 2 ? value.join(', ') : `${value.length} platforms`;
+  return (
+    <div className="relative" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="true"
+        aria-expanded={open}
+        title="Limit the matrix to the platforms you run: techniques for other platforms are not gaps"
+        className={cn('flex items-center gap-1.5 px-3 py-2 rounded-md border bg-background text-sm', value.length ? 'border-primary/50 text-primary' : 'border-border')}
+      >
+        {label} <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-52 rounded-md border border-border bg-popover p-1.5 shadow-lg">
+          {all.map((p) => (
+            <label key={p} className="flex items-center gap-2 px-2 py-1 rounded text-sm cursor-pointer hover:bg-accent">
+              <input type="checkbox" checked={value.includes(p)} onChange={() => toggle(p)} /> {p}
+            </label>
+          ))}
+          {value.length > 0 && (
+            <button onClick={() => onChange([])} className="w-full mt-1 px-2 py-1 rounded text-left text-xs text-primary hover:bg-accent">
+              Show all platforms
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** The techniques (as parent IDs) a group (G…), software (S…) or the watchlist (every watched group) uses. */
@@ -130,14 +193,20 @@ export function AttackCoveragePage() {
     colorBy === 'confidence' ? (c.confidence ? CONFIDENCE[c.confidence].cell : NO_COVERAGE) : heatClass(c.count);
   // Proven coverage: only rules whose latest lab test detected the attack
   const [validatedOnly, setValidatedOnly] = useState(false);
+  const [platforms, setPlatforms] = usePlatforms();
+  // Rules whose logs aren't collected can't fire: left out unless asked for
+  const [withLogs, setWithLogs] = useState(true);
+  const filters: CoverageFilters = { status, validatedOnly, withLogs, platforms };
   const [onlyCovered, setOnlyCovered] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['attack-coverage', status, validatedOnly],
-    queryFn: () => getAttackCoverage(status, validatedOnly),
+    queryKey: ['attack-coverage', status, validatedOnly, withLogs, platforms.join(',')],
+    queryFn: () => getAttackCoverage(filters),
+    placeholderData: (prev) => prev,
   });
+  const collectionActive = !!data?.summary.collectionActive;
   const actor = useActor(actorId, status);
   const { data: groups = [] } = useQuery({ queryKey: ['threat-groups', '', ''], queryFn: () => listThreatGroups() });
   const setActor = (id: string | null) => setParams(id ? { actor: id } : {});
@@ -156,6 +225,7 @@ export function AttackCoveragePage() {
       subs: subsByParent.get(t.id) ?? [],
       count: data.parentCounts[t.id] ?? 0,
       confidence: data.parentConfidence[t.id] ?? null,
+      blind: data.parentBlind[t.id] ?? 0,
     });
     const parents = data.techniques.filter((t) => !t.id.includes('.')).map(cellFor);
     return data.tactics.map((tactic) => {
@@ -177,7 +247,7 @@ export function AttackCoveragePage() {
   async function handleDownload() {
     setDownloading(true);
     try {
-      await downloadNavigatorLayer(status, validatedOnly);
+      await downloadNavigatorLayer(filters);
     } catch (err) {
       toast(apiErrorMessage(err, 'Could not export the layer'), 'error');
     } finally {
@@ -242,10 +312,20 @@ export function AttackCoveragePage() {
             <option value="confidence">Color: confidence</option>
             <option value="count">Color: rule count</option>
           </select>
+          {data && <PlatformFilter all={data.platforms} value={platforms} onChange={setPlatforms} />}
           <label className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm cursor-pointer">
             <input type="checkbox" checked={onlyCovered} onChange={(e) => setOnlyCovered(e.target.checked)} />
             Only covered
           </label>
+          {collectionActive && (
+            <label
+              className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm cursor-pointer"
+              title="Leave out rules whose logs are marked as not collected on the Log Sources page: they cannot fire"
+            >
+              <input type="checkbox" checked={withLogs} onChange={(e) => setWithLogs(e.target.checked)} />
+              Only rules with logs
+            </label>
+          )}
           <label
             className="flex items-center gap-2 px-3 py-2 rounded-md border border-border text-sm cursor-pointer"
             title="Count only rules whose latest lab test (Atomic Red Team) detected the attack"
@@ -319,6 +399,45 @@ export function AttackCoveragePage() {
               </div>
             </div>
           )}
+
+          {!collectionActive ? (
+            <div className="flex flex-wrap items-center gap-2 mb-5 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+              <ScrollText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <span>
+                These numbers assume every rule receives its logs. Say which log sources you collect and rules without logs stop counting as
+                coverage.
+              </span>
+              <Link to="/log-sources" className="ml-auto text-primary hover:underline whitespace-nowrap">
+                Set what is collected →
+              </Link>
+            </div>
+          ) : data.summary.blindRules > 0 ? (
+            <div className="flex flex-wrap items-center gap-2 mb-5 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-sm">
+              <CircleOff className="w-4 h-4 text-red-500 flex-shrink-0" />
+              {withLogs ? (
+                <span>
+                  <b>{data.summary.blindRules}</b> rule{data.summary.blindRules === 1 ? ' is' : 's are'} left out: the logs{' '}
+                  {data.summary.blindRules === 1 ? 'it reads' : 'they read'} are not collected, so {data.summary.blindRules === 1 ? 'it' : 'they'} cannot fire.
+                </span>
+              ) : (
+                <span>
+                  <b>{data.summary.blindRules}</b> counted rule{data.summary.blindRules === 1 ? '' : 's'} cannot fire (logs not collected)
+                  {data.summary.blindTechniques > 0 && (
+                    <>
+                      ; <b>{data.summary.blindTechniques}</b> technique{data.summary.blindTechniques === 1 ? ' is' : 's are'} covered on paper only (hatched
+                      cells)
+                    </>
+                  )}
+                  .
+                </span>
+              )}
+              <Link to="/rules?logs=blind" className="ml-auto text-primary hover:underline whitespace-nowrap">
+                Show these rules →
+              </Link>
+            </div>
+          ) : null}
+
+          <CoverageTrend />
 
           {data.unknownTechniques.length > 0 && (
             <div className="flex items-start gap-2 mb-5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
@@ -442,14 +561,17 @@ export function AttackCoveragePage() {
                       .filter((c) => !onlyCovered || c.count > 0)
                       .map((c) => {
                         const used = actor?.parents.has(c.technique.id);
+                        // Every rule of the cell lacks its logs: covered on paper only
+                        const paperOnly = c.count > 0 && c.blind === c.count;
                         return (
                         <button
                           key={c.technique.id}
                           onClick={() => setSelected(c.technique.id === selected ? null : c.technique.id)}
-                          title={`${c.technique.id} ${c.technique.name} — ${c.count} rule${c.count === 1 ? '' : 's'}${c.confidence ? ` · ${CONFIDENCE[c.confidence].label.toLowerCase()}` : ''}${used ? ` · used by ${actor!.name}` : ''}`}
+                          title={`${c.technique.id} ${c.technique.name} — ${c.count} rule${c.count === 1 ? '' : 's'}${c.confidence ? ` · ${CONFIDENCE[c.confidence].label.toLowerCase()}` : ''}${c.blind ? ` · ${paperOnly ? 'none' : `${c.count - c.blind} of ${c.count}`} with logs collected` : ''}${used ? ` · used by ${actor!.name}` : ''}`}
                           className={cn(
                             'w-full text-left px-1.5 py-1 rounded border text-[11px] leading-tight transition-shadow hover:ring-2 hover:ring-primary/40',
                             cellClass(c),
+                            paperOnly && 'cell-no-logs',
                             actor && !used && 'opacity-20',
                             used && !c.count && 'ring-2 ring-red-500',
                             selected === c.technique.id && 'ring-2 ring-primary'
@@ -457,7 +579,12 @@ export function AttackCoveragePage() {
                         >
                           <span className="flex justify-between gap-1">
                             <span className="font-mono opacity-80">{c.technique.id}</span>
-                            {c.count > 0 && <span className="font-semibold tabular-nums">{c.count}</span>}
+                            {c.count > 0 && (
+                              <span className="flex items-center gap-0.5 font-semibold tabular-nums">
+                                {paperOnly && <CircleOff className="w-3 h-3" aria-label="No logs collected" />}
+                                {c.count}
+                              </span>
+                            )}
                           </span>
                           <span className="block truncate">{c.technique.name}</span>
                         </button>
@@ -470,7 +597,7 @@ export function AttackCoveragePage() {
           </div>
 
           {selectedCell && (
-            <TechniqueDetail cell={selectedCell} status={status} validatedOnly={validatedOnly} onClose={() => setSelected(null)} />
+            <TechniqueDetail cell={selectedCell} filters={filters} showFeed={collectionActive} onClose={() => setSelected(null)} />
           )}
         </>
       )}
@@ -478,7 +605,7 @@ export function AttackCoveragePage() {
   );
 }
 
-function RuleList({ rules }: { rules: CoveringRule[] }) {
+function RuleList({ rules, showFeed }: { rules: CoveringRule[]; showFeed?: boolean }) {
   return (
     <ul className="space-y-1">
       {rules.map((r) => (
@@ -487,23 +614,24 @@ function RuleList({ rules }: { rules: CoveringRule[] }) {
           <StatusBadge status={r.status} />
           <SeverityBadge severity={r.severity} />
           {r.validation !== 'never' && <ValidationBadge status={r.validation} />}
+          {showFeed && r.feed === 'blind' && <FeedBadge feed={r.feed} />}
         </li>
       ))}
     </ul>
   );
 }
 
-function TechniqueDetail({ cell, status, validatedOnly, onClose }: {
+function TechniqueDetail({ cell, filters, showFeed, onClose }: {
   cell: ParentCell;
-  status: string;
-  validatedOnly: boolean;
+  filters: CoverageFilters;
+  showFeed: boolean;
   onClose: () => void;
 }) {
   const { technique, subs } = cell;
   // The rules load when a technique is opened; the matrix only has counts
   const { data: coverage, isLoading } = useQuery({
-    queryKey: ['attack-technique-rules', technique.id, status, validatedOnly],
-    queryFn: () => getTechniqueRules(technique.id, status, validatedOnly),
+    queryKey: ['attack-technique-rules', technique.id, filters.status, filters.validatedOnly, filters.withLogs],
+    queryFn: () => getTechniqueRules(technique.id, filters),
   });
   const own = coverage?.[technique.id] ?? [];
   return (
@@ -532,6 +660,8 @@ function TechniqueDetail({ cell, status, validatedOnly, onClose }: {
       </div>
 
       <div className="space-y-4">
+        <TechniqueAbout id={technique.id} />
+
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
             Rules mapped to {technique.id} {coverage && `(${own.length})`}
@@ -541,13 +671,13 @@ function TechniqueDetail({ cell, status, validatedOnly, onClose }: {
               <Loader2 className="w-4 h-4 animate-spin" /> Loading rules…
             </p>
           ) : own.length ? (
-            <RuleList rules={own} />
+            <RuleList rules={own} showFeed={showFeed} />
           ) : (
             <p className="text-sm text-muted-foreground">None.</p>
           )}
         </div>
 
-        <TechniqueContextPanel id={technique.id} />
+        <TechniqueContextPanel id={technique.id} platforms={filters.platforms ?? []} />
 
         <div className="pt-2 border-t border-border">
           <TechniqueAtomics id={technique.id} className={SECTION} />
@@ -569,7 +699,7 @@ function TechniqueDetail({ cell, status, validatedOnly, onClose }: {
                     </a>
                     {rules.length > 0 && (
                       <div className="mt-1">
-                        <RuleList rules={rules} />
+                        <RuleList rules={rules} showFeed={showFeed} />
                       </div>
                     )}
                   </div>
@@ -586,8 +716,111 @@ function TechniqueDetail({ cell, status, validatedOnly, onClose }: {
 const SECTION = 'text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2';
 const PREVIEW = 24;
 
-/** Mitigations, D3FEND countermeasures and the groups / software using a technique. */
-function TechniqueContextPanel({ id }: { id: string }) {
+/** What the technique is and where it applies. */
+function TechniqueAbout({ id }: { id: string }) {
+  const { data } = useQuery({ queryKey: ['technique-context', id], queryFn: () => getTechniqueContext(id), staleTime: 60 * 60 * 1000 });
+  if (!data || (!data.description && !data.platforms.length)) return null;
+  return (
+    <div>
+      {data.description && <p className="text-sm leading-relaxed max-w-4xl">{data.description}</p>}
+      {data.platforms.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <span className="text-xs text-muted-foreground">Platforms:</span>
+          {data.platforms.map((p) => (
+            <span key={p} className="px-1.5 py-0.5 rounded bg-muted text-xs">
+              {p}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ANALYTIC_PREVIEW = 3;
+
+/** One of MITRE's analytics: what to look for on a platform, in which logs, and what to tune. */
+export function AnalyticCard({ analytic }: { analytic: AttackAnalytic }) {
+  return (
+    <div className="rounded-md border border-border px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 mb-1">
+        <span className="font-mono text-xs text-muted-foreground">{analytic.id}</span>
+        {analytic.platforms.map((p) => (
+          <span key={p} className="px-1.5 py-0.5 rounded bg-muted text-[11px]">
+            {p}
+          </span>
+        ))}
+      </div>
+      <p className="text-sm leading-relaxed">{analytic.description}</p>
+      {analytic.logSources.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {analytic.logSources.map((l, i) => (
+            <span key={i} className="px-1.5 py-0.5 rounded border border-border text-[11px]" title={l.component ? `Data component: ${l.component}` : undefined}>
+              <span className="font-mono">{l.name}</span>
+              {l.channel && <span className="text-muted-foreground"> · {l.channel}</span>}
+            </span>
+          ))}
+        </div>
+      )}
+      {analytic.tunables.length > 0 && (
+        <details className="mt-2 text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none">What to tune ({analytic.tunables.length})</summary>
+          <ul className="mt-1 space-y-0.5 pl-4 list-disc">
+            {analytic.tunables.map((t) => (
+              <li key={t.field}>
+                <span className="font-mono text-foreground">{t.field}</span>
+                {t.description && ` — ${t.description}`}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** MITRE's detection strategy for the technique: analytics per platform. */
+function DetectionGuidance({ id, platforms }: { id: string; platforms: string[] }) {
+  const { data } = useQuery({ queryKey: ['technique-context', id], queryFn: () => getTechniqueContext(id), staleTime: 60 * 60 * 1000 });
+  const [all, setAll] = useState(false);
+  if (!data || (!data.detection.length && !data.detectionText)) return null;
+  const analytics = data.detection.flatMap((d) => d.analytics);
+  // The platforms the matrix is limited to first; the others stay reachable
+  const matching = platforms.length ? analytics.filter((a) => !a.platforms.length || a.platforms.some((p) => platforms.includes(p))) : analytics;
+  const list = platforms.length && matching.length ? matching : analytics;
+  const shown = all ? list : list.slice(0, ANALYTIC_PREVIEW);
+  return (
+    <div className="pt-2 border-t border-border">
+      <h3 className={SECTION}>
+        <Radar className="inline w-3.5 h-3.5 mr-1 -mt-0.5" />
+        How MITRE suggests detecting it
+        {list.length > 0 && ` (${list.length} analytic${list.length === 1 ? '' : 's'}${list !== analytics ? ` for ${platforms.join(', ')}` : ''})`}
+      </h3>
+      {data.detection.map((d) => (
+        <p key={d.id} className="text-sm mb-2">
+          <a href={`https://attack.mitre.org/detectionstrategies/${d.id}/`} target="_blank" rel="noreferrer" className="font-medium hover:underline">
+            {d.name}
+          </a>{' '}
+          <span className="font-mono text-xs text-muted-foreground">{d.id}</span>
+        </p>
+      ))}
+      {data.detectionText && <p className="text-sm leading-relaxed max-w-4xl">{data.detectionText}</p>}
+      <div className="grid lg:grid-cols-2 gap-2">
+        {shown.map((a) => (
+          <AnalyticCard key={a.id} analytic={a} />
+        ))}
+      </div>
+      {list.length > shown.length && (
+        <button onClick={() => setAll(true)} className="mt-2 text-xs text-primary hover:underline">
+          Show all {list.length} analytics
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** MITRE's detection guidance, mitigations, D3FEND countermeasures and the groups / software using a technique. */
+function TechniqueContextPanel({ id, platforms }: { id: string; platforms: string[] }) {
   const { data } = useQuery({ queryKey: ['technique-context', id], queryFn: () => getTechniqueContext(id), staleTime: 60 * 60 * 1000 });
   const { data: d3, isLoading: d3Loading } = useQuery({ queryKey: ['d3fend', id], queryFn: () => getD3fend(id), staleTime: 60 * 60 * 1000 });
   const [allGroups, setAllGroups] = useState(false);
@@ -599,6 +832,8 @@ function TechniqueContextPanel({ id }: { id: string }) {
   const software = allSoftware ? data.software : data.software.slice(0, PREVIEW);
   const via = (v: string[]) => (v.length === 1 && v[0] === id ? '' : ` · via ${v.join(', ')}`);
   return (
+    <>
+    <DetectionGuidance id={id} platforms={platforms} />
     <div className="grid md:grid-cols-2 gap-5 pt-2 border-t border-border">
       <div>
         <h3 className={SECTION}>
@@ -712,5 +947,6 @@ function TechniqueContextPanel({ id }: { id: string }) {
         </div>
       </div>
     </div>
+    </>
   );
 }

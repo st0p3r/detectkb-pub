@@ -70,7 +70,7 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
       include: {
         tags: { include: { tag: true } },
         category: true,
-        rule: true,
+        rule: { include: { owner: { select: { username: true } } } },
         splCommand: true,
         outLinks: true,
         sysmonEvents: { select: { source: true, sysmonEvent: { select: { eventId: true } } } },
@@ -101,7 +101,12 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
 
   const watchedGroups = await prisma.watchedGroup.findMany({ select: { groupId: true, note: true } });
 
-  const backup = { version: 1, exportedAt: new Date().toISOString(), pages, categories, tags, analyticStories, watchedGroups };
+  const [collection, coverageSnapshots] = await Promise.all([
+    prisma.telemetryCollection.findMany({ select: { key: true, collected: true, note: true } }),
+    prisma.coverageSnapshot.findMany({ select: { day: true, data: true }, orderBy: { day: 'asc' } }),
+  ]);
+
+  const backup = { version: 1, exportedAt: new Date().toISOString(), pages, categories, tags, analyticStories, watchedGroups, collection, coverageSnapshots };
   const timestamp = Date.now();
   const fileName = `detectkb-backup-${timestamp}.json`;
   const filePath = path.join(BACKUP_DIR, fileName);
@@ -161,6 +166,8 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
     categories?: { name: string; color?: string; parentId?: number | null }[];
     tags?: { name: string }[];
     watchedGroups?: { groupId: string; note?: string | null }[];
+    collection?: { key: string; collected: boolean; note?: string | null }[];
+    coverageSnapshots?: { day: string; data: unknown }[];
     pages?: {
       title: string;
       slug: string;
@@ -187,6 +194,11 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
         sourceContent?: string | null;
         nativeQuery?: string | null;
         nativeLanguage?: string | null;
+        triage?: string | null;
+        response?: string | null;
+        lastReviewedAt?: string | null;
+        nextReviewAt?: string | null;
+        owner?: { username: string } | null;
       } | null;
       sysmonEvents?: { source: string; sysmonEvent: { eventId: number } }[];
       testRuns?: BackupTestRun[];
@@ -208,6 +220,21 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
     res.status(400).json({ error: 'Invalid JSON file' });
     return;
   }
+
+  // Owners by username: users are not part of the backup, so an owner who
+  // doesn't exist here is dropped
+  const users = new Map((await prisma.user.findMany({ select: { id: true, username: true } })).map((u) => [u.username, u.id]));
+  const date = (v: unknown) => {
+    const d = typeof v === 'string' ? new Date(v) : null;
+    return d && !isNaN(d.getTime()) ? d : null;
+  };
+  const upkeepFields = (r: { triage?: string | null; response?: string | null; lastReviewedAt?: string | null; nextReviewAt?: string | null; owner?: { username: string } | null }) => ({
+    triage: r.triage ?? null,
+    response: r.response ?? null,
+    lastReviewedAt: date(r.lastReviewedAt),
+    nextReviewAt: date(r.nextReviewAt),
+    ownerId: (r.owner?.username && users.get(r.owner.username)) || null,
+  });
 
   let restored = 0;
   let skipped = 0;
@@ -291,6 +318,7 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
               sourceContent: p.rule.sourceContent ?? null,
               nativeQuery: p.rule.nativeQuery ?? null,
               nativeLanguage: p.rule.nativeLanguage ?? null,
+              ...upkeepFields(p.rule),
             },
             update: {
               status: p.rule.status || 'draft',
@@ -309,6 +337,7 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
               sourceContent: p.rule.sourceContent ?? null,
               nativeQuery: p.rule.nativeQuery ?? null,
               nativeLanguage: p.rule.nativeLanguage ?? null,
+              ...upkeepFields(p.rule),
             },
           });
         }
@@ -378,6 +407,7 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
               sourceContent: p.rule.sourceContent ?? null,
               nativeQuery: p.rule.nativeQuery ?? null,
               nativeLanguage: p.rule.nativeLanguage ?? null,
+              ...upkeepFields(p.rule),
             },
           });
         }
@@ -430,6 +460,20 @@ router.post('/restore/json', requirePermission('backups:restore'), upload.single
     if (typeof w?.groupId !== 'string') continue;
     const note = typeof w.note === 'string' ? w.note.slice(0, 500) : null;
     await prisma.watchedGroup.upsert({ where: { groupId: w.groupId.slice(0, 16) }, create: { groupId: w.groupId.slice(0, 16), note }, update: { note } });
+  }
+
+  for (const c of backup.collection || []) {
+    if (typeof c?.key !== 'string' || typeof c.collected !== 'boolean') continue;
+    const key = c.key.slice(0, 191);
+    const note = typeof c.note === 'string' ? c.note.slice(0, 500) : null;
+    await prisma.telemetryCollection.upsert({ where: { key }, create: { key, collected: c.collected, note }, update: { collected: c.collected, note } });
+  }
+
+  // The coverage trend: days this server has no snapshot of
+  for (const snap of backup.coverageSnapshots || []) {
+    const day = date(snap?.day);
+    if (!day || !snap.data || typeof snap.data !== 'object') continue;
+    await prisma.coverageSnapshot.upsert({ where: { day }, create: { day, data: snap.data as object }, update: {} });
   }
 
   await syncAllDerivedLinks();

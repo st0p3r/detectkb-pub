@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, ChevronUp, ExternalLink, Loader2, Pencil, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, ClipboardList, ExternalLink, Loader2, Pencil, X } from 'lucide-react';
 import { apiErrorMessage, getPage } from '@/lib/api';
 import { useAuth } from '@/features/auth/AuthContext';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -72,6 +72,9 @@ export function RulePreviewDrawer({ slug, onClose, onPrev, onNext, onTechnique }
         </div>
       </header>
       <div className="flex gap-2 px-5 py-2 border-b border-border bg-muted/20">
+        <Link to={`/runbook/${slug}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border text-xs hover:bg-accent" title="What to check when this rule fires">
+          <ClipboardList className="w-3.5 h-3.5" /> Runbook
+        </Link>
         <Link to={`/pages/${slug}`} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border text-xs hover:bg-accent" title="Open the full page (o)">
           <ExternalLink className="w-3.5 h-3.5" /> Open page
         </Link>

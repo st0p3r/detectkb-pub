@@ -25,6 +25,11 @@
     --ring: 245 75% 58%;
     --radius: 0.5rem;
 
+    /* Chart series (validated for colour-blind separation on the card surface) */
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+
     /* Enterprise dark sidebar */
     --sidebar: 222 47% 8%;
     --sidebar-foreground: 215 20% 75%;
@@ -53,6 +58,10 @@
     --border: 217 33% 18%;
     --input: 217 33% 18%;
     --ring: 245 75% 65%;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
 
     /* Even darker sidebar in dark mode */
     --sidebar: 222 47% 5%;
@@ -196,4 +205,70 @@
 }
 .sidebar-scroll::-webkit-scrollbar-thumb:hover {
   background-color: hsl(var(--sidebar-primary) / 0.5);
+}
+
+/* ATT&CK matrix: a cell whose every rule lacks its logs — covered on paper only */
+.cell-no-logs {
+  background-image: repeating-linear-gradient(135deg, transparent 0 5px, hsl(var(--background) / 0.55) 5px 8px);
+  outline: 1px dashed rgb(239 68 68 / 0.7);
+  outline-offset: -2px;
+}
+
+/* Printing (the runbook): the page alone, on white, without the app chrome */
+@media print {
+  aside,
+  header.fixed {
+    display: none !important;
+  }
+  html,
+  body,
+  #root,
+  #root > div {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  .ml-60,
+  .ml-14 {
+    margin-left: 0 !important;
+  }
+  main {
+    margin-top: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+}
+
+/* Markdown in a runbook (triage and response steps) */
+.rb-md > * + * {
+  margin-top: 0.5rem;
+}
+.rb-md ol {
+  list-style: decimal;
+  padding-inline-start: 1.5rem;
+}
+.rb-md ul {
+  list-style: disc;
+  padding-inline-start: 1.5rem;
+}
+.rb-md li + li {
+  margin-top: 0.25rem;
+}
+.rb-md h1,
+.rb-md h2,
+.rb-md h3,
+.rb-md h4 {
+  font-weight: 600;
+  margin-top: 0.75rem;
+}
+.rb-md code {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
+  background: hsl(var(--muted));
+}
+.rb-md a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
 }

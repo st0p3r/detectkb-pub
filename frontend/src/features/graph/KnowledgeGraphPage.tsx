@@ -25,7 +25,8 @@ const VIEWS: { id: View; label: string; icon: React.ElementType; hint: string }[
   { id: 'gaps', label: 'Tool gaps', icon: ShieldAlert, hint: 'Attacker tools and techniques no rule covers' },
 ];
 
-function impactParams({ sources, events, dataSource }: { sources: string[]; events: string[]; dataSource: number | null }) {
+function impactParams({ sources, events, dataSource, collection }: { sources: string[]; events: string[]; dataSource: number | null; collection?: boolean }): Record<string, string> {
+  if (collection) return { view: 'impact', collection: '1' };
   return {
     view: 'impact',
     ...(sources.length ? { sources: sources.join(',') } : {}),
@@ -101,7 +102,8 @@ export default function KnowledgeGraphPage() {
           // ?sysmon=1,10 is the older form of events=sysmon:1,sysmon:10 (saved views)
           events={[...list('events'), ...list('sysmon').map((n) => `sysmon:${n}`)]}
           dataSource={Number(params.get('dataSource')) || null}
-          onChange={({ sources, events, dataSource }) => go(impactParams({ sources, events, dataSource }))}
+          collection={params.get('collection') === '1'}
+          onChange={(next) => go(impactParams(next))}
           onShowChain={showChain}
         />
       )}

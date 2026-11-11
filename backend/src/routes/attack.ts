@@ -1,19 +1,10 @@
 import { Router, Request } from 'express';
 import multer from 'multer';
-import { kbCacheMap } from '../lib/kb-cache';
 import { requirePermission } from '../middleware/auth';
 import { attackDataInfo, downloadAttackBundle, importAttackBundle, resetAttackData } from '../lib/attack-update';
-import { prisma } from '../lib/prisma';
-import {
-  ATTACK_VERSION,
-  TACTICS,
-  TECHNIQUES,
-  parentTechniqueId,
-  parseTechniqueIds,
-  resolveTechniqueId,
-} from '../lib/attack';
-import { ValidationStatus, loadValidation } from '../lib/validation';
-import { CONFIDENCE_LEVELS, CoverageConfidence, bestConfidence } from '../lib/coverage-confidence';
+import { ATTACK_VERSION, TACTICS, TECHNIQUES, attackPlatforms, onPlatforms, parentTechniqueId } from '../lib/attack';
+import { loadCoverage, summarizeCoverage } from '../lib/attack-coverage';
+import { loadHistory, takeSnapshot } from '../lib/coverage-snapshot';
 
 const router = Router();
 const canManage = requirePermission('settings:manage');
@@ -63,126 +54,71 @@ router.post('/data/reset', canManage, async (_req, res) => {
   res.json({ ruleMappings: await resetAttackData(), ...(await attackDataInfo()) });
 });
 
-interface CoveringRule {
-  pageId: number;
-  title: string;
-  slug: string;
-  status: string;
-  severity: string;
-  /** Lab validation status (lib/validation) */
-  validation: ValidationStatus;
-}
-
-/** ?status=production,testing — defaults to every status except deprecated. */
-function statusFilter(raw: string) {
-  if (raw === 'all') return {};
-  if (raw) return { status: { in: raw.split(',').map((s) => s.trim()).filter(Boolean) } };
-  return { status: { not: 'deprecated' } };
-}
-
-// Coverage per filter (cached until data changes; shared, so read-only)
-const coverageCache = kbCacheMap(
-  (key) => {
-    const [status, validation] = key.split('|');
-    return buildCoverage(status, validation === 'validated');
-  },
-  { warm: true, label: 'ATT&CK coverage' }
-);
-
-/** technique ID → rules that reference it, for ?status= and ?validation=validated */
+/** ?status=, ?validation=validated, ?logs=collected → the coverage for those filters */
 function computeCoverage(req: Request) {
-  const raw = typeof req.query.status === 'string' ? req.query.status.trim() : '';
-  const status = raw === 'all' ? raw : raw.split(',').map((s) => s.trim()).filter(Boolean).sort().join(',');
-  return coverageCache.get(`${status}|${req.query.validation === 'validated' ? 'validated' : ''}`);
+  return loadCoverage({
+    status: typeof req.query.status === 'string' ? req.query.status.trim() : '',
+    validated: req.query.validation === 'validated',
+    withLogs: req.query.logs === 'collected',
+  });
 }
 
-/** technique ID → rules that reference it (IDs not in ATT&CK are returned separately). */
-async function buildCoverage(status: string, onlyValidated: boolean) {
-  // ?validation=validated — proven coverage: only rules a lab test showed firing
-  const validation = await loadValidation();
-  const all = await prisma.detectionRule.findMany({
-    where: statusFilter(status),
-    select: {
-      status: true,
-      severity: true,
-      mitreTechniques: true,
-      page: { select: { id: true, title: true, slug: true } },
-    },
-  });
-  const rules = onlyValidated ? all.filter((r) => validation(r.page.id).status === 'validated') : all;
-
-  const byTechnique = new Map<string, CoveringRule[]>();
-  const unknown = new Map<string, CoveringRule[]>();
-  // Retired IDs still used by rules, e.g. T1562.001 → T1685
-  const retired = new Map<string, { replacedBy: string; rules: CoveringRule[] }>();
-  for (const r of rules) {
-    const info: CoveringRule = {
-      pageId: r.page.id,
-      title: r.page.title,
-      slug: r.page.slug,
-      status: r.status,
-      severity: r.severity,
-      validation: validation(r.page.id).status,
-    };
-    for (const rawId of parseTechniqueIds(r.mitreTechniques)) {
-      const id = resolveTechniqueId(rawId);
-      if (!id) {
-        if (!unknown.has(rawId)) unknown.set(rawId, []);
-        unknown.get(rawId)!.push(info);
-        continue;
-      }
-      if (id !== rawId) {
-        if (!retired.has(rawId)) retired.set(rawId, { replacedBy: id, rules: [] });
-        retired.get(rawId)!.rules.push(info);
-      }
-      if (!byTechnique.has(id)) byTechnique.set(id, []);
-      const list = byTechnique.get(id)!;
-      if (!list.some((x) => x.pageId === info.pageId)) list.push(info);
-    }
-  }
-  return { ruleCount: rules.length, byTechnique, unknown, retired };
+/** ?platforms=Windows,Linux → the platforms to limit the matrix to (null: all) */
+function platformFilter(req: Request): Set<string> | null {
+  const known = new Set(attackPlatforms());
+  const chosen = String(req.query.platforms ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => known.has(p));
+  return chosen.length ? new Set(chosen) : null;
 }
 
 // GET /api/attack/coverage — ATT&CK matrix with rule counts per technique.
 // The rules themselves come from /techniques/:id/rules when a cell is opened
 // (sending every covering rule made this ~700 KB).
+//   ?platforms=Windows,Linux  only techniques on those platforms (counts and totals)
+//   ?logs=collected           leave out rules whose logs aren't collected
 router.get('/coverage', async (req, res) => {
-  const { ruleCount, byTechnique, unknown, retired } = await computeCoverage(req);
-
-  const coveredParents = new Set(Array.from(byTechnique.keys()).map(parentTechniqueId));
-  const parentTotal = TECHNIQUES.filter((t) => !t.id.includes('.')).length;
-
-  // Parent cell = rules on the technique or any sub-technique, each rule once
-  const parentRules = new Map<string, Map<number, CoveringRule>>();
-  for (const [id, rules] of byTechnique) {
-    const parent = parentTechniqueId(id);
-    if (!parentRules.has(parent)) parentRules.set(parent, new Map());
-    for (const r of rules) parentRules.get(parent)!.set(r.pageId, r);
-  }
-  // Best confidence per technique and per parent cell, and how many covered
-  // (parent) techniques reach each level
-  const confidence = Object.fromEntries(Array.from(byTechnique, ([id, rules]) => [id, bestConfidence(rules)]));
-  const parentConfidence = Object.fromEntries(Array.from(parentRules, ([id, rules]) => [id, bestConfidence(rules.values())]));
-  const confidenceCounts = Object.fromEntries(CONFIDENCE_LEVELS.map((l) => [l, 0])) as Record<CoverageConfidence, number>;
-  for (const level of Object.values(parentConfidence)) if (level) confidenceCounts[level]++;
+  const { ruleCount, blindRules, collectionActive, byTechnique, unknown, retired } = await computeCoverage(req);
+  const platforms = platformFilter(req);
+  const s = summarizeCoverage(byTechnique, platforms);
 
   res.json({
     attackVersion: ATTACK_VERSION,
     tactics: TACTICS,
-    techniques: TECHNIQUES,
-    counts: Object.fromEntries(Array.from(byTechnique, ([id, rules]) => [id, rules.length])),
-    parentCounts: Object.fromEntries(Array.from(parentRules, ([id, rules]) => [id, rules.size])),
-    confidence,
-    parentConfidence,
+    techniques: TECHNIQUES.filter((t) => onPlatforms(t.id, platforms) && onPlatforms(parentTechniqueId(t.id), platforms)),
+    platforms: attackPlatforms(),
+    counts: s.counts,
+    parentCounts: s.parentCounts,
+    confidence: s.confidence,
+    parentConfidence: s.parentConfidence,
+    parentBlind: s.parentBlind,
     unknownTechniques: Array.from(unknown, ([id, rules]) => ({ id, rules })),
     retiredTechniques: Array.from(retired, ([id, v]) => ({ id, ...v })),
     summary: {
       rulesAnalyzed: ruleCount,
-      coveredTechniques: coveredParents.size,
-      totalTechniques: parentTotal,
-      confidence: confidenceCounts,
+      coveredTechniques: s.coveredTechniques,
+      totalTechniques: s.totalTechniques,
+      confidence: s.confidenceCounts,
+      /** Whether anyone said which logs are collected (Log Sources) */
+      collectionActive,
+      /** Matching rules that can't fire: their logs aren't collected */
+      blindRules,
+      /** Covered techniques whose every rule is blind */
+      blindTechniques: s.blindTechniques,
     },
   });
+});
+
+// GET /api/attack/coverage/history?days=180 — daily snapshots of the headline numbers
+router.get('/coverage/history', async (req, res) => {
+  const days = Math.min(Math.max(Number(req.query.days) || 180, 7), 1100);
+  res.json(await loadHistory(days));
+});
+
+// POST /api/attack/coverage/snapshot — store today's numbers now
+router.post('/coverage/snapshot', requirePermission('rules:update'), async (_req, res) => {
+  res.json(await takeSnapshot());
 });
 
 // GET /api/attack/techniques/T1003/rules?status= — the rules covering a
@@ -196,14 +132,17 @@ router.get('/techniques/:id/rules', async (req, res) => {
 // GET /api/attack/navigator-layer — ATT&CK Navigator layer (v4.5) as a download
 router.get('/navigator-layer', async (req, res) => {
   const { byTechnique } = await computeCoverage(req);
+  const platforms = platformFilter(req);
 
-  const techniques = Array.from(byTechnique, ([id, rules]) => ({
-    techniqueID: id,
-    score: rules.length,
-    comment: rules.map((r) => `${r.title} [${r.status}/${r.severity}]`).join('\n'),
-    enabled: true,
-    showSubtechniques: false,
-  }));
+  const techniques = Array.from(byTechnique)
+    .filter(([id]) => onPlatforms(id, platforms))
+    .map(([id, rules]) => ({
+      techniqueID: id,
+      score: rules.length,
+      comment: rules.map((r) => `${r.title} [${r.status}/${r.severity}]`).join('\n'),
+      enabled: true,
+      showSubtechniques: false,
+    }));
   // Expand parents whose sub-techniques are covered so they're visible in Navigator
   const parentsWithSubs = new Set(
     techniques.filter((t) => t.techniqueID.includes('.')).map((t) => parentTechniqueId(t.techniqueID))
@@ -220,7 +159,7 @@ router.get('/navigator-layer', async (req, res) => {
     versions: { attack: ATTACK_VERSION?.split('.')[0] ?? '16', navigator: '5.1.0', layer: '4.5' },
     domain: 'enterprise-attack',
     description: `Detection coverage exported from DetectKB on ${new Date().toISOString().slice(0, 10)}. Score = number of rules.`,
-    filters: { platforms: ['Windows', 'Linux', 'macOS', 'Network', 'PRE', 'Containers', 'IaaS', 'SaaS', 'Office Suite', 'Identity Provider', 'ESXi'] },
+    filters: { platforms: platforms ? Array.from(platforms) : attackPlatforms() },
     sorting: 0,
     layout: { layout: 'side', aggregateFunction: 'max', showID: true, showName: true, showAggregateScores: true, countUnscored: false },
     hideDisabled: false,

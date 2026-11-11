@@ -16,6 +16,8 @@ const bundle = {
       type: 'attack-pattern',
       id: 'attack-pattern--ps',
       name: 'PowerShell',
+      description: 'Adversaries may abuse PowerShell. (Citation: X)',
+      x_mitre_platforms: ['Windows'],
       external_references: ref('T1059.001'),
       kill_chain_phases: [{ kill_chain_name: 'mitre-attack', phase_name: 'execution' }],
     },
@@ -36,6 +38,18 @@ const bundle = {
     { type: 'relationship', id: 'relationship--u2', relationship_type: 'uses', source_ref: 'intrusion-set--g', target_ref: 'tool--t' },
     { type: 'relationship', id: 'relationship--u3', relationship_type: 'uses', source_ref: 'tool--t', target_ref: 'attack-pattern--csi' },
     { type: 'relationship', id: 'relationship--m1', relationship_type: 'mitigates', source_ref: 'course-of-action--m', target_ref: 'attack-pattern--ps' },
+    { type: 'x-mitre-data-component', id: 'x-mitre-data-component--pc', name: 'Process Creation' },
+    {
+      type: 'x-mitre-analytic',
+      id: 'x-mitre-analytic--a',
+      description: 'PowerShell started with an encoded command.',
+      x_mitre_platforms: ['Windows'],
+      external_references: ref('AN0001'),
+      x_mitre_log_source_references: [{ x_mitre_data_component_ref: 'x-mitre-data-component--pc', name: 'WinEventLog:Sysmon', channel: 'EventCode=1' }],
+      x_mitre_mutable_elements: [{ field: 'ParentAllowlist', description: 'Known admin tools' }],
+    },
+    { type: 'x-mitre-detection-strategy', id: 'x-mitre-detection-strategy--d', name: 'Detect PowerShell abuse', external_references: ref('DET0001'), x_mitre_analytic_refs: ['x-mitre-analytic--a', 'x-mitre-analytic--missing'] },
+    { type: 'relationship', id: 'relationship--d1', relationship_type: 'detects', source_ref: 'x-mitre-detection-strategy--d', target_ref: 'attack-pattern--ps' },
     { type: 'relationship', id: 'relationship--u4', relationship_type: 'uses', source_ref: 'intrusion-set--g', target_ref: 'attack-pattern--old', revoked: true },
   ],
 };
@@ -52,6 +66,31 @@ describe('ATT&CK STIX conversion', () => {
     ]);
     expect(d.software[0]).toMatchObject({ id: 'S9999', type: 'tool', platforms: ['Windows'], techniques: ['T1059'] });
     expect(d.mitigations[0]).toMatchObject({ id: 'M1038', techniques: ['T1059.001'] });
+  });
+
+  it('keeps platforms, descriptions and the detection strategy of each technique', () => {
+    const d = convertStixBundle(bundle);
+    expect(d.techniques.find((t) => t.id === 'T1059.001')?.platforms).toEqual(['Windows']);
+    expect(d.techniques.find((t) => t.id === 'T1059')?.platforms).toEqual([]);
+    expect(d.details?.['T1059.001']).toEqual({
+      description: 'Adversaries may abuse PowerShell.',
+      detection: [
+        {
+          id: 'DET0001',
+          name: 'Detect PowerShell abuse',
+          analytics: [
+            {
+              id: 'AN0001',
+              platforms: ['Windows'],
+              description: 'PowerShell started with an encoded command.',
+              logSources: [{ name: 'WinEventLog:Sysmon', channel: 'EventCode=1', component: 'Process Creation' }],
+              tunables: [{ field: 'ParentAllowlist', description: 'Known admin tools' }],
+            },
+          ],
+        },
+      ],
+    });
+    expect(d.details?.T1059).toEqual({ description: '' });
   });
 
   it('rejects files that are not the Enterprise bundle', () => {

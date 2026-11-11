@@ -14,7 +14,22 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
 - **ATT&CK coverage heatmap** of your rules (ATT&CK Enterprise v19) with per-technique drill-down and
   export as an [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) layer; coloured
   by *confidence* — the best rule of each technique: proven in the lab, production, testing only or
-  draft only (production + testing rules are counted by default)
+  draft only (production + testing rules are counted by default). Limit the matrix to the platforms
+  you run (Windows, Linux, cloud, …) so techniques for the others are not counted as gaps, and see
+  how coverage changed over time (a snapshot is saved every day)
+- **What you actually collect**: mark each log source or event as collected or not (Log Sources).
+  Rules whose logs never arrive cannot fire, so coverage, the watchlist gaps and the health checks
+  leave them out; DetectKB lists the draft rules you could turn on today and the sources worth
+  collecting next, and Impact shows everything you miss today
+- **Technique details from MITRE**: each technique's description, platforms and detection strategy
+  — the analytics per platform, the log sources each reads and what to tune
+- **Alert runbook** for every rule: what the alert means, what to check first, what is usually
+  benign, what to do when it is real, the query, the logs it reads and related rules — written on
+  the rule (Triage steps / If it is real), or taken from the investigation guide of imported
+  Elastic rules; printable
+- **Owners and reviews**: every rule can have an owner and a review date; "Mark reviewed" schedules
+  the next one (`REVIEW_INTERVAL_DAYS`, default 180). The rule list filters by owner and by
+  overdue reviews, and the dashboard shows what needs attention
 - **Sysmon ↔ rules ↔ data sources**: each Sysmon event lists the rules and data sources that depend
   on it (e.g. "which rules need Event ID 10?"), inferred from the SPL / Sigma logsource or set manually
 - **Log sources beyond Sysmon**: Windows Security / System / PowerShell / Defender events, Sysmon for

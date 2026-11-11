@@ -8,3 +8,12 @@ export function relativeTime(date: string | Date): string {
   if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
   return new Date(date).toLocaleDateString();
 }
+
+/** "in 12 days", "today", "5 days ago" — for dates that matter by the day (review dates). */
+export function relativeDay(iso: string, now = new Date()): string {
+  const days = Math.round((new Date(iso).getTime() - now.getTime()) / 86400000);
+  if (days === 0) return 'today';
+  const n = Math.abs(days);
+  const span = n >= 60 ? `${Math.round(n / 30)} months` : `${n} day${n === 1 ? '' : 's'}`;
+  return days > 0 ? `in ${span}` : `${span} ago`;
+}

@@ -15,6 +15,8 @@ export interface AttackTechnique {
   id: string; // T1059 or T1059.001
   name: string;
   tactics: string[]; // tactic shortnames
+  /** Windows, Linux, macOS, IaaS, … — empty when the dataset doesn't say (imported before platforms were kept) */
+  platforms: string[];
 }
 
 export let ATTACK_VERSION: string | null = attackData.version;
@@ -31,10 +33,15 @@ const LEGACY_TACTIC_NAMES: Record<string, string> = {
 };
 
 /** Replaces the tactics, techniques and revoked IDs (startup, in-app ATT&CK update). */
-export function setAttackData(data: { version: string | null; tactics: AttackTactic[]; techniques: AttackTechnique[]; revoked: Record<string, string> }) {
+export function setAttackData(data: {
+  version: string | null;
+  tactics: AttackTactic[];
+  techniques: (Omit<AttackTechnique, 'platforms'> & { platforms?: string[] })[];
+  revoked: Record<string, string>;
+}) {
   ATTACK_VERSION = data.version;
   TACTICS.splice(0, TACTICS.length, ...data.tactics);
-  TECHNIQUES.splice(0, TECHNIQUES.length, ...data.techniques);
+  TECHNIQUES.splice(0, TECHNIQUES.length, ...data.techniques.map((t) => ({ ...t, platforms: t.platforms ?? [] })));
   for (const k of Object.keys(REVOKED_TECHNIQUES)) delete REVOKED_TECHNIQUES[k];
   Object.assign(REVOKED_TECHNIQUES, data.revoked);
   TECHNIQUE_BY_ID.clear();
@@ -106,4 +113,23 @@ export function replaceRetiredTechniques(text: string | null): { text: string | 
 
 export function parentTechniqueId(id: string): string {
   return id.split('.')[0];
+}
+
+/** Every platform the techniques name, most common first (Windows, Linux, macOS, …). */
+export function attackPlatforms(): string[] {
+  const counts = new Map<string, number>();
+  for (const t of TECHNIQUES) for (const p of t.platforms) counts.set(p, (counts.get(p) ?? 0) + 1);
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([p]) => p);
+}
+
+/**
+ * Does the technique apply to any of the platforms? No filter, or a technique
+ * whose platforms aren't known, always matches.
+ */
+export function onPlatforms(id: string, platforms: ReadonlySet<string> | null | undefined): boolean {
+  if (!platforms?.size) return true;
+  const t = TECHNIQUE_BY_ID.get(id);
+  return !t || !t.platforms.length || t.platforms.some((p) => platforms.has(p));
 }

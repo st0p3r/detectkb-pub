@@ -65,7 +65,7 @@ function sortActors<T extends ActorSummary>(list: T[], sort: Sort) {
 
 /** Techniques of an actor, grouped by tactic, coloured by coverage. */
 function TechniqueGrid({ coverage, onlyGaps }: { coverage: ActorCoverage; onlyGaps: boolean }) {
-  const { data: attack } = useQuery({ queryKey: ['attack-coverage', 'all'], queryFn: () => getAttackCoverage('all'), staleTime: 5 * 60 * 1000 });
+  const { data: attack } = useQuery({ queryKey: ['attack-coverage', 'all'], queryFn: () => getAttackCoverage({ status: 'all' }), staleTime: 5 * 60 * 1000 });
   const columns = useMemo(() => {
     const tactics = attack?.tactics ?? [];
     return tactics

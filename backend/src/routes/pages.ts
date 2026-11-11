@@ -10,7 +10,7 @@ const router = Router();
 const PAGE_INCLUDE = {
   tags: { include: { tag: true } },
   category: true,
-  rule: true,
+  rule: { include: { owner: { select: { id: true, username: true } } } },
   splCommand: true,
   sysmonEvents: {
     select: { source: true, basis: true, sysmonEvent: { select: { id: true, eventId: true, name: true, category: true } } },

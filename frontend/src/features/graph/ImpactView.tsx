@@ -8,6 +8,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
 import { cn } from '@/lib/utils';
+import { useCollection } from '@/features/collection/useCollection';
 
 export interface ImpactSelection {
   /** Whole log sources: sysmon, windows-security, … */
@@ -15,6 +16,8 @@ export interface ImpactSelection {
   /** Single events (telemetry keys): sysmon:10, windows-security:4688, … */
   events: string[];
   dataSource: number | null;
+  /** Instead of a selection: everything marked "not collected" on the Log Sources page */
+  collection?: boolean;
 }
 
 interface ImpactViewProps extends ImpactSelection {
@@ -50,15 +53,16 @@ function useSourceEvents(source: string) {
 }
 
 /** "What if we stop collecting …?" — rules and techniques that depend on some telemetry. */
-export function ImpactView({ sources, events, dataSource, onChange, onShowChain }: ImpactViewProps) {
+export function ImpactView({ sources, events, dataSource, collection = false, onChange, onShowChain }: ImpactViewProps) {
+  const collected = useCollection();
   const { data: logSources = [] } = useQuery({ queryKey: ['log-sources'], queryFn: listLogSources });
   const { data: dsPages = [] } = useQuery({ queryKey: ['pages', 'DATA_SOURCE'], queryFn: () => listPages({ type: 'DATA_SOURCE' }) });
   const [eventSource, setEventSource] = useState('sysmon');
   const sourceEvents = useSourceEvents(eventSource);
-  const hasSelection = sources.length > 0 || events.length > 0 || !!dataSource;
+  const hasSelection = collection || sources.length > 0 || events.length > 0 || !!dataSource;
   const { data, isLoading, isFetching, error } = useQuery({
-    queryKey: ['graph-impact', sources, events, dataSource],
-    queryFn: () => getImpact({ sources, events, dataSource: dataSource ?? undefined }),
+    queryKey: ['graph-impact', sources, events, dataSource, collection],
+    queryFn: () => (collection ? getImpact({ collection: true }) : getImpact({ sources, events, dataSource: dataSource ?? undefined })),
     enabled: hasSelection,
   });
   const [level, setLevel] = useState<ImpactedRule['level'] | 'all'>('all');
@@ -88,7 +92,8 @@ export function ImpactView({ sources, events, dataSource, onChange, onShowChain 
     }
   }
 
-  const set = (next: Partial<ImpactSelection>) => onChange({ sources, events, dataSource, ...next });
+  // Picking anything leaves the "what we miss today" scenario
+  const set = (next: Partial<ImpactSelection>) => onChange({ sources: collection ? [] : sources, events: collection ? [] : events, dataSource: collection ? null : dataSource, ...next });
   const lostKeys = new Set(data?.events ?? []);
   const rules = (data?.rules ?? []).filter((r) => level === 'all' || r.level === level);
   const label = (key: string) => data?.labels[key] ?? key;
@@ -101,7 +106,31 @@ export function ImpactView({ sources, events, dataSource, onChange, onShowChain 
 
   return (
     <div data-graph-export className="flex-1 min-h-0 overflow-auto space-y-4 pb-4">
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      {collection ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm">
+          <Unplug className="w-4 h-4 text-red-500 flex-shrink-0" />
+          <span>
+            <b>What you miss today</b>: the impact of everything marked “not collected” on the{' '}
+            <Link to="/log-sources" className="text-primary hover:underline">
+              Log Sources
+            </Link>{' '}
+            page{data ? ` (${data.sources.length} source${data.sources.length === 1 ? '' : 's'}, ${data.events.length} event${data.events.length === 1 ? '' : 's'})` : ''}.
+          </span>
+          <button onClick={() => onChange({ sources: [], events: [], dataSource: null })} className="ml-auto text-xs text-primary hover:underline">
+            Try another scenario
+          </button>
+        </div>
+      ) : (
+        collected.active && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 px-4 py-2 text-sm">
+            <span className="text-muted-foreground">Rules tagged “no logs today” already cannot fire with what is marked as collected.</span>
+            <button onClick={() => onChange({ sources: [], events: [], dataSource: null, collection: true })} className="ml-auto text-xs text-primary hover:underline">
+              Show what we miss today
+            </button>
+          </div>
+        )
+      )}
+      <div className={cn('rounded-lg border border-border bg-card p-4 space-y-3', collection && 'hidden')}>
         <div className="flex flex-wrap items-center gap-3">
           <Unplug className="w-4 h-4 text-muted-foreground" />
           <span className="text-sm font-medium">If we stop collecting…</span>
@@ -329,6 +358,11 @@ export function ImpactView({ sources, events, dataSource, onChange, onShowChain 
                         {r.title}
                       </Link>
                       <StatusBadge status={r.status} />
+                      {!collection && r.feed === 'blind' && (
+                        <span className="px-1.5 py-px rounded border border-border text-[11px] text-muted-foreground" title="Its logs are already marked as not collected: nothing changes for this rule">
+                          no logs today
+                        </span>
+                      )}
                       <span className="text-xs text-muted-foreground truncate max-w-[26rem]" title={r.lostEvents.map(label).join(', ')}>
                         loses {r.lostEvents.map(label).join(', ')}
                       </span>

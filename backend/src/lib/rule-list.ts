@@ -5,7 +5,7 @@ import { techniquePageWhere } from './rule-techniques';
 
 export const RULE_STATUSES = ['draft', 'testing', 'production', 'deprecated'];
 export const RULE_SEVERITIES = ['info', 'low', 'medium', 'high', 'critical'];
-export const SORT_KEYS = ['title', 'status', 'severity', 'updatedAt'] as const;
+export const SORT_KEYS = ['title', 'status', 'severity', 'updatedAt', 'nextReviewAt'] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
 
 export const MAX_PAGE_SIZE = 200;
@@ -22,6 +22,14 @@ export interface RuleListQuery {
   story?: number;
   /** Telemetry key (sysmon:1, windows-security:4688) or a whole source (sysmon, windows-security) */
   telemetry?: string;
+  /** A user id, "none" (no owner) or "me" (resolved to the caller's id by the route) */
+  owner?: string;
+  /** overdue | soon (due within REVIEW_SOON_DAYS, overdue included) | none (no review date) */
+  review?: string;
+  /** fed | blind | unknown: whether the rule's logs are collected (resolved to pageIds by the route) */
+  logs?: string;
+  /** Pages the list is limited to (set by the route for filters computed outside SQL) */
+  pageIds?: number[];
   sort: SortKey;
   dir: 'asc' | 'desc';
   page: number;
@@ -45,6 +53,9 @@ export function parseRuleListQuery(query: Record<string, unknown>): RuleListQuer
     dataSource: str(query.dataSource),
     story: Number(query.story) || undefined,
     telemetry: str(query.telemetry),
+    owner: str(query.owner),
+    review: str(query.review),
+    logs: str(query.logs),
     sort,
     dir,
     page,
@@ -52,9 +63,25 @@ export function parseRuleListQuery(query: Record<string, unknown>): RuleListQuer
   };
 }
 
+/** Reviews due within this many days count as "due soon". */
+export const REVIEW_SOON_DAYS = 30;
+
+/** Rules whose review is overdue, or due soon (overdue included). */
+export function reviewWhere(review: string, now = new Date()): Prisma.DetectionRuleWhereInput | null {
+  if (review === 'overdue') return { nextReviewAt: { lt: now } };
+  if (review === 'soon') return { nextReviewAt: { lt: new Date(now.getTime() + REVIEW_SOON_DAYS * 86400000) } };
+  if (review === 'none') return { nextReviewAt: null };
+  return null;
+}
+
 /** Where clause for the filters; `omit` leaves one out (for the status chip counts). */
 export function ruleWhere(f: RuleListQuery, omit?: 'status'): Prisma.DetectionRuleWhereInput {
   const and: Prisma.DetectionRuleWhereInput[] = [];
+  if (f.owner === 'none') and.push({ ownerId: null });
+  else if (f.owner && /^\d+$/.test(f.owner)) and.push({ ownerId: Number(f.owner) });
+  const review = f.review ? reviewWhere(f.review) : null;
+  if (review) and.push(review);
+  if (f.pageIds) and.push({ pageId: { in: f.pageIds } });
   if (f.status && omit !== 'status') and.push({ status: { in: f.status.split(',') } });
   if (f.severity) and.push({ severity: { in: f.severity.split(',') } });
   if (f.source === 'manual') and.push({ sourceFormat: null });
@@ -95,6 +122,8 @@ export function ruleOrderBy(sort: SortKey, dir: 'asc' | 'desc'): Prisma.Detectio
   const recent = { page: { updatedAt: 'desc' as const } };
   if (sort === 'title') return [{ page: { title: dir } }, { id: 'asc' }];
   if (sort === 'updatedAt') return [{ page: { updatedAt: dir } }, { id: 'asc' }];
+  // Rules without a review date last, whichever way it is sorted
+  if (sort === 'nextReviewAt') return [{ nextReviewAt: { sort: dir, nulls: 'last' } }, recent, { id: 'asc' }];
   return [{ [sort]: dir }, recent, { id: 'asc' }];
 }
 
@@ -146,6 +175,9 @@ export const RULE_LIST_SELECT = {
   sourceFormat: true,
   sourceId: true,
   nativeLanguage: true,
+  lastReviewedAt: true,
+  nextReviewAt: true,
+  owner: { select: { id: true, username: true } },
   page: {
     select: { id: true, title: true, slug: true, type: true, updatedAt: true, tags: { include: { tag: true } } },
   },

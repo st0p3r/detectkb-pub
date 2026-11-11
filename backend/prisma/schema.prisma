@@ -23,6 +23,7 @@ model User {
   generatedDocs      GeneratedDoc[]
   savedViews         SavedView[]
   testRuns           RuleTestRun[]
+  ownedRules         DetectionRule[]
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 }
@@ -204,6 +205,15 @@ model DetectionRule {
   // Query in a non-SPL language (KQL, EQL, ES|QL, KQL-kuery, Lucene) from the source rule
   nativeQuery     String? @db.LongText
   nativeLanguage  String? @db.VarChar(20)
+  // For the analyst who gets the alert (Markdown): what to check first, and
+  // what to do when it is real. Shown on the rule's runbook.
+  triage          String? @db.LongText
+  response        String? @db.LongText
+  // Who keeps the rule working, and when it was last / is next looked at
+  ownerId         Int?
+  owner           User?     @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  lastReviewedAt  DateTime?
+  nextReviewAt    DateTime?
 
   // Not @unique: adding a unique constraint would need --accept-data-loss on
   // upgrade. Uniqueness is enforced in routes/rules.ts and routes/sigma.ts.
@@ -212,6 +222,8 @@ model DetectionRule {
   // Filters and sorts of the rule list (GET /api/rules?page=…)
   @@index([status])
   @@index([severity])
+  @@index([ownerId])
+  @@index([nextReviewAt])
 }
 
 // A rule's ATT&CK techniques, one row per ID in DetectionRule.mitreTechniques
@@ -517,5 +529,26 @@ model UpstreamItem {
 model UpstreamDismissal {
   key       String   @id @db.VarChar(250)
   userId    Int?
+  createdAt DateTime @default(now())
+}
+
+// Which telemetry the organisation actually collects. key = a whole log source
+// ("sysmon", "windows-security") or one event ("sysmon:10",
+// "windows-security:4688"); an event's own row overrides its source's. No row:
+// not decided yet. Rules whose telemetry isn't collected can't fire, so
+// coverage, gaps and impact analysis leave them out (lib/collection.ts).
+model TelemetryCollection {
+  key         String   @id @db.VarChar(191)
+  collected   Boolean
+  note        String?  @db.VarChar(500)
+  updatedById Int?
+  updatedAt   DateTime @updatedAt
+}
+
+// ATT&CK coverage as it was on a day (lib/coverage-snapshot.ts): one row per
+// day, rewritten during the day, so the trend can be shown over time.
+model CoverageSnapshot {
+  day       DateTime @id @db.Date
+  data      Json
   createdAt DateTime @default(now())
 }

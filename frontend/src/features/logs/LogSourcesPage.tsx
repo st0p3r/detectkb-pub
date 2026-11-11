@@ -8,6 +8,12 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
 import { BasisBadge } from '@/components/ui/BasisBadge';
 import { cn } from '@/lib/utils';
+import { CollectionControl } from '@/features/collection/CollectionControl';
+import { CollectionSummary } from '@/features/collection/CollectionSummary';
+import { useCollection } from '@/features/collection/useCollection';
+
+const STATE_DOT = { collected: 'bg-emerald-500', 'not-collected': 'bg-red-500', unknown: 'bg-muted-foreground/30' } as const;
+const STATE_LABEL = { collected: 'Collected', 'not-collected': 'Not collected', unknown: 'Not decided' } as const;
 
 const PLATFORM_ORDER = ['Windows', 'Linux', 'EDR', 'Identity', 'Cloud', 'SaaS', 'Network', 'Containers', 'Multi-platform', 'Alerts', 'Other'];
 const LIST_LIMIT = 50;
@@ -92,6 +98,7 @@ export function LogSourcesPage() {
     enabled: !!current && current !== 'sysmon',
   });
   const openEvent = events.find((e) => e.key === focusEvent) ?? null;
+  const collection = useCollection();
   const detailRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (openEvent) detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -125,6 +132,8 @@ export function LogSourcesPage() {
           <Loader2 className="w-5 h-5 animate-spin" /> Loading…
         </p>
       ) : (
+        <>
+        <CollectionSummary onPickSource={(key) => setParams({ source: key })} />
         <div className="grid lg:grid-cols-[18rem_1fr] gap-4 items-start">
           <nav className="rounded-lg border border-border bg-card p-2 space-y-3" aria-label="Log sources">
             {byPlatform.map(([platform, list]) => (
@@ -140,6 +149,7 @@ export function LogSourcesPage() {
                       current === s.key ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
                     )}
                   >
+                    <span className={cn('w-2 h-2 rounded-full flex-shrink-0', STATE_DOT[collection.stateOf(s.key)])} title={STATE_LABEL[collection.stateOf(s.key)]} />
                     <span className="truncate flex-1">{s.label}</span>
                     <span className={cn('text-xs tabular-nums', current === s.key ? 'opacity-80' : 'text-muted-foreground')}>{s.rules}</span>
                   </button>
@@ -166,6 +176,13 @@ export function LogSourcesPage() {
                     </Link>
                   </div>
                 </div>
+                <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-border">
+                  <span className="text-sm">Do you collect {source.label}?</span>
+                  <CollectionControl telemetryKey={source.key} />
+                  <span className="text-xs text-muted-foreground">
+                    {source.key === 'sysmon' ? 'Single events can differ: set them on the Sysmon events page.' : 'Single events can differ: set them in the table below.'}
+                  </span>
+                </div>
                 {source.key === 'sysmon' && (
                   <p className="mt-3 text-sm text-muted-foreground">
                     Sysmon for Windows has its own reference with every event, key fields and detection tips.{' '}
@@ -190,6 +207,7 @@ export function LogSourcesPage() {
                         <th className="text-left font-medium px-4 py-2">Event</th>
                         <th className="text-right font-medium px-4 py-2 w-24">Rules</th>
                         <th className="text-right font-medium px-4 py-2 w-32">Data sources</th>
+                        <th className="text-right font-medium px-4 py-2">Collected?</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
@@ -210,6 +228,7 @@ export function LogSourcesPage() {
                           </td>
                           <td className="px-4 py-2 text-right tabular-nums">{e.rules}</td>
                           <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{e.dataSources || ''}</td>
+                          <td className="px-4 py-1.5 text-right">{e.code !== '*' && <CollectionControl telemetryKey={e.key} compact stopPropagation />}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -239,6 +258,7 @@ export function LogSourcesPage() {
             )}
           </div>
         </div>
+        </>
       )}
     </div>
   );
