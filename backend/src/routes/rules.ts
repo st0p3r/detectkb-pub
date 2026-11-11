@@ -3,6 +3,11 @@ import { prisma } from '../lib/prisma';
 import { parseSingleSigmaRule } from '../lib/sigma';
 import { syncDerivedLinks } from '../lib/derived-links';
 import { replaceRetiredTechniques } from '../lib/attack';
+import { loadRuleFeeds } from '../lib/collection';
+import { loadRuleTelemetry } from '../lib/coverage-analysis';
+import { buildRunbook } from '../lib/runbook-data';
+import { nextReviewDate } from '../lib/runbook';
+import type { Request } from 'express';
 import {
   RULE_LIST_SELECT,
   RULE_SEVERITIES,
@@ -38,6 +43,39 @@ async function sigmaFields(
   return { sigmaYaml: String(sigmaYaml), sigmaId };
 }
 
+const OWNER_SELECT = { select: { id: true, username: true } } as const;
+
+/** The list filters of a request; "owner=me" and "logs=" need the caller and the collection answers. */
+async function listQuery(req: Request, raw: Record<string, unknown> = req.query) {
+  const f = parseRuleListQuery(raw);
+  if (f.owner === 'me') f.owner = req.user?.userId ? String(req.user.userId) : 'none';
+  if (f.logs === 'fed' || f.logs === 'blind' || f.logs === 'unknown') {
+    const [feeds, rules] = await Promise.all([loadRuleFeeds(), loadRuleTelemetry()]);
+    f.pageIds = rules.filter((r) => feeds.feed(r.pageId) === f.logs).map((r) => r.pageId);
+  }
+  return f;
+}
+
+/** ownerId from a request body: undefined (not sent), null (no owner) or an active user's id; a string is an error. */
+async function ownerField(value: unknown): Promise<{ ownerId?: number | null } | string> {
+  if (value === undefined) return {};
+  if (value === null || value === '') return { ownerId: null };
+  const id = Number(value);
+  if (!Number.isInteger(id)) return 'Invalid owner';
+  const user = await prisma.user.findFirst({ where: { id, isActive: true }, select: { id: true } });
+  return user ? { ownerId: id } : 'Unknown owner';
+}
+
+/** nextReviewAt from a request body: undefined (not sent), null (none) or a date; a string is an error. */
+function reviewDateField(value: unknown): { nextReviewAt?: Date | null } | string {
+  if (value === undefined) return {};
+  if (value === null || value === '') return { nextReviewAt: null };
+  const d = new Date(String(value));
+  return isNaN(d.getTime()) ? 'Invalid review date' : { nextReviewAt: d };
+}
+
+const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
+
 const RULE_PAGE_SELECT = {
   id: true,
   title: true,
@@ -51,7 +89,7 @@ const RULE_PAGE_SELECT = {
 // and sorted server-side and returns { items, total, page, pageSize,
 // statusCounts }; without it, every matching rule (list columns only).
 router.get('/', async (req, res) => {
-  const f = parseRuleListQuery(req.query);
+  const f = await listQuery(req);
   const where = ruleWhere(f);
 
   if (req.query.page === undefined) {
@@ -99,6 +137,10 @@ router.get('/', async (req, res) => {
     });
   }
 
+  // Whether each rule's logs are collected, once someone filled that in
+  const feeds = await loadRuleFeeds();
+  if (feeds.active) items = items.map((i) => ({ ...i, feed: feeds.feed(i.pageId) }));
+
   res.json({
     items,
     total,
@@ -110,12 +152,26 @@ router.get('/', async (req, res) => {
 
 // GET /api/rules/ids?<list filters> — ids of every matching rule ("select all")
 router.get('/ids', async (req, res) => {
-  const rules = await prisma.detectionRule.findMany({ where: ruleWhere(parseRuleListQuery(req.query)), select: { id: true }, orderBy: { id: 'asc' } });
+  const rules = await prisma.detectionRule.findMany({ where: ruleWhere(await listQuery(req)), select: { id: true }, orderBy: { id: 'asc' } });
   res.json(rules.map((r) => r.id));
 });
 
+// GET /api/rules/owners — the people a rule can be assigned to, with how many rules each owns
+router.get('/owners', async (_req, res) => {
+  const [users, counts, unowned] = await Promise.all([
+    prisma.user.findMany({ where: { isActive: true }, select: { id: true, username: true, firstName: true, lastName: true }, orderBy: { username: 'asc' } }),
+    prisma.detectionRule.groupBy({ by: ['ownerId'], where: { ownerId: { not: null } }, _count: { _all: true } }),
+    prisma.detectionRule.count({ where: { ownerId: null } }),
+  ]);
+  const byOwner = new Map(counts.map((c) => [c.ownerId, c._count._all]));
+  res.json({
+    owners: users.map((u) => ({ id: u.id, username: u.username, name: [u.firstName, u.lastName].filter(Boolean).join(' ') || null, rules: byOwner.get(u.id) ?? 0 })),
+    unowned,
+  });
+});
+
 /** Rules a bulk action targets: explicit ids, or every rule matching a list filter. */
-async function bulkTargets(body: Record<string, unknown>) {
+async function bulkTargets(body: Record<string, unknown>, req: Request) {
   // By page (the rules' pages, as the graph and impact analysis identify rules)
   if (Array.isArray(body.pageIds)) {
     const pageIds = body.pageIds.map(Number).filter(Number.isInteger);
@@ -127,16 +183,18 @@ async function bulkTargets(body: Record<string, unknown>) {
   }
   if (body.filter && typeof body.filter === 'object') {
     return prisma.detectionRule.findMany({
-      where: ruleWhere(parseRuleListQuery(body.filter as Record<string, unknown>)),
+      where: ruleWhere(await listQuery(req, body.filter as Record<string, unknown>)),
       select: { id: true, pageId: true },
     });
   }
   return null;
 }
 
-const BULK_ACTIONS = ['status', 'severity', 'addTag', 'removeTag', 'replaceRetiredTechniques'] as const;
+const BULK_ACTIONS = ['status', 'severity', 'addTag', 'removeTag', 'replaceRetiredTechniques', 'owner', 'markReviewed'] as const;
 
-// PUT /api/rules/bulk { ids | pageIds | filter, action: status|severity|addTag|removeTag|replaceRetiredTechniques, value }
+// PUT /api/rules/bulk { ids | pageIds | filter, action, value }
+//   action: status | severity | addTag | removeTag | replaceRetiredTechniques
+//         | owner (value: a user id, or "" for no owner) | markReviewed
 router.put('/bulk', async (req, res) => {
   const { action } = req.body ?? {};
   const value = typeof req.body?.value === 'string' ? req.body.value.trim() : '';
@@ -146,7 +204,10 @@ router.put('/bulk', async (req, res) => {
   if ((action === 'addTag' || action === 'removeTag') && (!value || value.length > 80))
     return res.status(400).json({ error: 'Tag name must be 1–80 characters' });
 
-  const targets = await bulkTargets(req.body);
+  const owner = action === 'owner' ? await ownerField(value) : {};
+  if (typeof owner === 'string') return res.status(400).json({ error: owner });
+
+  const targets = await bulkTargets(req.body, req);
   if (!targets) return res.status(400).json({ error: 'Send ids, pageIds or filter' });
   const ids = targets.map((t) => t.id);
   const pageIds = targets.map((t) => t.pageId);
@@ -163,6 +224,11 @@ router.put('/bulk', async (req, res) => {
       for (const [from, to] of replaced) replacements[from] = to;
       changed++;
     }
+  } else if (action === 'owner') {
+    changed = (await prisma.detectionRule.updateMany({ where: { id: { in: ids } }, data: { ownerId: owner.ownerId ?? null } })).count;
+  } else if (action === 'markReviewed') {
+    const now = new Date();
+    changed = (await prisma.detectionRule.updateMany({ where: { id: { in: ids } }, data: { lastReviewedAt: now, nextReviewAt: nextReviewDate(now) } })).count;
   } else if (action === 'status' || action === 'severity') {
     changed = (await prisma.detectionRule.updateMany({ where: { id: { in: ids }, [action]: { not: value } }, data: { [action]: value } })).count;
   } else if (action === 'addTag') {
@@ -186,7 +252,7 @@ router.put('/bulk', async (req, res) => {
 
 // DELETE /api/rules/bulk { ids | filter } — deletes the rules' pages
 router.delete('/bulk', async (req, res) => {
-  const targets = await bulkTargets(req.body ?? {});
+  const targets = await bulkTargets(req.body ?? {}, req);
   if (!targets) return res.status(400).json({ error: 'Send ids, pageIds or filter' });
   const pageIds = targets.map((t) => t.pageId);
   const { count } = await prisma.page.deleteMany({ where: { id: { in: pageIds } } });
@@ -197,6 +263,34 @@ router.delete('/bulk', async (req, res) => {
   res.json({ deleted: count });
 });
 
+// GET /api/rules/:pageId/runbook — the rule as the analyst handling its alert needs it
+router.get('/:pageId/runbook', async (req, res) => {
+  const pageId = Number(req.params.pageId);
+  if (isNaN(pageId)) return res.status(400).json({ error: 'Invalid pageId' });
+  const runbook = await buildRunbook(pageId);
+  if (!runbook) return res.status(404).json({ error: 'Rule not found' });
+  res.json(runbook);
+});
+
+// PUT /api/rules/:id/review { nextReviewAt? } — the rule was looked at and still
+// holds: sets the review date to now and the next one REVIEW_INTERVAL_DAYS ahead
+router.put('/:id/review', async (req, res) => {
+  const id = Number(req.params.id);
+  if (isNaN(id)) return res.status(400).json({ error: 'Invalid id' });
+  const next = reviewDateField(req.body?.nextReviewAt);
+  if (typeof next === 'string') return res.status(400).json({ error: next });
+  const now = new Date();
+  const rule = await prisma.detectionRule.update({
+    where: { id },
+    data: { lastReviewedAt: now, nextReviewAt: next.nextReviewAt === undefined ? nextReviewDate(now) : next.nextReviewAt },
+    select: { id: true, pageId: true, lastReviewedAt: true, nextReviewAt: true },
+  });
+  await prisma.auditLog.create({
+    data: { userId: req.user?.userId ?? null, action: 'RULE_REVIEWED', resourceType: 'rule', resourceId: rule.id, newValue: { nextReviewAt: rule.nextReviewAt } },
+  });
+  res.json(rule);
+});
+
 // GET /api/rules/:pageId — get single rule by pageId
 router.get('/:pageId', async (req, res) => {
   const pageId = Number(req.params.pageId);
@@ -204,7 +298,7 @@ router.get('/:pageId', async (req, res) => {
 
   const rule = await prisma.detectionRule.findUnique({
     where: { pageId },
-    include: { page: { select: RULE_PAGE_SELECT } },
+    include: { page: { select: RULE_PAGE_SELECT }, owner: OWNER_SELECT },
   });
 
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
@@ -227,11 +321,17 @@ router.post('/', async (req, res) => {
     sigmaYaml,
     nativeQuery,
     nativeLanguage,
+    triage,
+    response,
   } = req.body;
 
   if (!pageId) return res.status(400).json({ error: 'pageId is required' });
   const sigma = await sigmaFields(sigmaYaml, Number(pageId));
   if (typeof sigma === 'string') return res.status(400).json({ error: sigma });
+  const owner = await ownerField(req.body.ownerId);
+  if (typeof owner === 'string') return res.status(400).json({ error: owner });
+  const review = reviewDateField(req.body.nextReviewAt);
+  if (typeof review === 'string') return res.status(400).json({ error: review });
 
   const ruleData = {
     status,
@@ -245,6 +345,10 @@ router.post('/', async (req, res) => {
     testNotes: testNotes ?? null,
     ...(nativeQuery !== undefined && { nativeQuery: nativeQuery || null }),
     ...(nativeLanguage !== undefined && { nativeLanguage: nativeLanguage || null }),
+    ...(triage !== undefined && { triage: text(triage) }),
+    ...(response !== undefined && { response: text(response) }),
+    ...owner,
+    ...review,
     ...sigma,
   };
 
@@ -252,7 +356,7 @@ router.post('/', async (req, res) => {
     where: { pageId: Number(pageId) },
     create: { pageId: Number(pageId), ...ruleData },
     update: ruleData,
-    include: { page: { select: RULE_PAGE_SELECT } },
+    include: { page: { select: RULE_PAGE_SELECT }, owner: OWNER_SELECT },
   });
   await syncDerivedLinks(rule.pageId);
 
@@ -280,10 +384,16 @@ router.put('/:id', async (req, res) => {
     sigmaYaml,
     nativeQuery,
     nativeLanguage,
+    triage,
+    response,
   } = req.body;
 
   const sigma = await sigmaFields(sigmaYaml, existing.pageId);
   if (typeof sigma === 'string') return res.status(400).json({ error: sigma });
+  const owner = await ownerField(req.body.ownerId);
+  if (typeof owner === 'string') return res.status(400).json({ error: owner });
+  const review = reviewDateField(req.body.nextReviewAt);
+  if (typeof review === 'string') return res.status(400).json({ error: review });
 
   const rule = await prisma.detectionRule.update({
     where: { id },
@@ -299,9 +409,13 @@ router.put('/:id', async (req, res) => {
       ...(testNotes !== undefined && { testNotes }),
       ...(nativeQuery !== undefined && { nativeQuery: nativeQuery || null }),
       ...(nativeLanguage !== undefined && { nativeLanguage: nativeLanguage || null }),
+      ...(triage !== undefined && { triage: text(triage) }),
+      ...(response !== undefined && { response: text(response) }),
+      ...owner,
+      ...review,
       ...sigma,
     },
-    include: { page: { select: RULE_PAGE_SELECT } },
+    include: { page: { select: RULE_PAGE_SELECT }, owner: OWNER_SELECT },
   });
   await syncDerivedLinks(rule.pageId);
 

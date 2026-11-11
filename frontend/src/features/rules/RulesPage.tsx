@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, Loader2, X, Rows3, Rows4 } from 'lucide-react';
+import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, CircleOff, Loader2, X, Rows3, Rows4 } from 'lucide-react';
 import {
   SOURCE_FORMAT_LABELS,
   apiErrorMessage,
   downloadSigmaRules,
   listRulesPage,
+  listRuleOwners,
   getStory,
   type RuleListFilter,
   type RuleListParams,
@@ -28,7 +29,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
-import { relativeTime } from '@/lib/time';
+import { relativeDay, relativeTime } from '@/lib/time';
 
 const STATUS_OPTIONS = ['all', 'draft', 'testing', 'production', 'deprecated'] as const;
 const SEVERITY_OPTIONS = ['all', 'info', 'low', 'medium', 'high', 'critical'] as const;
@@ -58,7 +59,9 @@ function SkeletonRows() {
   );
 }
 
-const SORT_KEYS: RuleSortKey[] = ['title', 'status', 'severity', 'updatedAt'];
+const SORT_KEYS: RuleSortKey[] = ['title', 'status', 'severity', 'updatedAt', 'nextReviewAt'];
+
+const LOGS_LABELS: Record<string, string> = { fed: 'collected', blind: 'not collected', unknown: 'not decided' };
 
 const DENSITY_KEY = 'detectkb.rulesDensity';
 
@@ -101,6 +104,9 @@ export function RulesPage() {
   const tactic = params.get('tactic') ?? '';
   const story = Number(params.get('story')) || undefined;
   const telemetry = params.get('telemetry') ?? '';
+  const owner = params.get('owner') ?? '';
+  const review = params.get('review') ?? '';
+  const logs = params.get('logs') ?? '';
   const q = params.get('q') ?? '';
   const sortKey: RuleSortKey = SORT_KEYS.includes(params.get('sort') as RuleSortKey) ? (params.get('sort') as RuleSortKey) : 'updatedAt';
   const sortDir: 'asc' | 'desc' = params.get('dir') === 'asc' || params.get('dir') === 'desc' ? (params.get('dir') as 'asc' | 'desc') : sortKey === 'updatedAt' ? 'desc' : 'asc';
@@ -153,6 +159,9 @@ export function RulesPage() {
     tactic: tactic || undefined,
     story,
     telemetry: telemetry || undefined,
+    owner: owner || undefined,
+    review: review || undefined,
+    logs: logs || undefined,
     sort: sortKey,
     dir: sortDir,
     page,
@@ -166,7 +175,7 @@ export function RulesPage() {
   });
   const rules = data?.items ?? [];
   const total = data?.total ?? 0;
-  const filtersActive = !!(q || technique || tactic || story || telemetry) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
+  const filtersActive = !!(q || technique || tactic || story || telemetry || owner || review || logs) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
   // Names for the story / telemetry chips
   const { data: storyInfo } = useQuery({ queryKey: ['story', story], queryFn: () => getStory(story!), enabled: !!story, staleTime: 5 * 60 * 1000 });
 
@@ -180,7 +189,11 @@ export function RulesPage() {
     tactic: query.tactic,
     story: query.story,
     telemetry: query.telemetry,
+    owner: query.owner,
+    review: query.review,
+    logs: query.logs,
   };
+  const { data: ownerOptions } = useQuery({ queryKey: ['rule-owners'], queryFn: listRuleOwners, staleTime: 60 * 1000 });
   const filterKey = JSON.stringify(listFilter);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [allMatching, setAllMatching] = useState(false);
@@ -330,7 +343,7 @@ export function RulesPage() {
   }
 
   return (
-    <div className={`max-w-6xl mx-auto transition-[padding] ${previewSlug ? 'lg:pr-[min(640px,55vw)] lg:max-w-none' : ''}`}>
+    <div className={`max-w-7xl mx-auto transition-[padding] ${previewSlug ? 'lg:pr-[min(640px,55vw)] lg:max-w-none' : ''}`}>
       <Breadcrumbs items={[{ label: 'Detection Rules' }]} />
 
       {/* Header */}
@@ -482,6 +495,36 @@ export function RulesPage() {
           ))}
         </select>
 
+        <select
+          value={owner}
+          onChange={(e) => update({ owner: e.target.value })}
+          aria-label="Filter by owner"
+          className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          <option value="">Owner: All</option>
+          <option value="me">Owner: Me</option>
+          <option value="none">Owner: Nobody{ownerOptions ? ` (${ownerOptions.unowned.toLocaleString()})` : ''}</option>
+          {ownerOptions?.owners
+            .filter((o) => o.rules > 0)
+            .map((o) => (
+              <option key={o.id} value={o.id}>
+                Owner: {o.username} ({o.rules})
+              </option>
+            ))}
+        </select>
+
+        <select
+          value={review}
+          onChange={(e) => update({ review: e.target.value })}
+          aria-label="Filter by review date"
+          className="px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          <option value="">Review: Any</option>
+          <option value="overdue">Review: Overdue</option>
+          <option value="soon">Review: Due within 30 days</option>
+          <option value="none">Review: No date</option>
+        </select>
+
         <button
           onClick={toggleDensity}
           title={compact ? 'Comfortable rows' : 'Compact rows'}
@@ -494,7 +537,7 @@ export function RulesPage() {
       </div>
 
       {/* Filters that arrive from links elsewhere (technique, tactic, story, telemetry chips) */}
-      {(technique || tactic || story || telemetry) && (
+      {(technique || tactic || story || telemetry || logs) && (
         <div className="flex flex-wrap items-center gap-2 mb-4 text-xs">
           <span className="text-muted-foreground">Filtered by</span>
           {[
@@ -502,6 +545,7 @@ export function RulesPage() {
             ['tactic', tactic, 'Tactic'],
             ['story', story ? storyInfo?.name ?? `#${story}` : '', 'Analytic story'],
             ['telemetry', telemetry, telemetry.includes(':') ? 'Log event' : 'Log source'],
+            ['logs', logs ? LOGS_LABELS[logs] ?? logs : '', 'Logs'],
           ]
             .filter(([, v]) => v)
             .map(([key, value, label]) => (
@@ -525,7 +569,7 @@ export function RulesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/40">
-                {['Title', 'Status', 'Severity', 'MITRE Techniques', 'Data Source', 'Last Updated'].map((h) => (
+                {['Title', 'Status', 'Severity', 'MITRE Techniques', 'Data Source', 'Updated'].map((h) => (
                   <th key={h} className="text-left px-4 py-3 font-medium text-muted-foreground">
                     {h}
                   </th>
@@ -573,9 +617,10 @@ export function RulesPage() {
               {/* With the preview open these columns are in the drawer; the title keeps its room */}
               {!previewSlug && (
                 <>
-                  <col className="w-52" />
-                  <col className="w-56" />
-                  <col className="w-28" />
+                  <col className="w-44" />
+                  <col className="w-44" />
+                  <col className="w-40" />
+                  <col className="w-24" />
                 </>
               )}
             </colgroup>
@@ -606,6 +651,11 @@ export function RulesPage() {
                 </th>
                 <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground${sideCols}`}>MITRE Techniques</th>
                 <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground${sideCols}`}>Data Source</th>
+                <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground${sideCols}`}>
+                  <button className={sortBtn} onClick={() => toggleSort('nextReviewAt')} title="Sort by the next review date">
+                    <span className="whitespace-nowrap">Owner · review</span> <SortIndicator col="nextReviewAt" />
+                  </button>
+                </th>
                 <th className={`text-left px-4 ${cellY} font-medium text-muted-foreground${sideCols}`}>
                   <button className={sortBtn} onClick={() => toggleSort('updatedAt')}>
                     Updated <SortIndicator col="updatedAt" />
@@ -655,6 +705,11 @@ export function RulesPage() {
                         >
                           {rule.page.title}
                         </Link>
+                        {rule.feed === 'blind' && (
+                          <button onClick={() => update({ logs: 'blind' })} title="Its logs are not collected: this rule cannot fire. Click for all such rules." className="flex-shrink-0 text-red-500">
+                            <CircleOff className="w-3.5 h-3.5" aria-label="Logs not collected" />
+                          </button>
+                        )}
                       </div>
                       {!compact && (rule.sourceFormat || tags.length > 0) && (
                         <div className="flex flex-wrap items-center gap-1 mt-1">
@@ -711,6 +766,23 @@ export function RulesPage() {
                         </span>
                       ) : (
                         <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </td>
+                    <td className={`px-4 ${cellY} text-xs${sideCols}`}>
+                      {rule.owner ? (
+                        <button onClick={() => update({ owner: String(rule.owner!.id) })} title={`Only rules owned by ${rule.owner.username}`} className="block max-w-full truncate hover:underline">
+                          {rule.owner.username}
+                        </button>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                      {rule.nextReviewAt && (
+                        <span
+                          className={`block ${new Date(rule.nextReviewAt) < new Date() ? 'text-red-600 dark:text-red-400 font-medium' : 'text-muted-foreground'}`}
+                          title={`Next review: ${new Date(rule.nextReviewAt).toLocaleDateString()}${rule.lastReviewedAt ? ` · last reviewed ${new Date(rule.lastReviewedAt).toLocaleDateString()}` : ''}`}
+                        >
+                          review {relativeDay(rule.nextReviewAt)}
+                        </span>
                       )}
                     </td>
                     <td className={`px-4 ${cellY} text-muted-foreground text-xs whitespace-nowrap${sideCols}`} title={new Date(rule.page.updatedAt).toLocaleString()}>

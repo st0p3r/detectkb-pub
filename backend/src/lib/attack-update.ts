@@ -2,6 +2,7 @@ import { prisma } from './prisma';
 import { ATTACK_VERSION, REVOKED_TECHNIQUES, TECHNIQUES, setAttackData } from './attack';
 import { GROUPS, SOFTWARE, setCtiData } from './attack-cti';
 import { AttackDataset, convertStixBundle } from './attack-stix';
+import { BUNDLED_DETAILS, TECHNIQUE_DETAILS, setAttackDetails } from './attack-details';
 import { syncAllRuleTechniques } from './rule-techniques';
 import attackData from '../data/attack-enterprise.json';
 import ctiData from '../data/attack-cti.json';
@@ -30,6 +31,7 @@ export function compareVersions(a: string | null, b: string | null): number {
 function apply(data: AttackDataset) {
   setAttackData(data);
   setCtiData(data);
+  setAttackDetails(data.details);
 }
 
 /** At startup: use the imported data when it is newer than (or as new as) the bundled copy. */
@@ -41,7 +43,15 @@ export async function loadStoredAttackData() {
     return;
   }
   try {
-    apply(JSON.parse(row.data) as AttackDataset);
+    const data = JSON.parse(row.data) as AttackDataset;
+    // Imported before DetectKB kept platforms, descriptions and detection
+    // strategies: the bundled copy of the same release has them
+    if (!data.details && compareVersions(row.version, BUNDLED_ATTACK_VERSION) === 0) {
+      console.log(`[attack] the imported ATT&CK v${row.version} has no technique details; using the bundled copy of the same release`);
+      return;
+    }
+    apply(data);
+    if (!data.details) console.warn(`[attack] the imported ATT&CK v${row.version} has no platforms, descriptions or detection strategies: import it again (Upstream Updates → MITRE ATT&CK)`);
     console.log(`[attack] using imported ATT&CK v${row.version}`);
   } catch (err) {
     console.error('[attack] imported ATT&CK data is unreadable, using the bundled copy:', err);
@@ -111,6 +121,7 @@ export async function resetAttackData() {
   await prisma.attackData.deleteMany({});
   setAttackData(attackData);
   setCtiData(ctiData as Parameters<typeof setCtiData>[0]);
+  setAttackDetails(BUNDLED_DETAILS);
   return syncAllRuleTechniques();
 }
 
@@ -123,6 +134,8 @@ export async function attackDataInfo() {
     bundledVersion: BUNDLED_ATTACK_VERSION,
     imported: imported ? { source: imported.source, importedAt: imported.importedAt } : null,
     techniques: TECHNIQUES.length,
+    /** False for a release imported before descriptions and detection strategies were kept: import it again */
+    hasDetails: TECHNIQUE_DETAILS.size > 0,
     groups: GROUPS.length,
     software: SOFTWARE.length,
     downloadUrl: ATTACK_STIX_URL,

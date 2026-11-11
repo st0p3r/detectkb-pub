@@ -11,6 +11,7 @@ import {
   sourceLabel,
   telemetrySource,
 } from '../lib/coverage-analysis';
+import { keyState, loadCollection, ruleFeed } from '../lib/collection';
 import { REFERENCE_KINDS } from '../lib/references';
 import { computeReferenceMatches } from '../lib/references';
 
@@ -260,13 +261,29 @@ router.get('/impact', async (req, res) => {
       else events.push(l.logEvent.key);
     }
   }
+  // ?collection=1 — everything marked "not collected" on the Log Sources page:
+  // what the organisation is missing today
+  const collection = await loadCollection();
+  if (req.query.collection === '1') {
+    for (const [key, collected] of collection) if (!collected) (key.includes(':') ? events : sources).push(key);
+    if (!sources.length && !events.length) {
+      res.json({ sources: [], events: [], labels: {}, rules: [], counts: { activeRules: rules.filter((r) => r.status !== 'deprecated').length, lost: 0, atRisk: 0, partial: 0 }, uncovered: [], reduced: [] });
+      return;
+    }
+  }
   if (!sources.length && !events.length) {
     res.status(400).json({ error: 'Choose at least one log source, event or data source' });
     return;
   }
   const all = new Set(rules.flatMap((r) => r.telemetry));
   const lost = expandLost(all, sources, events);
-  const result = analyzeImpact(rules, lost);
+  // An event marked as collected stays, even when its whole source is "lost"
+  // through the collection answers
+  if (req.query.collection === '1') for (const key of Array.from(lost)) if (keyState(collection, key) === 'collected') lost.delete(key);
+  const analysis = analyzeImpact(rules, lost);
+  const byPage = new Map(rules.map((r) => [r.pageId, r]));
+  // Rules that already can't fire with what is collected today
+  const result = { ...analysis, rules: analysis.rules.map((r) => ({ ...r, feed: ruleFeed(byPage.get(r.pageId)!, collection) })) };
   const used = new Set(result.rules.flatMap((r) => r.telemetry));
   res.json({
     sources: Array.from(new Set(sources)).map((s) => ({ key: s, label: sourceLabel(s, info) })),

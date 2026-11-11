@@ -122,7 +122,7 @@ export function ChainView({ technique, onTechniqueChange }: { technique: string;
   const [hovered, setHovered] = useState<ItemId | null>(null);
   const [picker, setPicker] = useState('');
 
-  const { data: coverage } = useQuery({ queryKey: ['attack-coverage', 'all'], queryFn: () => getAttackCoverage('all') });
+  const { data: coverage } = useQuery({ queryKey: ['attack-coverage', 'all'], queryFn: () => getAttackCoverage({ status: 'all' }) });
   const { data: chain, isLoading, error } = useQuery({
     queryKey: ['detection-chain', technique, status],
     queryFn: () => getDetectionChain(technique, status),

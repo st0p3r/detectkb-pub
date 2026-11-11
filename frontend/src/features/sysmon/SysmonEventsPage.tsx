@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Shield, ChevronDown, ChevronRight, Copy, Check, Search, Activity, Database, Loader2 } from 'lucide-react';
+import { CollectionControl } from '@/features/collection/CollectionControl';
 import { getSysmonEventPages, listSysmonEvents, type SysmonEvent, type SysmonLinkedPage } from '@/lib/api';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { BasisBadge } from '@/components/ui/BasisBadge';
@@ -169,6 +170,17 @@ function EventCard({ event, index, initiallyExpanded }: { event: SysmonEvent; in
 
       {expanded && (
         <div className="border-t border-border/60 px-5 py-4 space-y-4 bg-muted/20">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span>Do you collect Sysmon {event.eventId}?</span>
+            <CollectionControl telemetryKey={`sysmon:${event.eventId}`} />
+            <span className="text-xs text-muted-foreground">
+              Sysmon as a whole is set on the{' '}
+              <Link to="/log-sources?source=sysmon" className="text-primary hover:underline">
+                Log Sources
+              </Link>{' '}
+              page.
+            </span>
+          </div>
           <EventLinks eventId={event.eventId} />
 
           {event.keyFields && (

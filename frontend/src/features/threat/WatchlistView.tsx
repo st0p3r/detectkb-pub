@@ -151,6 +151,15 @@ export function WatchlistView({ onGroup }: { onGroup: (id: string) => void }) {
   const s = data.summary;
   return (
     <div className="space-y-5">
+      {s.rulesWithoutLogs > 0 && (
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+          <b className="text-foreground">{s.rulesWithoutLogs}</b> rule{s.rulesWithoutLogs === 1 ? ' is' : 's are'} left out here: the logs{' '}
+          {s.rulesWithoutLogs === 1 ? 'it reads' : 'they read'} are not collected, so {s.rulesWithoutLogs === 1 ? 'it covers' : 'they cover'} nothing.{' '}
+          <Link to="/rules?logs=blind" className="text-primary hover:underline">
+            Show them
+          </Link>
+        </p>
+      )}
       <section className="rounded-lg border border-border bg-card p-4">
         <h2 className="font-semibold mb-3">Watched groups ({data.groups.length})</h2>
         <ul className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">

@@ -41,6 +41,7 @@ const AnalyticStoriesPage = named(() => import('@/features/stories/AnalyticStori
 const AtomicTestsPage = named(() => import('@/features/atomics/AtomicTestsPage'), 'AtomicTestsPage');
 const UpstreamUpdatesPage = named(() => import('@/features/upstream/UpstreamUpdatesPage'), 'UpstreamUpdatesPage');
 const DataHealthPage = named(() => import('@/features/health/DataHealthPage'), 'DataHealthPage');
+const RunbookPage = named(() => import('@/features/runbook/RunbookPage'), 'RunbookPage');
 const SimilarRulesPage = named(() => import('@/features/similar/SimilarRulesPage'), 'SimilarRulesPage');
 const KnowledgeGraphPage = lazy(() => import('@/features/graph/KnowledgeGraphPage'));
 
@@ -79,6 +80,7 @@ export default function App() {
             <Route path="/pages/:slug" element={<PageViewPage />} />
             <Route path="/pages/:slug/edit" element={<PageEditorPage />} />
             <Route path="/rules" element={<RulesPage />} />
+            <Route path="/runbook/:slug" element={<RunbookPage />} />
             <Route path="/attack-coverage" element={<AttackCoveragePage />} />
             <Route path="/attacker-tools" element={<AttackerToolsPage />} />
             <Route path="/graph" element={<KnowledgeGraphPage />} />

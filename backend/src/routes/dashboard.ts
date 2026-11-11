@@ -2,6 +2,10 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { isAdmin } from '../middleware/auth';
 import { TECHNIQUES, parentTechniqueId, parseTechniqueIds, resolveTechniqueId } from '../lib/attack';
+import { reviewWhere } from '../lib/rule-list';
+import { loadRuleTelemetry } from '../lib/coverage-analysis';
+import { feedSummary, loadCollection } from '../lib/collection';
+import { loadHistory } from '../lib/coverage-snapshot';
 
 const router = Router();
 
@@ -36,7 +40,15 @@ router.get('/', async (req, res) => {
           take: 5,
         }),
         prisma.detectionRule.findMany({ where: { status: { not: 'deprecated' } }, select: { mitreTechniques: true } }),
-      ]).then(([byStatus, bySeverity, bySource, drafts, active]) => {
+        // Upkeep: reviews that are due, rules nobody owns, and the caller's own
+        prisma.detectionRule.count({ where: { AND: [reviewWhere('overdue')!, { status: { not: 'deprecated' } }] } }),
+        prisma.detectionRule.count({ where: { AND: [reviewWhere('soon')!, { status: { not: 'deprecated' } }] } }),
+        prisma.detectionRule.count({ where: { ownerId: null, status: 'production' } }),
+        req.user?.userId ? prisma.detectionRule.count({ where: { ownerId: req.user.userId, status: { not: 'deprecated' } } }) : 0,
+        req.user?.userId ? prisma.detectionRule.count({ where: { AND: [reviewWhere('soon')!, { ownerId: req.user.userId, status: { not: 'deprecated' } }] } }) : 0,
+        Promise.all([loadRuleTelemetry(), loadCollection()]).then(([rules, map]) => ({ active: map.size > 0, ...feedSummary(rules, map) })),
+        loadHistory(90),
+      ]).then(([byStatus, bySeverity, bySource, drafts, active, overdue, dueSoon, productionUnowned, mine, mineDue, logs, history]) => {
         // Same measure as the ATT&CK Coverage page: parent techniques with at
         // least one non-deprecated rule
         const covered = new Set<string>();
@@ -52,6 +64,12 @@ router.get('/', async (req, res) => {
           bySource: countBy(bySource, 'sourceFormat'),
           drafts,
           coverage: { covered: covered.size, total: TECHNIQUES.filter((t) => !t.id.includes('.')).length },
+          /** dueSoon includes the overdue ones */
+          upkeep: { overdue, dueSoon, productionUnowned, mine, mineDue },
+          /** Rules by whether their logs are collected (active: someone filled it in) */
+          logs,
+          /** Deployed coverage per day, for the trend */
+          trend: history.map((h) => ({ day: h.day, deployed: h.deployed, withLogs: h.withLogs, validated: h.validated, total: h.totalTechniques })),
         };
       })
     : null;

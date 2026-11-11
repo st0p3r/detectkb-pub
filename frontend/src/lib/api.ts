@@ -72,6 +72,18 @@ export interface DetectionRuleData {
   sourceContent?: string | null;
   nativeQuery?: string | null;
   nativeLanguage?: string | null;
+  /** For the analyst (Markdown): what to check first, and what to do when the alert is real */
+  triage?: string | null;
+  response?: string | null;
+  ownerId?: number | null;
+  owner?: RuleOwner | null;
+  lastReviewedAt?: string | null;
+  nextReviewAt?: string | null;
+}
+
+export interface RuleOwner {
+  id: number;
+  username: string;
 }
 
 export type RuleSourceFormat = 'sigma' | 'escu' | 'elastic' | 'sentinel';
@@ -92,6 +104,8 @@ export const QUERY_LANGUAGE_LABELS: Record<string, string> = {
 };
 
 export interface RuleWithPage extends DetectionRuleData {
+  /** Whether its logs are collected (the paged list, once collection is filled in) */
+  feed?: RuleFeed;
   page: { id: number; title: string; slug: string; type: string; updatedAt: string; tags: { tag: { id: number; name: string } }[] };
 }
 
@@ -224,6 +238,12 @@ export interface DashboardData {
     drafts: { id: number; status: string; severity: string; page: PageSummary }[];
     /** Parent ATT&CK techniques with a non-deprecated rule */
     coverage: { covered: number; total: number };
+    /** Reviews due (dueSoon includes overdue), production rules nobody owns, and the caller's own rules */
+    upkeep: { overdue: number; dueSoon: number; productionUnowned: number; mine: number; mineDue: number };
+    /** Rules by whether their logs are collected; active: someone filled in what is collected */
+    logs: { active: boolean; fed: number; blind: number; unknown: number; blindDeployed: number; blindProduction: number };
+    /** Techniques with a deployed rule, per day */
+    trend: { day: string; deployed: number; withLogs: number | null; validated: number; total: number }[];
   } | null;
 }
 
@@ -285,7 +305,7 @@ export async function listRules(params?: { status?: string; severity?: string; t
   return data as RuleWithPage[];
 }
 
-export type RuleSortKey = 'title' | 'status' | 'severity' | 'updatedAt';
+export type RuleSortKey = 'title' | 'status' | 'severity' | 'updatedAt' | 'nextReviewAt';
 
 export interface RuleListParams {
   q?: string;
@@ -299,6 +319,12 @@ export interface RuleListParams {
   story?: number;
   /** Telemetry key (sysmon:1, windows-security:4688) or a whole log source */
   telemetry?: string;
+  /** A user id, "me" or "none" */
+  owner?: string;
+  /** overdue | soon | none */
+  review?: string;
+  /** fed | blind | unknown: whether the rule's logs are collected */
+  logs?: string;
   sort?: RuleSortKey;
   dir?: 'asc' | 'desc';
   page: number;
@@ -320,7 +346,7 @@ export type RuleListFilter = Omit<RuleListParams, 'sort' | 'dir' | 'page' | 'pag
 /** Target of a bulk action: explicit rule ids, or every rule matching a filter. */
 export type RuleBulkTarget = { ids: number[] } | { pageIds: number[] } | { filter: RuleListFilter };
 
-export type RuleBulkAction = 'status' | 'severity' | 'addTag' | 'removeTag' | 'replaceRetiredTechniques';
+export type RuleBulkAction = 'status' | 'severity' | 'addTag' | 'removeTag' | 'replaceRetiredTechniques' | 'owner' | 'markReviewed';
 
 export async function bulkUpdateRules(target: RuleBulkTarget, action: RuleBulkAction, value: string) {
   const { data } = await api.put('/api/rules/bulk', { ...target, action, value });
@@ -353,6 +379,69 @@ export async function upsertRule(payload: Omit<DetectionRuleData, 'id'>) {
 export async function updateRule(id: number, payload: Partial<DetectionRuleData>) {
   const { data } = await api.put(`/api/rules/${id}`, payload);
   return data as DetectionRuleData;
+}
+
+/** The rule still holds: review date = now, next review in the default interval (or the given date). */
+export async function markRuleReviewed(id: number, nextReviewAt?: string | null) {
+  const { data } = await api.put(`/api/rules/${id}/review`, nextReviewAt === undefined ? {} : { nextReviewAt });
+  return data as { id: number; pageId: number; lastReviewedAt: string; nextReviewAt: string | null };
+}
+
+export interface RuleOwnerOption extends RuleOwner {
+  name: string | null;
+  rules: number;
+}
+
+/** People a rule can be assigned to, with how many rules each owns. */
+export async function listRuleOwners() {
+  const { data } = await api.get('/api/rules/owners');
+  return data as { owners: RuleOwnerOption[]; unowned: number };
+}
+
+export interface RunbookSteps {
+  /** rule: written on the rule · imported: from the investigation guide it was imported with */
+  source: 'rule' | 'imported';
+  markdown: string;
+}
+
+export interface Runbook {
+  pageId: number;
+  ruleId: number;
+  title: string;
+  slug: string;
+  status: string;
+  severity: string;
+  updatedAt: string;
+  tags: { name: string; color?: string }[];
+  owner: RuleOwner | null;
+  lastReviewedAt: string | null;
+  nextReviewAt: string | null;
+  overview: string;
+  triage: RunbookSteps | null;
+  response: RunbookSteps | null;
+  falsePositives: string[];
+  references: string[];
+  queries: { spl: string | null; native: string | null; nativeLanguage: string | null };
+  dataSource: string | null;
+  techniques: {
+    id: string;
+    name: string;
+    tactics: string[];
+    platforms: string[];
+    url: string;
+    description: string | null;
+    analytics: AttackAnalytic[];
+    mitigations: { id: string; name: string; description: string; url: string }[];
+  }[];
+  logs: { known: boolean; feed: RuleFeed; telemetry: { key: string; label: string; state: CollectionState }[] };
+  validation: { status: ValidationStatus; reason: string | null; testedAt: string | null };
+  relatedTotal: number;
+  related: { pageId: number; title: string; slug: string; status: string; severity: string }[];
+}
+
+export async function getRunbook(pageId: number) {
+  const { data } = await api.get(`/api/rules/${pageId}/runbook`);
+  return data as Runbook;
 }
 
 export interface SplCommandData {
@@ -823,6 +912,23 @@ export interface AttackTechnique {
   id: string;
   name: string;
   tactics: string[];
+  /** Windows, Linux, macOS, IaaS, … (empty: not known) */
+  platforms: string[];
+}
+
+/** One of MITRE's analytics for a technique: what to look for on a platform and in which logs. */
+export interface AttackAnalytic {
+  id: string;
+  platforms: string[];
+  description: string;
+  logSources: { name: string; channel: string; component: string }[];
+  tunables: { field: string; description: string }[];
+}
+
+export interface DetectionStrategy {
+  id: string;
+  name: string;
+  analytics: AttackAnalytic[];
 }
 
 export interface CoveringRule {
@@ -832,12 +938,35 @@ export interface CoveringRule {
   status: string;
   severity: string;
   validation: ValidationStatus;
+  /** Whether its logs are collected */
+  feed: RuleFeed;
 }
+
+export interface CoverageFilters {
+  status?: string;
+  /** Proven coverage: only rules whose latest lab test detected the attack */
+  validatedOnly?: boolean;
+  /** Leave out rules whose logs aren't collected */
+  withLogs?: boolean;
+  /** Only techniques on these ATT&CK platforms */
+  platforms?: string[];
+}
+
+const coverageParams = (f: CoverageFilters) => ({
+  status: f.status || undefined,
+  validation: f.validatedOnly ? 'validated' : undefined,
+  logs: f.withLogs ? 'collected' : undefined,
+  platforms: f.platforms?.length ? f.platforms.join(',') : undefined,
+});
 
 export interface AttackCoverage {
   attackVersion: string | null;
   tactics: AttackTactic[];
   techniques: AttackTechnique[];
+  /** Every platform ATT&CK names, most common first */
+  platforms: string[];
+  /** Parent cell → how many of its rules can't fire (logs not collected) */
+  parentBlind: Record<string, number>;
   /** Rules per technique or sub-technique ID */
   counts: Record<string, number>;
   /** Rules per parent technique, counting its sub-techniques' rules once each */
@@ -853,6 +982,12 @@ export interface AttackCoverage {
     totalTechniques: number;
     /** Covered (parent) techniques by their best rule's confidence */
     confidence: Record<CoverageConfidence, number>;
+    /** Whether anyone said which logs are collected (Log Sources) */
+    collectionActive: boolean;
+    /** Matching rules whose logs aren't collected */
+    blindRules: number;
+    /** Covered techniques whose every rule is blind */
+    blindTechniques: number;
   };
 }
 
@@ -862,25 +997,45 @@ export interface AttackCoverage {
  */
 export type CoverageConfidence = 'validated' | 'production' | 'testing' | 'draft';
 
-/** `validatedOnly`: proven coverage — only rules whose latest lab test detected the attack */
-export async function getAttackCoverage(status?: string, validatedOnly = false) {
-  const { data } = await api.get('/api/attack/coverage', { params: { status: status || undefined, validation: validatedOnly ? 'validated' : undefined } });
+export async function getAttackCoverage(filters: CoverageFilters = {}) {
+  const { data } = await api.get('/api/attack/coverage', { params: coverageParams(filters) });
   return data as AttackCoverage;
 }
 
 /** Rules covering a technique and each of its sub-techniques, keyed by ID. */
-export async function getTechniqueRules(id: string, status?: string, validatedOnly = false) {
-  const { data } = await api.get(`/api/attack/techniques/${encodeURIComponent(id)}/rules`, {
-    params: { status: status || undefined, validation: validatedOnly ? 'validated' : undefined },
-  });
+export async function getTechniqueRules(id: string, filters: CoverageFilters = {}) {
+  const { data } = await api.get(`/api/attack/techniques/${encodeURIComponent(id)}/rules`, { params: coverageParams(filters) });
   return data as Record<string, CoveringRule[]>;
 }
 
-export async function downloadNavigatorLayer(status?: string, validatedOnly = false) {
-  const response = await api.get('/api/attack/navigator-layer', {
-    params: { status: status || undefined, validation: validatedOnly ? 'validated' : undefined },
-    responseType: 'text',
-  });
+/** The coverage matrix's headline numbers as they were on a day. */
+export interface CoverageSnapshot {
+  day: string;
+  attackVersion: string | null;
+  totalTechniques: number;
+  /** Parent techniques with a production or testing rule */
+  deployed: number;
+  production: number;
+  validated: number;
+  /** …with a deployed rule whose logs are collected (null before collection was filled in) */
+  withLogs: number | null;
+  anyRule: number;
+  rules: { total: number; byStatus: Record<string, number>; blind: number };
+  byTactic: Record<string, { covered: number; total: number }>;
+}
+
+export async function getCoverageHistory(days = 180) {
+  const { data } = await api.get('/api/attack/coverage/history', { params: { days } });
+  return data as CoverageSnapshot[];
+}
+
+export async function takeCoverageSnapshot() {
+  const { data } = await api.post('/api/attack/coverage/snapshot');
+  return data as CoverageSnapshot;
+}
+
+export async function downloadNavigatorLayer(filters: CoverageFilters = {}) {
+  const response = await api.get('/api/attack/navigator-layer', { params: coverageParams(filters), responseType: 'text' });
   saveBlob(response.data, 'detectkb-attack-layer.json', 'application/json');
 }
 
@@ -1102,6 +1257,8 @@ export interface ImpactedRule {
   level: 'lost' | 'atRisk' | 'partial';
   lostEvents: string[];
   alternatives: string[];
+  /** blind: it already can't fire with what is collected today */
+  feed: RuleFeed;
 }
 
 export interface TechniqueImpact {
@@ -1126,10 +1283,10 @@ export interface ImpactAnalysis {
 }
 
 /** What stops working if these log sources, events (telemetry keys) or a data source page's events are lost. */
-export async function getImpact(params: { sources?: string[]; events?: string[]; dataSource?: number }) {
+export async function getImpact(params: { sources?: string[]; events?: string[]; dataSource?: number; collection?: boolean }) {
   const list = (v?: string[]) => (v?.length ? v.join(',') : undefined);
   const { data } = await api.get('/api/graph/impact', {
-    params: { sources: list(params.sources), events: list(params.events), dataSource: params.dataSource },
+    params: { sources: list(params.sources), events: list(params.events), dataSource: params.dataSource, collection: params.collection ? 1 : undefined },
   });
   return data as ImpactAnalysis;
 }
@@ -1223,6 +1380,69 @@ export async function listLogEvents(source: string) {
 export async function getLogEventPages(key: string) {
   const { data } = await api.get('/api/log-sources/events/pages', { params: { key } });
   return data as { rules: SysmonLinkedPage[]; dataSources: SysmonLinkedPage[] };
+}
+
+// ── What is collected ────────────────────────────────────────────────────────
+
+/** An answer for a log source ("sysmon") or one event ("sysmon:10"); an event's own answer overrides its source's. */
+export type CollectionState = 'collected' | 'not-collected' | 'unknown';
+
+/** fed: its logs are collected · blind: they aren't, it can't fire · unknown: not decided */
+export type RuleFeed = 'fed' | 'blind' | 'unknown';
+
+export interface CollectionInfo {
+  /** Whether anything was answered yet */
+  active: boolean;
+  entries: { key: string; collected: boolean; note: string | null; updatedAt: string }[];
+  /** Rules that aren't deprecated, by feed */
+  rules: { fed: number; blind: number; unknown: number; blindDeployed: number; blindProduction: number };
+}
+
+export async function getCollection() {
+  const { data } = await api.get('/api/log-sources/collection');
+  return data as CollectionInfo;
+}
+
+/** `collected: null` removes the answer. */
+export async function setCollection(items: { key: string; collected: boolean | null; note?: string }[]) {
+  const { data } = await api.put('/api/log-sources/collection', { items });
+  return data as { updated: number };
+}
+
+export interface CollectionOpportunities {
+  active: boolean;
+  readyTotal: number;
+  readyFillingGaps: number;
+  /** Draft rules whose logs are collected; `fills`: techniques nothing deployed covers */
+  ready: { pageId: number; title: string; slug: string; status: string; severity: string; fills: { id: string; name: string }[] }[];
+  /** Sources not (known to be) collected, by what collecting them would feed */
+  sources: {
+    source: string;
+    label: string;
+    state: CollectionState;
+    rules: number;
+    deployedRules: number;
+    techniqueCount: number;
+    techniques: { id: string; name: string }[];
+  }[];
+}
+
+export async function getCollectionOpportunities() {
+  const { data } = await api.get('/api/log-sources/collection/opportunities');
+  return data as CollectionOpportunities;
+}
+
+export interface RuleCollection {
+  active: boolean;
+  feed: RuleFeed;
+  telemetry: { key: string; label: string; state: CollectionState }[];
+  /** Labels of the rule's telemetry marked as not collected */
+  missing: string[];
+}
+
+export async function getRuleCollection(pageId: number) {
+  const { data } = await api.get(`/api/log-sources/collection/rule/${pageId}`);
+  return data as RuleCollection;
 }
 
 export async function getPageLogEvents(pageId: number) {
@@ -1342,6 +1562,8 @@ export interface Watchlist {
     /** Open techniques (not pre-compromise) without a draft either */
     openWithoutDraft: number;
     draftsFillingGaps: number;
+    /** Rules left out because their logs aren't collected */
+    rulesWithoutLogs: number;
   };
   techniques: WatchTechnique[];
   drafts: WatchDraft[];
@@ -1380,6 +1602,12 @@ export async function getSoftware(id: string, status?: string) {
 export interface TechniqueContext {
   id: string;
   name: string;
+  platforms: string[];
+  description: string | null;
+  /** MITRE's detection strategy: analytics per platform with the log sources they read */
+  detection: DetectionStrategy[];
+  /** Free-text guidance of ATT&CK releases without detection strategies */
+  detectionText: string | null;
   /** `via`: the technique IDs (the technique or its sub-techniques) the item lists */
   mitigations: { id: string; name: string; description: string; url: string; via: string[] }[];
   groups: { id: string; name: string; via: string[] }[];
@@ -1827,6 +2055,8 @@ export interface AttackDataInfo {
   /** Set when the data in use was imported in the app */
   imported: { source: string; importedAt: string } | null;
   techniques: number;
+  /** False for a release imported before descriptions, platforms and detection strategies were kept */
+  hasDetails: boolean;
   groups: number;
   software: number;
   downloadUrl: string;

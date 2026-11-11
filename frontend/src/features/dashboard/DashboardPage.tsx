@@ -2,7 +2,7 @@ import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { BookOpen, Shield, Terminal, Link2Off, Plus, Search, ArrowRight, Grid3x3, CheckCircle2 } from 'lucide-react';
-import { getDashboard, getBrokenLinks } from '@/lib/api';
+import { getDashboard, getBrokenLinks, type DashboardData } from '@/lib/api';
 import { usePageTypes } from '@/context/PageTypesContext';
 import { SOURCE_STYLES, sourceLabel } from '@/lib/ruleSource';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -184,6 +184,91 @@ function ListSkeleton({ rows, label }: { rows: number; label: string }) {
   );
 }
 
+type RuleStats = NonNullable<DashboardData['rules']>;
+
+/** What needs someone's attention: reviews, owners, rules without logs, and where coverage is heading. */
+function Upkeep({ rules }: { rules: RuleStats }) {
+  const { upkeep, logs, trend } = rules;
+  const first = trend[0];
+  const last = trend[trend.length - 1];
+  const change = first && last && first !== last ? last.deployed - first.deployed : null;
+  const rows: { to: string; label: string; value: React.ReactNode; tone?: 'bad' | 'warn'; hint?: string }[] = [
+    { to: '/rules?review=overdue', label: 'Reviews overdue', value: upkeep.overdue, tone: upkeep.overdue ? 'bad' : undefined, hint: 'Rules past their review date' },
+    { to: '/rules?review=soon&sort=nextReviewAt', label: 'Reviews due within 30 days', value: upkeep.dueSoon, tone: upkeep.dueSoon > upkeep.overdue ? 'warn' : undefined },
+    { to: '/rules?owner=me', label: 'My rules', value: upkeep.mineDue ? `${upkeep.mine} · ${upkeep.mineDue} due` : upkeep.mine, tone: upkeep.mineDue ? 'warn' : undefined },
+    { to: '/rules?status=production&owner=none', label: 'Production rules without an owner', value: upkeep.productionUnowned, tone: upkeep.productionUnowned ? 'warn' : undefined },
+    logs.active
+      ? { to: '/rules?logs=blind', label: 'Deployed rules whose logs are not collected', value: logs.blindDeployed, tone: logs.blindDeployed ? 'bad' : undefined, hint: 'They cannot fire' }
+      : { to: '/log-sources', label: 'Logs you collect', value: 'not set', tone: 'warn', hint: 'Say which log sources you collect, so rules without logs stop counting as coverage' },
+  ];
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <WidgetCard title="Needs attention" className="animate-fade-in-up stagger-4">
+        <ul className="divide-y divide-border/60">
+          {rows.map((r) => (
+            <li key={r.label}>
+              <Link to={r.to} title={r.hint} className="flex items-center justify-between gap-3 py-2 text-sm hover:text-primary">
+                <span>{r.label}</span>
+                <span
+                  className={cn(
+                    'font-semibold tabular-nums',
+                    r.tone === 'bad' ? 'text-red-600 dark:text-red-400' : r.tone === 'warn' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'
+                  )}
+                >
+                  {r.value}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </WidgetCard>
+      <WidgetCard title="Deployed coverage" className="animate-fade-in-up stagger-4">
+        {last ? (
+          <div className="space-y-3">
+            <div>
+              <span className="text-3xl font-bold tracking-tight tabular-nums">{last.deployed}</span>
+              <span className="text-sm text-muted-foreground"> of {last.total} techniques have a production or testing rule</span>
+            </div>
+            <ul className="space-y-1 text-sm text-muted-foreground">
+              {last.withLogs !== null && (
+                <li>
+                  <b className="text-foreground tabular-nums">{last.withLogs}</b> with their logs collected
+                </li>
+              )}
+              <li>
+                <b className="text-foreground tabular-nums">{last.validated}</b> proven in the lab
+              </li>
+              <li>
+                {change === null ? (
+                  'The trend appears once there are snapshots from two days.'
+                ) : (
+                  <>
+                    <b className={cn('tabular-nums', change > 0 ? 'text-emerald-600 dark:text-emerald-400' : change < 0 ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
+                      {change > 0 ? '+' : ''}
+                      {change}
+                    </b>{' '}
+                    since {new Date(`${first.day}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}
+                  </>
+                )}
+              </li>
+            </ul>
+            <Link to="/attack-coverage" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+              Coverage over time <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            The first snapshot is taken a minute after the server starts, then every day.{' '}
+            <Link to="/attack-coverage" className="text-primary hover:underline">
+              ATT&CK coverage
+            </Link>
+          </p>
+        )}
+      </WidgetCard>
+    </div>
+  );
+}
+
 export function DashboardPage() {
   const { getLabelFor } = usePageTypes();
   // Counts and short lists from one small request (was: every page and rule)
@@ -307,6 +392,8 @@ export function DashboardPage() {
           <QuickAction to="/search" icon={Search} title="Search" description="Find anything fast" gradient="from-blue-500 to-sky-600" />
         </div>
       </div>
+
+      {rules && <Upkeep rules={rules} />}
 
       {rules && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

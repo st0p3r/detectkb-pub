@@ -29,6 +29,7 @@ import atomicsRouter from './routes/atomics';
 import validationRouter from './routes/validation';
 import upstreamRouter from './routes/upstream';
 import { checkStaleSources } from './lib/upstream';
+import { takeSnapshot } from './lib/coverage-snapshot';
 import dataHealthRouter from './routes/data-health';
 import { markDataChanged } from './lib/kb-cache';
 import sigmaRouter from './routes/sigma';
@@ -78,7 +79,7 @@ app.use('/api', authMiddleware);
 // A successful write may change what the knowledge graph and the tool matches
 // are built from: mark those caches stale (lib/kb-cache). Writes that only
 // produce files or touch accounts don't count.
-const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$|upstream\/(check|check-upload|dismiss|sources)\b|threat-intel\/watchlist)/;
+const WRITES_WITHOUT_KB_CHANGES = /^\/api\/(docs|users|sigma\/convert|rules-import\/preview|saved-views|backup\/json$|upstream\/(check|check-upload|dismiss|sources)\b|threat-intel\/watchlist|attack\/coverage\/snapshot)/;
 app.use('/api', (req, res, next) => {
   if (req.method !== 'GET' && req.method !== 'HEAD' && !WRITES_WITHOUT_KB_CHANGES.test(req.originalUrl.split('?')[0])) {
     res.on('finish', () => {
@@ -164,6 +165,11 @@ seedDatabase()
     });
     // Background: download LOLBAS / GTFOBins / LOLDrivers on first start
     fetchMissingReferenceData();
+    // The coverage trend: today's numbers shortly after start, then refreshed
+    // through the day (one row per day, the last one of the day stays)
+    const snapshot = () => takeSnapshot().catch((err) => console.warn('[coverage] snapshot failed:', err));
+    setTimeout(snapshot, 60_000).unref();
+    setInterval(snapshot, 6 * 3600000).unref();
   })
   .catch((err) => {
     console.error('Seed failed:', err);

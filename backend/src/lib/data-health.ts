@@ -7,6 +7,7 @@ import { queryText } from './rule-text';
 import { VALIDATION_MAX_AGE_DAYS, loadValidation } from './validation';
 import { LIKELY_OVERLAP, loadSimilarGroups } from './similar-rules';
 import { planDataSourcePages } from './data-source-pages';
+import { loadRuleFeeds } from './collection';
 
 export { queryText };
 
@@ -57,6 +58,9 @@ async function computeHealth() {
         id: true,
         pageId: true,
         status: true,
+        ownerId: true,
+        nextReviewAt: true,
+        triage: true,
         mitreTechniques: true,
         dataSource: true,
         sourceFormat: true,
@@ -85,6 +89,8 @@ async function computeHealth() {
     loadReferenceMatchers(),
   ]);
   const validation = await loadValidation();
+  const feeds = await loadRuleFeeds();
+  const now = new Date();
   const day = (d: Date) => d.toISOString().slice(0, 10);
 
   const provenance: Provenance = { sysmon: {}, logs: {}, tools: { inQuery: 0, outsideQuery: 0 } };
@@ -135,6 +141,9 @@ async function computeHealth() {
     if (r.status === 'production' && !r.falsePositives?.trim()) {
       (buckets['production-no-fp'] ??= []).push({ title: r.page.title, slug: r.page.slug, detail: r.sourceFormat ?? 'written here', ruleId: r.id });
     }
+    if ((r.status === 'production' || r.status === 'testing') && feeds.feed(r.pageId) === 'blind') add('deployed-no-logs', r, r.status);
+    if (r.status === 'production' && !r.ownerId) add('production-no-owner', r);
+    if (r.status !== 'deprecated' && r.nextReviewAt && r.nextReviewAt < now) add('review-overdue', r, `due ${day(r.nextReviewAt)}`);
     if (r.status !== 'deprecated') {
       const v = validation(r.pageId);
       if (v.status === 'failed') add('validation-failed', r, `not detected on ${day(v.lastRun!.executedAt)}`);
@@ -157,6 +166,7 @@ async function computeHealth() {
   const checks: HealthCheck[] = [
     check('unknown-technique', 'error', 'Unknown ATT&CK IDs', 'Rules mapped to technique IDs that do not exist in ATT&CK (typos, or deprecated without a replacement). They count toward no technique.'),
     check('no-telemetry', 'warning', 'Rules without any telemetry link', 'No Sysmon or log event could be linked, so impact analysis, flows and the detection chain leave them out. Name the telemetry in the rule\'s Data source field.'),
+    check('deployed-no-logs', 'warning', 'Deployed rules whose logs are not collected', 'Production or testing rules that read only telemetry marked "not collected" on the Log Sources page: they cannot fire, and coverage leaves them out.', '/rules?logs=blind'),
     check('validation-failed', 'warning', 'Rules that did not fire in the lab', 'The latest lab test of these rules did not detect the attack: the rule, its telemetry or the lab needs a look.', '/atomic-tests'),
     check('tool-outside-query', 'warning', 'Tool matches outside the query', 'An attacker tool is named in the rule\'s title or description but not in its query or detection — the rule may not actually detect it.'),
     check('no-technique', 'warning', 'Rules without an ATT&CK technique', 'They are missing from the coverage matrix, threat group coverage and the detection chain.'),
@@ -172,6 +182,8 @@ async function computeHealth() {
       'Production rules without false positives',
       'No false-positive notes for analysts: what benign activity triggers the rule and how to tell it apart. Add them here or on the rule page.'
     ),
+    check('review-overdue', 'info', 'Rules past their review date', 'Nobody confirmed these rules still work as intended since their review date passed. Open the rule and mark it reviewed.', '/rules?review=overdue'),
+    check('production-no-owner', 'info', 'Production rules without an owner', 'Nobody is named to keep these rules working. Assign owners from the rule list (select rules → Owner).', '/rules?status=production&owner=none'),
     check('duplicate-title', 'info', 'Rules with the same title', 'Often the same detection imported from two sources.'),
   ];
   const upstreamChanged = await prisma.upstreamItem.findMany({

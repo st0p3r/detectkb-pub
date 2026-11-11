@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network } from 'lucide-react';
-import { getPage, deletePage, updatePage, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, type Page } from '@/lib/api';
-import { useQuery } from '@tanstack/react-query';
+import { CalendarCheck, ClipboardList, Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network, UserRound } from 'lucide-react';
+import { getPage, deletePage, updatePage, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, getRuleCollection, markRuleReviewed, type Page } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { FeedBadge } from '@/features/collection/CollectionBadge';
 import { RuleQueryTabs } from '@/features/rules/RuleQueryTabs';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
@@ -14,7 +15,7 @@ import { SeverityBadge } from '@/components/ui/SeverityBadge';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { relativeTime } from '@/lib/time';
+import { relativeDay, relativeTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import { BasisBadge } from '@/components/ui/BasisBadge';
 import { LINK_BASIS, basisChip } from '@/lib/linkBasis';
@@ -44,7 +45,72 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: string }) {
+/** Who owns the rule, when it is due for review, and "it still holds". */
+function RuleUpkeep({ rule, onChanged }: { rule: NonNullable<Page['rule']>; onChanged: () => void }) {
+  const { hasPermission } = useAuth();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const overdue = !!rule.nextReviewAt && new Date(rule.nextReviewAt) < new Date();
+  async function reviewed() {
+    if (!rule.id) return;
+    setBusy(true);
+    try {
+      const r = await markRuleReviewed(rule.id);
+      toast(`Marked as reviewed${r.nextReviewAt ? ` · next review ${new Date(r.nextReviewAt).toLocaleDateString()}` : ''}`, 'success');
+      for (const key of ['page', 'rules', 'dashboard', 'data-health', 'runbook']) void queryClient.invalidateQueries({ queryKey: [key] });
+      onChanged();
+    } catch (err) {
+      toast(apiErrorMessage(err, 'Could not mark the rule as reviewed'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-1" title="Who keeps this rule working">
+        <UserRound className="w-3.5 h-3.5" />
+        {rule.owner ? (
+          <Link to={`/rules?owner=${rule.owner.id}`} className="text-foreground hover:underline">
+            {rule.owner.username}
+          </Link>
+        ) : (
+          'no owner'
+        )}
+      </span>
+      <span
+        className={cn('inline-flex items-center gap-1', overdue && 'text-red-600 dark:text-red-400 font-medium')}
+        title={rule.lastReviewedAt ? `Last reviewed ${new Date(rule.lastReviewedAt).toLocaleDateString()}` : 'Never reviewed'}
+      >
+        <CalendarCheck className="w-3.5 h-3.5" />
+        {rule.nextReviewAt ? `review ${relativeDay(rule.nextReviewAt)}` : rule.lastReviewedAt ? `reviewed ${relativeDay(rule.lastReviewedAt)}` : 'never reviewed'}
+      </span>
+      {hasPermission('rules:update') && (
+        <button
+          onClick={reviewed}
+          disabled={busy}
+          title="You looked at this rule and it still holds: sets the review date to today and schedules the next one"
+          className="px-2 py-0.5 rounded border border-border text-foreground hover:bg-accent disabled:opacity-50"
+        >
+          Mark reviewed
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** "No logs" when the telemetry this rule reads is marked as not collected. */
+function RuleFeedBadge({ pageId }: { pageId: number }) {
+  const { data } = useQuery({ queryKey: ['rule-collection', pageId], queryFn: () => getRuleCollection(pageId), staleTime: 60 * 1000 });
+  if (!data?.active || data.feed === 'unknown') return null;
+  return (
+    <Link to="/log-sources" title={data.feed === 'blind' ? `Not collected: ${data.missing.join(', ')}` : undefined}>
+      <FeedBadge feed={data.feed} />
+    </Link>
+  );
+}
+
+function RulePanel({ rule, slug, onChanged }: { rule: NonNullable<Page['rule']>; slug: string; onChanged: () => void }) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
   function toggleSection(key: string) {
@@ -60,12 +126,14 @@ function RulePanel({ rule, slug }: { rule: NonNullable<Page['rule']>; slug: stri
         <StatusBadge status={rule.status} />
         <SeverityBadge severity={rule.severity} />
         <RuleValidationBadge pageId={rule.pageId} />
+        <RuleFeedBadge pageId={rule.pageId} />
         {rule.dataSource && (
           <span className="text-xs text-muted-foreground font-mono">
             <span className="text-muted-foreground/60 mr-1">source:</span>
             {rule.dataSource}
           </span>
         )}
+        <RuleUpkeep rule={rule} onChanged={onChanged} />
       </div>
 
       <RuleQueryTabs rule={rule} slug={slug} />
@@ -528,8 +596,8 @@ export function PageViewPage() {
   return (
     <div className="max-w-4xl mx-auto">
       {/* Breadcrumbs + header row */}
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div className="min-w-0">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 mb-6">
+        <div className="min-w-[min(100%,22rem)] flex-1">
           <Breadcrumbs items={breadcrumbItems} />
           <h1 className="text-2xl font-semibold tracking-tight mt-1">{page.title}</h1>
           <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -562,7 +630,7 @@ export function PageViewPage() {
         </div>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={handleExportPdf}
             disabled={exportingPdf}
@@ -582,6 +650,16 @@ export function PageViewPage() {
             <Network className="w-3.5 h-3.5" />
             Graph
           </button>
+          {page.type === 'RULE' && page.rule && (
+            <Link
+              to={`/runbook/${page.slug}`}
+              title="What the analyst handling this alert needs: what to check, what is usually benign, what to do"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-primary/40 text-primary text-sm font-medium hover:bg-primary/10 transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              Runbook
+            </Link>
+          )}
           {page.type === 'RULE' && page.rule && (
             <button
               onClick={handleExportSigma}
@@ -645,7 +723,7 @@ export function PageViewPage() {
 
         {/* Detection Rule structured panel */}
         {page.type === 'RULE' && page.rule && (
-          <RulePanel rule={page.rule} slug={page.slug} />
+          <RulePanel rule={page.rule} slug={page.slug} onChanged={() => getPage(page.slug).then(setPage).catch(() => {})} />
         )}
 
         <SysmonLinksBar links={page.sysmonEvents ?? []} />

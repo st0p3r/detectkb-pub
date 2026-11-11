@@ -4,6 +4,8 @@ import { LOG_SOURCES } from '../lib/log-events';
 import { kbCache, kbCacheMap } from '../lib/kb-cache';
 import { requirePermission } from '../middleware/auth';
 import { createDataSourcePages, planDataSourcePages } from '../lib/data-source-pages';
+import { loadRuleTelemetry, loadTelemetryInfo, sourceLabel } from '../lib/coverage-analysis';
+import { feedSummary, keyState, loadCollection, missingKeys, opportunities, ruleFeed, techniqueName } from '../lib/collection';
 
 // Telemetry other than Sysmon for Windows: log sources, their events, and the
 // rules / data source pages that depend on each (links are derived from the
@@ -102,6 +104,83 @@ router.post('/data-source-pages', requirePermission('pages:create'), async (req,
 // plus Sysmon for Windows (which has its own page)
 router.get('/', async (_req, res) => {
   res.json(await sourcesCache.get());
+});
+
+// ── What is collected ───────────────────────────────────────────────────────
+
+// GET /api/log-sources/collection — the answers given so far (per source or
+// event) and what they mean for the rules
+router.get('/collection', async (_req, res) => {
+  const [entries, rules, map] = await Promise.all([
+    prisma.telemetryCollection.findMany({ select: { key: true, collected: true, note: true, updatedAt: true }, orderBy: { key: 'asc' } }),
+    loadRuleTelemetry(),
+    loadCollection(),
+  ]);
+  res.json({ active: entries.length > 0, entries, rules: feedSummary(rules, map) });
+});
+
+const COLLECTION_KEY = /^[a-z0-9][a-z0-9_.-]*(:[^\s]{1,150})?$/i;
+
+// PUT /api/log-sources/collection { items: [{ key, collected: true|false|null, note? }] }
+// — null removes the answer (back to "not decided")
+router.put('/collection', requirePermission('rules:update'), async (req, res) => {
+  const items: unknown[] = Array.isArray(req.body?.items) ? req.body.items : [];
+  const valid = items.filter(
+    (i): i is { key: string; collected: boolean | null; note?: string } =>
+      !!i && typeof (i as { key?: unknown }).key === 'string' && COLLECTION_KEY.test((i as { key: string }).key) && [true, false, null].includes((i as { collected: boolean | null }).collected)
+  );
+  if (!valid.length || valid.length !== items.length || items.length > 2000) {
+    res.status(400).json({ error: 'Send items: [{ key, collected: true | false | null }]' });
+    return;
+  }
+  const userId = req.user?.userId ?? null;
+  await prisma.$transaction(
+    valid.map((i) => {
+      if (i.collected === null) return prisma.telemetryCollection.deleteMany({ where: { key: i.key } });
+      const note = typeof i.note === 'string' ? i.note.trim().slice(0, 500) || null : undefined;
+      return prisma.telemetryCollection.upsert({
+        where: { key: i.key },
+        create: { key: i.key, collected: i.collected, note: note ?? null, updatedById: userId },
+        update: { collected: i.collected, ...(note !== undefined && { note }), updatedById: userId },
+      });
+    })
+  );
+  await prisma.auditLog.create({
+    data: { userId, action: 'COLLECTION_UPDATE', resourceType: 'log-source', newValue: { items: valid.slice(0, 50).map((i) => ({ key: i.key, collected: i.collected })), count: valid.length } },
+  });
+  res.json({ updated: valid.length });
+});
+
+// GET /api/log-sources/collection/opportunities — draft rules whose logs are
+// already collected, and the sources worth collecting next
+router.get('/collection/opportunities', async (_req, res) => {
+  const [rules, map, info] = await Promise.all([loadRuleTelemetry(), loadCollection(), loadTelemetryInfo()]);
+  const { ready, sources } = opportunities(rules, map);
+  const named = (ids: string[]) => ids.map((id) => ({ id, name: techniqueName(id) }));
+  res.json({
+    active: map.size > 0,
+    readyTotal: ready.length,
+    readyFillingGaps: ready.filter((r) => r.fills.length).length,
+    ready: ready.slice(0, 200).map((r) => ({ ...r, fills: named(r.fills) })),
+    sources: sources.map((s) => ({ ...s, label: sourceLabel(s.source, info), techniqueCount: s.techniques.length, techniques: named(s.techniques.slice(0, 40)) })),
+  });
+});
+
+// GET /api/log-sources/collection/rule/:pageId — is this rule fed by what is collected?
+router.get('/collection/rule/:pageId', async (req, res) => {
+  const pageId = Number(req.params.pageId);
+  const [rules, map, info] = await Promise.all([loadRuleTelemetry(), loadCollection(), loadTelemetryInfo()]);
+  const rule = rules.find((r) => r.pageId === pageId);
+  if (!rule) {
+    res.status(404).json({ error: 'Rule not found' });
+    return;
+  }
+  res.json({
+    active: map.size > 0,
+    feed: ruleFeed(rule, map),
+    telemetry: rule.telemetry.map((key) => ({ key, label: info.get(key)?.label ?? key, state: keyState(map, key) })),
+    missing: missingKeys(rule, map).map((key) => info.get(key)?.label ?? key),
+  });
 });
 
 // GET /api/log-sources/:source/events — a source's events with rule counts

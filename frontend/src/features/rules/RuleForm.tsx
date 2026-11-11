@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
-import { QUERY_LANGUAGE_LABELS, SOURCE_FORMAT_LABELS, type DetectionRuleData } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { QUERY_LANGUAGE_LABELS, SOURCE_FORMAT_LABELS, listRuleOwners, type DetectionRuleData } from '@/lib/api';
 import { SigmaPanel } from '@/features/sigma/SigmaPanel';
 
 const STATUS_OPTIONS = [
@@ -49,6 +50,7 @@ function SplCopyButton({ text }: { text: string }) {
 export function RuleForm({ value, onChange }: RuleFormProps) {
   const currentStatus = value.status ?? 'draft';
   const currentSeverity = value.severity ?? 'medium';
+  const { data: owners } = useQuery({ queryKey: ['rule-owners'], queryFn: listRuleOwners, staleTime: 60 * 1000 });
 
   const currentStatusStyle =
     STATUS_OPTIONS.find((s) => s.value === currentStatus)?.style ??
@@ -241,6 +243,74 @@ export function RuleForm({ value, onChange }: RuleFormProps) {
             className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y"
           />
           <p className="mt-1 text-xs text-muted-foreground">One URL per line</p>
+        </div>
+
+        {/* For the analyst: shown on the rule's runbook */}
+        <div className="rounded-md border border-border p-3 space-y-4">
+          <div>
+            <h4 className="text-sm font-semibold">Runbook</h4>
+            <p className="text-xs text-muted-foreground">
+              For the analyst who gets the alert. Markdown; shown on the rule's runbook together with the false positives above.
+              {value.sourceFormat === 'elastic' && ' Left empty, the investigation guide the rule was imported with is used.'}
+            </p>
+          </div>
+          <div>
+            <label htmlFor="rule-triage" className="block text-sm font-medium mb-1.5">Triage steps</label>
+            <textarea
+              id="rule-triage"
+              dir="auto"
+              value={value.triage ?? ''}
+              onChange={(e) => set('triage', e.target.value)}
+              rows={5}
+              placeholder={'1. Who ran it, from where, and is that expected for this host?\n2. Check the parent process and the command line\n3. Look for the same activity on other hosts in the last 24 hours'}
+              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y"
+            />
+          </div>
+          <div>
+            <label htmlFor="rule-response" className="block text-sm font-medium mb-1.5">If it is real</label>
+            <textarea
+              id="rule-response"
+              dir="auto"
+              value={value.response ?? ''}
+              onChange={(e) => set('response', e.target.value)}
+              rows={4}
+              placeholder={'- Isolate the host\n- Reset the credentials used on it\n- Escalate to the incident response lead'}
+              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 resize-y"
+            />
+          </div>
+        </div>
+
+        {/* Upkeep */}
+        <div className="flex flex-wrap gap-4">
+          <div className="flex-1 min-w-[200px]">
+            <label htmlFor="rule-owner" className="block text-sm font-medium mb-1.5">Owner</label>
+            <select
+              id="rule-owner"
+              value={value.ownerId ?? ''}
+              onChange={(e) => set('ownerId', e.target.value ? Number(e.target.value) : null)}
+              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            >
+              <option value="">Nobody</option>
+              {owners?.owners.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.username}
+                  {o.name ? ` · ${o.name}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-muted-foreground">Who keeps this rule working</p>
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <label htmlFor="rule-review" className="block text-sm font-medium mb-1.5">Next review</label>
+            <input
+              id="rule-review"
+              type="date"
+              value={value.nextReviewAt ? value.nextReviewAt.slice(0, 10) : ''}
+              onChange={(e) => set('nextReviewAt', e.target.value ? new Date(`${e.target.value}T00:00:00Z`).toISOString() : null)}
+              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">“Mark reviewed” on the rule page sets it for you</p>
+          </div>
         </div>
 
         {/* Test Notes */}
