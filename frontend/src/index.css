@@ -228,8 +228,7 @@
     overflow: visible !important;
     background: #fff !important;
   }
-  .ml-60,
-  .ml-14 {
+  [data-app-shell] {
     margin-left: 0 !important;
   }
   main {
@@ -271,4 +270,22 @@
 .rb-md a {
   color: hsl(var(--primary));
   text-decoration: underline;
+}
+
+/* Mixed Persian / English text: every paragraph, list item and heading takes
+   the direction of its own first strong character */
+.md-auto :is(p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th) {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+/* Small screens: wide tables scroll sideways inside their card instead of
+   squeezing their columns to nothing */
+@media (max-width: 1023px) {
+  main :is(.overflow-hidden, .overflow-x-auto):has(> table) {
+    overflow-x: auto;
+  }
+  main :is(.overflow-hidden, .overflow-x-auto) > table {
+    min-width: 68rem;
+  }
 }

@@ -51,6 +51,11 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
   mention the binary, driver file or driver hash
 - **Knowledge graph** of pages, wiki links, ATT&CK techniques, telemetry, attacker tools, threat
   groups, software, mitigations and analytic stories
+- **Nothing gets lost while editing**: every saved change is kept in the page's history (who
+  changed what, with a diff, and any version can be restored); a save is refused instead of
+  silently replacing a colleague's newer version; a page and its rule are saved together or not
+  at all; unsaved changes are kept as a draft in the browser and you are asked before leaving
+  them; a renamed page stays reachable at its old address
 - Role-based access (admin / editor / viewer) enforced by the API
 - SPL command cheat-sheet library with searchable cards
 - Global search (Cmd+K) across all content

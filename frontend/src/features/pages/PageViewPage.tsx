@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CalendarCheck, ClipboardList, Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network, UserRound } from 'lucide-react';
+import { CalendarCheck, ClipboardList, History, Pencil, Trash2, Copy, Check, Link2, Star, Pin, PinOff, Download, Network, UserRound } from 'lucide-react';
 import { getPage, deletePage, updatePage, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, getRuleCollection, markRuleReviewed, type Page } from '@/lib/api';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FeedBadge } from '@/features/collection/CollectionBadge';
@@ -16,6 +16,8 @@ import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { relativeDay, relativeTime } from '@/lib/time';
+import { PageHistory } from '@/features/history/PageHistory';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { cn } from '@/lib/utils';
 import { BasisBadge } from '@/components/ui/BasisBadge';
 import { LINK_BASIS, basisChip } from '@/lib/linkBasis';
@@ -510,10 +512,17 @@ export function PageViewPage() {
     setLoading(true);
     setNotFound(false);
     getPage(slug)
-      .then(setPage)
+      .then((p) => {
+        setPage(p);
+        // Opened by an earlier address (the page was renamed): show the current one
+        if (p.slug !== slug) navigate(`/pages/${p.slug}`, { replace: true });
+      })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the address changes
   }, [slug]);
+  useDocumentTitle(page?.title);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     if (!slug) return;
@@ -599,7 +608,7 @@ export function PageViewPage() {
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 mb-6">
         <div className="min-w-[min(100%,22rem)] flex-1">
           <Breadcrumbs items={breadcrumbItems} />
-          <h1 className="text-2xl font-semibold tracking-tight mt-1">{page.title}</h1>
+          <h1 dir="auto" className="text-2xl font-semibold tracking-tight mt-1">{page.title}</h1>
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <TypeBadge type={page.type} />
             {page.isPinned && (
@@ -649,6 +658,15 @@ export function PageViewPage() {
           >
             <Network className="w-3.5 h-3.5" />
             Graph
+          </button>
+          <button
+            onClick={() => setShowHistory(true)}
+            aria-label="Page history"
+            title="Earlier versions of this page: who changed what, and a way back"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm font-medium hover:bg-accent transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
+          >
+            <History className="w-3.5 h-3.5" />
+            History
           </button>
           {page.type === 'RULE' && page.rule && (
             <Link
@@ -732,7 +750,7 @@ export function PageViewPage() {
 
         <div className="px-6 py-6">
           {page.contentMd ? (
-            <div className="prose prose-sm dark:prose-invert max-w-none">
+            <div className="prose prose-sm dark:prose-invert max-w-none md-auto">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
@@ -828,6 +846,18 @@ export function PageViewPage() {
         onConfirm={handleDelete}
         onCancel={() => setShowDeleteConfirm(false)}
       />
+      {showHistory && (
+        <PageHistory
+          page={page}
+          onClose={() => setShowHistory(false)}
+          onRestored={(restored) => {
+            setShowHistory(false);
+            // The restored version may carry an earlier title, and with it another address
+            if (restored.slug !== page.slug) navigate(`/pages/${restored.slug}`, { replace: true });
+            else getPage(restored.slug).then(setPage).catch(() => {});
+          }}
+        />
+      )}
     </div>
   );
 }

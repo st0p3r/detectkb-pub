@@ -109,6 +109,7 @@ model Page {
   outLinks     PageLink[]        @relation("source")
   inLinks      PageLink[]        @relation("target")
   revisions    Revision[]
+  slugAliases  PageSlugAlias[]
   rule         DetectionRule?
   splCommand   SplCommand?
   sysmonEvents PageSysmonEvent[]
@@ -174,13 +175,33 @@ model TagsOnPages {
   @@id([pageId, tagId])
 }
 
+// A saved version of a page (lib/page-save.ts): its title and text and, for a
+// rule, the fields that make the detection. The newest one is the page as it
+// is now; older ones can be compared and restored.
 model Revision {
-  id        Int      @id @default(autoincrement())
-  pageId    Int
-  page      Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
-  contentMd String   @db.LongText
-  title     String   @db.VarChar(255)
-  createdAt DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  pageId     Int
+  page       Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  contentMd  String   @db.LongText
+  title      String   @db.VarChar(255)
+  // Rule fields at that time (queries, techniques, false positives, runbook …)
+  rule       Json?
+  // Who saved it; the name is kept so history survives a deleted account.
+  // Null: the page as it was before history started.
+  authorId   Int?
+  authorName String?  @db.VarChar(120)
+  createdAt  DateTime @default(now())
+
+  @@index([pageId, id])
+}
+
+// Earlier slugs of a page (it was renamed): /pages/<old-slug> still opens it.
+model PageSlugAlias {
+  slug   String @id @db.VarChar(255)
+  pageId Int
+  page   Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
 }
 
 model DetectionRule {

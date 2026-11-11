@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
-import { parseSingleSigmaRule } from '../lib/sigma';
+import { ownerField, reviewDateField, sigmaFields, text } from '../lib/rule-fields';
 import { syncDerivedLinks } from '../lib/derived-links';
 import { replaceRetiredTechniques } from '../lib/attack';
 import { loadRuleFeeds } from '../lib/collection';
@@ -20,29 +20,6 @@ import {
 
 const router = Router();
 
-/**
- * Validates optional Sigma YAML from a request body. Returns the fields to
- * store, `{}` when sigmaYaml was not sent, or an error message.
- */
-async function sigmaFields(
-  sigmaYaml: unknown,
-  pageId: number
-): Promise<{ sigmaYaml?: string | null; sigmaId?: string } | string> {
-  if (sigmaYaml === undefined) return {};
-  if (sigmaYaml === null || String(sigmaYaml).trim() === '') return { sigmaYaml: null };
-  let doc;
-  try {
-    doc = parseSingleSigmaRule(String(sigmaYaml));
-  } catch (err) {
-    return (err as Error).message;
-  }
-  if (!doc.id) return { sigmaYaml: String(sigmaYaml) };
-  const sigmaId = String(doc.id);
-  const clash = await prisma.detectionRule.findFirst({ where: { sigmaId }, include: { page: true } });
-  if (clash && clash.pageId !== pageId) return `Sigma id ${sigmaId} is already used by "${clash.page.title}"`;
-  return { sigmaYaml: String(sigmaYaml), sigmaId };
-}
-
 const OWNER_SELECT = { select: { id: true, username: true } } as const;
 
 /** The list filters of a request; "owner=me" and "logs=" need the caller and the collection answers. */
@@ -55,26 +32,6 @@ async function listQuery(req: Request, raw: Record<string, unknown> = req.query)
   }
   return f;
 }
-
-/** ownerId from a request body: undefined (not sent), null (no owner) or an active user's id; a string is an error. */
-async function ownerField(value: unknown): Promise<{ ownerId?: number | null } | string> {
-  if (value === undefined) return {};
-  if (value === null || value === '') return { ownerId: null };
-  const id = Number(value);
-  if (!Number.isInteger(id)) return 'Invalid owner';
-  const user = await prisma.user.findFirst({ where: { id, isActive: true }, select: { id: true } });
-  return user ? { ownerId: id } : 'Unknown owner';
-}
-
-/** nextReviewAt from a request body: undefined (not sent), null (none) or a date; a string is an error. */
-function reviewDateField(value: unknown): { nextReviewAt?: Date | null } | string {
-  if (value === undefined) return {};
-  if (value === null || value === '') return { nextReviewAt: null };
-  const d = new Date(String(value));
-  return isNaN(d.getTime()) ? 'Invalid review date' : { nextReviewAt: d };
-}
-
-const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
 
 const RULE_PAGE_SELECT = {
   id: true,

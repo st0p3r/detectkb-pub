@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import {
@@ -16,6 +16,7 @@ import {
   Plus,
   Loader2,
   ChevronLeft,
+  ChevronDown,
   ChevronRight,
   Trash2,
   FileText,
@@ -170,41 +171,114 @@ function InlineCategoryForm({ onDone }: { onDone: () => void }) {
   );
 }
 
-const mainNavItems = [
+type NavItem = { to: string; icon: React.ElementType; label: string; permission?: string };
+
+const mainNavItems: NavItem[] = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-];
-
-const contentNavItems = [
-  { to: '/pages', icon: BookOpen, label: 'All Pages' },
-  { to: '/rules', icon: Shield, label: 'Detection Rules' },
-  { to: '/attack-coverage', icon: Grid3x3, label: 'ATT&CK Coverage' },
-  { to: '/spl-library', icon: Terminal, label: 'SPL Library' },
-  { to: '/sysmon-events', icon: Cpu, label: 'Sysmon Events' },
-  { to: '/log-sources', icon: ScrollText, label: 'Log Sources' },
-  { to: '/threat-groups', icon: Skull, label: 'Threat Groups' },
-  { to: '/analytic-stories', icon: BookMarked, label: 'Analytic Stories' },
-  { to: '/atomic-tests', icon: FlaskConical, label: 'Atomic Red Team' },
-  { to: '/attacker-tools', icon: Crosshair, label: 'Attacker Tools' },
-  { to: '/data-sources', icon: Database, label: 'Data Sources' },
-  { to: '/concepts', icon: Lightbulb, label: 'Concepts' },
-  { to: '/docs', icon: FileText, label: 'Documentation' },
-];
-
-const toolsNavItems = [
   { to: '/search', icon: Search, label: 'Search' },
-  { to: '/graph', icon: Network, label: 'Knowledge Graph' },
-  { to: '/data-health', icon: HeartPulse, label: 'Data Health' },
-  { to: '/similar-rules', icon: Copy, label: 'Similar Rules' },
-  { to: '/upstream', icon: GitPullRequestArrow, label: 'Upstream Updates' },
-  { to: '/broken-links', icon: Link2Off, label: 'Broken Links' },
-  { to: '/backups', icon: HardDrive, label: 'Backups', permission: 'backups:create' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
 ];
+
+// Grouped by the job at hand; each group folds away (remembered per browser)
+const NAV_GROUPS: { id: string; label: string; items: NavItem[] }[] = [
+  {
+    id: 'detection',
+    label: 'Detection',
+    items: [
+      { to: '/rules', icon: Shield, label: 'Detection Rules' },
+      { to: '/attack-coverage', icon: Grid3x3, label: 'ATT&CK Coverage' },
+      { to: '/atomic-tests', icon: FlaskConical, label: 'Atomic Red Team' },
+      { to: '/similar-rules', icon: Copy, label: 'Similar Rules' },
+      { to: '/upstream', icon: GitPullRequestArrow, label: 'Upstream Updates' },
+    ],
+  },
+  {
+    id: 'telemetry',
+    label: 'Telemetry',
+    items: [
+      { to: '/log-sources', icon: ScrollText, label: 'Log Sources' },
+      { to: '/sysmon-events', icon: Cpu, label: 'Sysmon Events' },
+      { to: '/data-sources', icon: Database, label: 'Data Sources' },
+    ],
+  },
+  {
+    id: 'threats',
+    label: 'Threat intel',
+    items: [
+      { to: '/threat-groups', icon: Skull, label: 'Threat Groups' },
+      { to: '/analytic-stories', icon: BookMarked, label: 'Analytic Stories' },
+      { to: '/attacker-tools', icon: Crosshair, label: 'Attacker Tools' },
+    ],
+  },
+  {
+    id: 'knowledge',
+    label: 'Knowledge',
+    items: [
+      { to: '/pages', icon: BookOpen, label: 'All Pages' },
+      { to: '/concepts', icon: Lightbulb, label: 'Concepts' },
+      { to: '/spl-library', icon: Terminal, label: 'SPL Library' },
+      { to: '/graph', icon: Network, label: 'Knowledge Graph' },
+      { to: '/docs', icon: FileText, label: 'Documentation' },
+    ],
+  },
+  {
+    id: 'upkeep',
+    label: 'Upkeep',
+    items: [
+      { to: '/data-health', icon: HeartPulse, label: 'Data Health' },
+      { to: '/broken-links', icon: Link2Off, label: 'Broken Links' },
+      { to: '/backups', icon: HardDrive, label: 'Backups', permission: 'backups:create' },
+      { to: '/settings', icon: Settings, label: 'Settings' },
+    ],
+  },
+];
+
+const GROUPS_KEY = 'detectkb.navClosed';
+
+function readClosedGroups(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]');
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 interface SidebarProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
+  /** Below the lg breakpoint the sidebar is a drawer */
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
 }
+
+/** A foldable group of links; the group holding the current page stays open. */
+function NavGroup({ group, collapsed, closed, onToggle }: { group: (typeof NAV_GROUPS)[number]; collapsed: boolean; closed: boolean; onToggle: () => void }) {
+  const { pathname } = useLocation();
+  const hasCurrent = group.items.some((i) => pathname === i.to || pathname.startsWith(`${i.to}/`));
+  const open = collapsed || !closed || hasCurrent;
+  if (collapsed) {
+    return (
+      <>
+        <div className="my-2 mx-2 border-t border-[hsl(var(--sidebar-border))]" />
+        <NavSection items={group.items} collapsed />
+      </>
+    );
+  }
+  return (
+    <div>
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between px-3 pt-4 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[hsl(var(--sidebar-foreground))]/50 hover:text-white/80 outline-none focus-visible:text-white"
+      >
+        {group.label}
+        <ChevronDown className={cn('w-3 h-3 transition-transform', !open && '-rotate-90')} />
+      </button>
+      {open && <NavSection items={group.items} collapsed={false} />}
+    </div>
+  );
+}
+
 
 function SectionLabel({ label, collapsed }: { label: string; collapsed: boolean }) {
   if (collapsed) {
@@ -221,7 +295,7 @@ function NavSection({
   items,
   collapsed,
 }: {
-  items: { to: string; icon: React.ElementType; label: string; permission?: string }[];
+  items: NavItem[];
   collapsed: boolean;
 }) {
   const { hasPermission } = useAuth();
@@ -249,7 +323,20 @@ function NavSection({
   );
 }
 
-export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
+export function Sidebar({ collapsed: collapsedPref, onToggleCollapse, mobileOpen, onCloseMobile }: SidebarProps) {
+  // The drawer on small screens is always the full sidebar
+  const collapsed = collapsedPref && !mobileOpen;
+  const [closedGroups, setClosedGroups] = useState(readClosedGroups);
+  const toggleGroup = (id: string) =>
+    setClosedGroups((prev) => {
+      const next = prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id];
+      try {
+        localStorage.setItem(GROUPS_KEY, JSON.stringify(next));
+      } catch {
+        // not remembered
+      }
+      return next;
+    });
   const queryClient = useQueryClient();
   const { isAdmin } = useAuth();
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -273,10 +360,13 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
 
   return (
     <>
+    {mobileOpen && <div className="fixed inset-0 z-20 bg-black/50 lg:hidden" onClick={onCloseMobile} aria-hidden />}
     <aside
       className={cn(
-        'fixed left-0 top-0 bottom-0 bg-[hsl(var(--sidebar))] border-r border-[hsl(var(--sidebar-border))] flex flex-col z-20 transition-all duration-200',
-        sidebarWidth
+        'fixed left-0 top-0 bottom-0 bg-[hsl(var(--sidebar))] border-r border-[hsl(var(--sidebar-border))] flex flex-col z-30 transition-all duration-200',
+        sidebarWidth,
+        // Off-canvas below lg unless opened from the top bar
+        mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       )}
     >
       {/* Brand */}
@@ -296,8 +386,9 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
         <SectionLabel label="Main" collapsed={collapsed} />
         <NavSection items={mainNavItems} collapsed={collapsed} />
 
-        <SectionLabel label="Content" collapsed={collapsed} />
-        <NavSection items={contentNavItems} collapsed={collapsed} />
+        {NAV_GROUPS.map((g) => (
+          <NavGroup key={g.id} group={g} collapsed={collapsed} closed={closedGroups.includes(g.id)} onToggle={() => toggleGroup(g.id)} />
+        ))}
 
         <SavedViewsNav collapsed={collapsed} sectionLabel={<SectionLabel label="Saved views" collapsed={collapsed} />} />
 
@@ -341,10 +432,6 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
           </div>
         )}
 
-        {/* Tools */}
-        <SectionLabel label="Tools" collapsed={collapsed} />
-        <NavSection items={toolsNavItems} collapsed={collapsed} />
-
         {/* Admin */}
         {isAdmin() && (
           <>
@@ -358,7 +445,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
       </nav>
 
       {/* Collapse toggle */}
-      <div className="border-t border-[hsl(var(--sidebar-border))] p-2">
+      <div className="hidden lg:block border-t border-[hsl(var(--sidebar-border))] p-2">
         <button
           onClick={onToggleCollapse}
           title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}

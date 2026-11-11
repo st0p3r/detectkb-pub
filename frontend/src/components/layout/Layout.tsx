@@ -1,4 +1,4 @@
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Outlet, useParams, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
@@ -6,6 +6,9 @@ import { TopBar } from './TopBar';
 import { CommandPalette } from '@/features/search/CommandPalette';
 import { ShortcutsHelpModal } from '@/features/search/ShortcutsHelpModal';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { routeTitle } from '@/hooks/useDocumentTitle';
+import { useSessionRefresh } from '@/hooks/useSessionRefresh';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 
 function PageLoading() {
   return (
@@ -20,7 +23,7 @@ interface LayoutProps {
   onToggleDark: () => void;
 }
 
-function LayoutInner({ darkMode, onToggleDark, collapsed }: LayoutProps & { collapsed: boolean }) {
+function LayoutInner({ darkMode, onToggleDark, collapsed, onOpenMenu }: LayoutProps & { collapsed: boolean; onOpenMenu: () => void }) {
   const { slug } = useParams<{ slug?: string }>();
   const location = useLocation();
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -31,18 +34,25 @@ function LayoutInner({ darkMode, onToggleDark, collapsed }: LayoutProps & { coll
     currentPageSlug: slug,
   });
 
-  const marginLeft = collapsed ? 'ml-14' : 'ml-60';
+  // The tab says where you are; a page showing one item sets a more exact title after this
+  useEffect(() => {
+    document.title = routeTitle(location.pathname);
+  }, [location.pathname]);
+
+  const marginLeft = collapsed ? 'lg:ml-14' : 'lg:ml-60';
 
   return (
     <>
-      <div className={`flex-1 min-w-0 ${marginLeft} flex flex-col bg-[hsl(var(--background))] transition-all duration-200`}>
-        <TopBar darkMode={darkMode} onToggleDark={onToggleDark} collapsed={collapsed} />
-        <main className="flex-1 overflow-y-auto mt-14 p-6">
+      <div data-app-shell className={`flex-1 min-w-0 ${marginLeft} flex flex-col bg-[hsl(var(--background))] transition-all duration-200`}>
+        <TopBar darkMode={darkMode} onToggleDark={onToggleDark} collapsed={collapsed} onOpenMenu={onOpenMenu} />
+        <main className="flex-1 overflow-y-auto mt-14 p-3 sm:p-6">
           <div key={location.pathname} className="animate-fade-in-up">
             {/* Pages are lazy-loaded chunks (see App.tsx) */}
-            <Suspense fallback={<PageLoading />}>
-              <Outlet />
-            </Suspense>
+            <ErrorBoundary resetKey={location.pathname}>
+              <Suspense fallback={<PageLoading />}>
+                <Outlet />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         </main>
       </div>
@@ -65,10 +75,16 @@ export function Layout({ darkMode, onToggleDark }: LayoutProps) {
     });
   }
 
+  useSessionRefresh();
+  // Small screens: the sidebar is a drawer, closed again when a link is followed
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const { pathname } = useLocation();
+  useEffect(() => setMobileOpen(false), [pathname]);
+
   return (
     <div className="h-full flex">
-      <Sidebar collapsed={collapsed} onToggleCollapse={handleToggleCollapse} />
-      <LayoutInner darkMode={darkMode} onToggleDark={onToggleDark} collapsed={collapsed} />
+      <Sidebar collapsed={collapsed} onToggleCollapse={handleToggleCollapse} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
+      <LayoutInner darkMode={darkMode} onToggleDark={onToggleDark} collapsed={collapsed} onOpenMenu={() => setMobileOpen(true)} />
     </div>
   );
 }

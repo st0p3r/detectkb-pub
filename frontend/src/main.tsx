@@ -1,12 +1,18 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ToastProvider } from '@/components/ui/Toast';
-import App from './App';
+import { RouterProvider, createBrowserRouter } from 'react-router-dom';
+import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { reportQueryError } from '@/lib/queryErrors';
+import { Root } from './Root';
 import './index.css';
 
 const queryClient = new QueryClient({
+  // A page whose data can't be loaded says so, instead of looking empty
+  queryCache: new QueryCache({
+    onError: (error, query) => {
+      if (!query.meta?.silent) reportQueryError(error);
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60,
@@ -15,14 +21,14 @@ const queryClient = new QueryClient({
   },
 });
 
+// A data router (with the routes still declared in App) so pages can hold a
+// navigation back while there are unsaved changes
+const router = createBrowserRouter([{ path: '*', element: <Root /> }]);
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
-      </BrowserRouter>
+      <RouterProvider router={router} />
     </QueryClientProvider>
   </React.StrictMode>
 );

@@ -20,7 +20,7 @@ declare global {
 }
 
 // Endpoints a user who must change their password can still reach.
-const PASSWORD_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/auth/verify', '/api/users/me']);
+const PASSWORD_CHANGE_ALLOWED = new Set(['/api/auth/password', '/api/auth/verify', '/api/auth/refresh', '/api/users/me']);
 
 export const JWT_ALGORITHM = 'HS256' as const;
 

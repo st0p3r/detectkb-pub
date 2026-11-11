@@ -28,6 +28,12 @@ api.interceptors.response.use(
       // Only redirect if this wasn't already a login attempt
       const isLoginEndpoint = error.config?.url?.includes('/api/auth/login');
       if (!isLoginEndpoint && path !== '/login') {
+        // Come back to the same place after signing in again (an editor restores its draft)
+        try {
+          sessionStorage.setItem(NEXT_PATH_KEY, path + window.location.search);
+        } catch {
+          // no session storage: the dashboard it is
+        }
         localStorage.removeItem('authToken');
         localStorage.removeItem('authUsername');
         window.location.href = '/login';
@@ -39,6 +45,25 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+const NEXT_PATH_KEY = 'detectkb.next';
+
+/** Where the user was when the session ended (once): the place to return to after signing in. */
+export function takeNextPath(): string | null {
+  try {
+    const next = sessionStorage.getItem(NEXT_PATH_KEY);
+    sessionStorage.removeItem(NEXT_PATH_KEY);
+    return next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/login') ? next : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A fresh token for the current session, so working on doesn't end in a sign-out. */
+export async function refreshSession() {
+  const { data } = await api.post('/api/auth/refresh');
+  if (data?.token) localStorage.setItem('authToken', data.token);
+}
 
 /** Human-readable message from an API error. */
 export function apiErrorMessage(err: unknown, fallback = 'Something went wrong'): string {
@@ -210,6 +235,86 @@ export async function createPage(payload: Partial<Page> & { tagNames?: string[] 
 
 export async function updatePage(id: number, payload: Partial<Page> & { tagNames?: string[] }) {
   const { data } = await api.put(`/api/pages/${id}`, payload);
+  return data as Page;
+}
+
+export interface PageSavePayload {
+  title: string;
+  contentMd: string;
+  type: PageType;
+  categoryId: number | null;
+  isPinned: boolean;
+  tagNames: string[];
+  /** Rule fields (pages of type RULE) */
+  rule?: Partial<DetectionRuleData>;
+  splCommand?: Partial<SplCommandData>;
+  /** Manual Sysmon links (event IDs) */
+  sysmonEventIds?: number[];
+  /** updatedAt of the page when it was loaded: the save is refused if someone saved since */
+  expectedUpdatedAt?: string;
+  /** Save even though someone else saved since */
+  force?: boolean;
+}
+
+/** Saves a page with its rule / SPL command / Sysmon links in one step: all of it, or nothing. */
+export async function savePage(id: number | null, payload: PageSavePayload) {
+  const { data } = id ? await api.put(`/api/pages/${id}`, payload) : await api.post('/api/pages', payload);
+  return data as Page;
+}
+
+export interface SaveConflict {
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+/** The other save, when a save was refused because the page changed in the meantime. */
+export function saveConflict(err: unknown): SaveConflict | null {
+  const res = (err as { response?: { status?: number; data?: { code?: string; updatedAt?: string; updatedBy?: string | null } } })?.response;
+  return res?.status === 409 && res.data?.code === 'CONFLICT' ? { updatedAt: res.data.updatedAt ?? '', updatedBy: res.data.updatedBy ?? null } : null;
+}
+
+export type RevisionRule = Partial<
+  Record<
+    'status' | 'severity' | 'splQuery' | 'nativeQuery' | 'nativeLanguage' | 'sigmaYaml' | 'mitreTactics' | 'mitreTechniques' | 'dataSource' | 'falsePositives' | 'references' | 'testNotes' | 'triage' | 'response',
+    string | null
+  >
+>;
+
+export interface RevisionSummary {
+  id: number;
+  title: string;
+  createdAt: string;
+  /** Null: the page as it was before history started */
+  author: string | null;
+  /** What this version changed: "title", "content", or rule field names */
+  changed: string[];
+  current: boolean;
+}
+
+export interface RevisionDetail {
+  id: number;
+  createdAt: string;
+  author: string | null;
+  title: string;
+  contentMd: string;
+  rule: RevisionRule | null;
+  /** The version before it */
+  previous: { id: number; title: string; contentMd: string; rule: RevisionRule | null } | null;
+}
+
+export async function listPageRevisions(pageId: number) {
+  const { data } = await api.get(`/api/pages/${pageId}/revisions`);
+  return data as RevisionSummary[];
+}
+
+export async function getPageRevision(pageId: number, revisionId: number) {
+  const { data } = await api.get(`/api/pages/${pageId}/revisions/${revisionId}`);
+  return data as RevisionDetail;
+}
+
+/** Makes an earlier version the page again (as a new version). */
+export async function restorePageRevision(pageId: number, revisionId: number) {
+  const { data } = await api.put(`/api/pages/${pageId}/revisions/${revisionId}/restore`);
   return data as Page;
 }
 
