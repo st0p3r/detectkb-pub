@@ -22,6 +22,7 @@ import {
 } from '@/lib/api';
 import { FeedBadge } from '@/features/collection/CollectionBadge';
 import { CoverageTrend } from './CoverageTrend';
+import { useClickOutside } from '@/hooks/useClickOutside';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { SeverityBadge } from '@/components/ui/SeverityBadge';
@@ -118,10 +119,11 @@ function usePlatforms() {
 /** "All platforms" / "Windows, Linux" with a checklist. */
 function PlatformFilter({ all, value, onChange }: { all: string[]; value: string[]; onChange: (v: string[]) => void }) {
   const [open, setOpen] = useState(false);
+  const ref = useClickOutside<HTMLDivElement>(open, () => setOpen(false));
   const toggle = (p: string) => onChange(value.includes(p) ? value.filter((x) => x !== p) : [...value, p]);
   const label = value.length === 0 ? 'All platforms' : value.length <= 2 ? value.join(', ') : `${value.length} platforms`;
   return (
-    <div className="relative" onBlur={(e) => !e.currentTarget.contains(e.relatedTarget) && setOpen(false)}>
+    <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="true"

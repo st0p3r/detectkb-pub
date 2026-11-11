@@ -4,7 +4,8 @@ import type { GraphEdge, GraphMoreNode, GraphNode } from '@/lib/api';
 import { usePageTypes } from '@/context/PageTypesContext';
 import { ENTITY_GROUPS, cssColor, isPageGroup } from './graphStyle';
 import { useNodeIcons } from './nodeIcons';
-import { BREAKDOWN_COLORS, CARD_H, CARD_MIN_SCALE, CARD_W, GAP_COLOR, STATUS_COLORS, TILE, breakdownEntries, cardText, fitText, rectCollide, wrapText } from './nodeCard';
+import { Maximize2, Minus, Plus } from 'lucide-react';
+import { BREAKDOWN_COLORS, CARD_H, CARD_MIN_SCALE, CARD_W, GAP_COLOR, STATUS_COLORS, TILE, breakdownEntries, cardText, fitText, gravity, rectCollide, wrapText } from './nodeCard';
 
 export type CanvasNode = (GraphNode | GraphMoreNode) & NodeObject;
 type CanvasLink = { source: string | CanvasNode; target: string | CanvasNode; kind: string };
@@ -12,7 +13,7 @@ type CanvasLink = { source: string | CanvasNode; target: string | CanvasNode; ki
 const endId = (end: string | CanvasNode) => (typeof end === 'string' ? end : String(end.id));
 // Small graphs would otherwise be zoomed in until a handful of nodes fill the screen
 const MAX_FIT_ZOOM = 2.2;
-const MAX_FIT_ZOOM_CARDS = 1.25;
+const MAX_FIT_ZOOM_CARDS = 1.1;
 
 interface ForceCanvasProps {
   nodes: (GraphNode | GraphMoreNode)[];
@@ -24,6 +25,8 @@ interface ForceCanvasProps {
   alwaysLabel?: boolean;
   /** 'card': rounded cards with icon, title and subtitle; 'dot': circles/squares (large graphs). */
   variant?: 'dot' | 'card';
+  /** Bring this node to the middle; a new `key` asks again for the same node */
+  centerOn?: { id: string; key: number } | null;
   onNodeClick: (node: CanvasNode) => void;
   onBackgroundClick?: () => void;
 }
@@ -33,7 +36,7 @@ interface ForceCanvasProps {
  * kept across updates (new nodes spawn next to a neighbour) and the view is
  * re-fitted when the set of nodes changes.
  */
-export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel, variant = 'dot', onNodeClick, onBackgroundClick }: ForceCanvasProps) {
+export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel, variant = 'dot', centerOn, onNodeClick, onBackgroundClick }: ForceCanvasProps) {
   const { getColorFor, getLabelFor } = usePageTypes();
   const cards = variant === 'card';
   const graphRef = useRef<ForceGraphMethods<CanvasNode, CanvasLink>>();
@@ -42,6 +45,7 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
   const [hovered, setHovered] = useState<string | null>(null);
   const positions = useRef(new Map<string, { x: number; y: number }>());
   const fitPending = useRef(true);
+  const ticks = useRef(0);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -101,6 +105,7 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
       links: edges.map((e) => ({ ...e })) as CanvasLink[],
     };
     fitPending.current = true;
+    ticks.current = 0;
     return data;
   }, [nodes, edges, neighbours]);
 
@@ -109,10 +114,12 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
     const fg = graphRef.current;
     if (!fg) return;
     const charge = fg.d3Force('charge') as { strength?: (s: number) => void } | undefined;
-    charge?.strength?.(cards ? -420 : nodes.length > 300 ? -40 : -160);
+    charge?.strength?.(cards ? -520 : nodes.length > 300 ? -40 : -160);
     const link = fg.d3Force('link') as { distance?: (d: number) => void } | undefined;
-    link?.distance?.(cards ? 170 : nodes.length > 300 ? 30 : 60);
+    link?.distance?.(cards ? 200 : nodes.length > 300 ? 30 : 60);
     fg.d3Force('collide', cards ? (rectCollide(CARD_W, CARD_H) as never) : null);
+    // Unlinked nodes and separate clusters stay near the rest
+    fg.d3Force('gravity', gravity(cards ? 0.05 : 0.03) as never);
     fg.d3ReheatSimulation();
   }, [graphData, nodes.length, cards]);
 
@@ -163,6 +170,15 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
           ctx.stroke();
         }
         if (icon?.complete) ctx.drawImage(icon, x - 7 / scale, y - 7 / scale, 14 / scale, 14 / scale);
+        // A name under the tile while there is room for names
+        if (alwaysLabel && !dimmed) {
+          const fontSize = 10.5 / scale;
+          ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillStyle = fg;
+          ctx.fillText(fitText(ctx, cardText(node, groupLabel).title, 150 / scale), x, y + t / 2 + 3 / scale);
+        }
         ctx.restore();
         return;
       }
@@ -265,7 +281,7 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
       }
       ctx.restore();
     },
-    [colorOf, groupLabel, icons, selectedId, hovered, highlight, expandedIds]
+    [colorOf, groupLabel, icons, selectedId, hovered, highlight, expandedIds, alwaysLabel]
   );
 
   const drawNode = useCallback(
@@ -325,8 +341,73 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
     [highlight, selectedId, hovered, expandedIds, alwaysLabel, hubThreshold, colorOf]
   );
 
+  /** Shows the whole graph (cards by their real extent; zoomToFit only knows node centres). */
+  const fit = useCallback((ms = 300) => {
+    const fg = graphRef.current;
+    if (!fg || !graphData.nodes.length) return;
+    if (cards) {
+      const xs = graphData.nodes.map((n) => n.x ?? 0);
+      const ys = graphData.nodes.map((n) => n.y ?? 0);
+      const minX = Math.min(...xs) - CARD_W / 2;
+      const maxX = Math.max(...xs) + CARD_W / 2;
+      const minY = Math.min(...ys) - CARD_H / 2;
+      const maxY = Math.max(...ys) + CARD_H / 2;
+      const margin = 24;
+      const z = Math.min(size.width / (maxX - minX + 2 * margin), size.height / (maxY - minY + 2 * margin), MAX_FIT_ZOOM_CARDS);
+      fg.centerAt((minX + maxX) / 2, (minY + maxY) / 2, ms);
+      fg.zoom(z, ms);
+    } else {
+      fg.zoomToFit(ms, 60);
+      window.setTimeout(() => {
+        if (fg.zoom() > MAX_FIT_ZOOM) fg.zoom(MAX_FIT_ZOOM, 200);
+      }, 320);
+    }
+  }, [graphData, cards, size]);
+
+  // The canvas got taller or shorter (a toolbar row appeared, the window was
+  // resized): show everything again. A change in width alone — the side panel
+  // opening — leaves the user's zoom alone.
+  const lastHeight = useRef(size.height);
+  useEffect(() => {
+    if (size.height === lastHeight.current) return;
+    lastHeight.current = size.height;
+    const t = window.setTimeout(() => fit(), 200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the height changes
+  }, [size.height]);
+
+  const zoomBy = (factor: number) => {
+    const fg = graphRef.current;
+    if (fg) fg.zoom(Math.min(Math.max(fg.zoom() * factor, 0.05), 6), 200);
+  };
+
+  // A node picked outside the canvas (search, a list): bring it into view, large enough to read
+  useEffect(() => {
+    if (!centerOn) return;
+    const fg = graphRef.current;
+    const node = graphData.nodes.find((n) => String(n.id) === centerOn.id);
+    if (!fg || !node || node.x === undefined || node.y === undefined) return;
+    fg.centerAt(node.x, node.y, 400);
+    const min = cards ? 0.8 : 1.6;
+    if (fg.zoom() < min) fg.zoom(min, 400);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when asked
+  }, [centerOn?.id, centerOn?.key]);
+
+  const control = 'w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent outline-none focus-visible:ring-2 focus-visible:ring-primary/50';
+
   return (
     <div ref={wrapRef} className="absolute inset-0">
+      <div data-export-ignore className="absolute left-3 bottom-3 z-10 flex flex-col rounded-md border border-border bg-card/95 shadow-sm overflow-hidden divide-y divide-border">
+        <button onClick={() => zoomBy(1.4)} aria-label="Zoom in" title="Zoom in" className={control}>
+          <Plus className="w-4 h-4" />
+        </button>
+        <button onClick={() => zoomBy(1 / 1.4)} aria-label="Zoom out" title="Zoom out" className={control}>
+          <Minus className="w-4 h-4" />
+        </button>
+        <button onClick={() => fit()} aria-label="Fit the graph to the view" title="Fit to view" className={control}>
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
       <ForceGraph2D<CanvasNode, CanvasLink>
         ref={graphRef}
         width={size.width}
@@ -357,30 +438,19 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
         onNodeClick={onNodeClick}
         onBackgroundClick={onBackgroundClick}
         cooldownTicks={cards ? 300 : 120}
+        onEngineTick={() => {
+          // While new nodes are still finding their place, keep all of them in view
+          if (!fitPending.current) return;
+          ticks.current++;
+          if (ticks.current % 25 === 0) fit(0);
+        }}
         onEngineStop={() => {
           for (const n of graphData.nodes) {
             if (n.x !== undefined && n.y !== undefined) positions.current.set(String(n.id), { x: n.x, y: n.y });
           }
           if (fitPending.current) {
             fitPending.current = false;
-            const fg = graphRef.current;
-            if (!fg) return;
-            if (cards) {
-              // Fit the cards' real extent (zoomToFit only knows node centres)
-              const xs = graphData.nodes.map((n) => n.x ?? 0);
-              const ys = graphData.nodes.map((n) => n.y ?? 0);
-              const minX = Math.min(...xs) - CARD_W / 2;
-              const maxX = Math.max(...xs) + CARD_W / 2;
-              const minY = Math.min(...ys) - CARD_H / 2;
-              const maxY = Math.max(...ys) + CARD_H / 2;
-              const margin = 24;
-              const z = Math.min(size.width / (maxX - minX + 2 * margin), size.height / (maxY - minY + 2 * margin), MAX_FIT_ZOOM_CARDS);
-              fg.centerAt((minX + maxX) / 2, (minY + maxY) / 2, 300);
-              fg.zoom(z, 300);
-            } else {
-              fg.zoomToFit(0, 60);
-              if (fg.zoom() > MAX_FIT_ZOOM) fg.zoom(MAX_FIT_ZOOM, 300);
-            }
+            fit();
           }
         }}
       />
