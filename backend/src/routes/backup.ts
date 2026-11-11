@@ -8,6 +8,7 @@ import { requirePermission } from '../middleware/auth';
 import { setManualSysmonLinks } from '../lib/sysmon-links';
 import { syncAllDerivedLinks } from '../lib/derived-links';
 import { saveStoryDetails } from '../lib/stories';
+import { KEEP_DAILY, KEEP_WEEKLY, SCHEDULED, backupsOlderThan, backupsToPrune } from '../lib/backup-retention';
 
 async function restoreManualSysmonLinks(
   pageId: number,
@@ -56,13 +57,15 @@ async function restoreTestRuns(pageId: number, runs: BackupTestRun[] | undefined
   if (data.length) await prisma.ruleTestRun.createMany({ data });
 }
 
+const BACKUP_FILE_NAME = /^detectkb-backup-[A-Za-z0-9_-]+\.json$/;
+
 const router = Router();
 
 // Listing/downloading backups exposes the full dataset, so it needs the same
 // permission as creating one.
 const canRead = requirePermission('backups:create');
 
-export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: number; downloadUrl: string }> {
+export async function runJsonBackup(type: 'json' | typeof SCHEDULED = 'json'): Promise<{ fileName: string; sizeBytes: number; downloadUrl: string }> {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
   const [pages, categories, tags] = await Promise.all([
@@ -114,9 +117,33 @@ export async function runJsonBackup(): Promise<{ fileName: string; sizeBytes: nu
   fs.writeFileSync(filePath, JSON.stringify(backup, null, 2), 'utf-8');
   const sizeBytes = fs.statSync(filePath).size;
 
-  await prisma.backupLog.create({ data: { fileName, sizeBytes, type: 'json' } });
+  await prisma.backupLog.create({ data: { fileName, sizeBytes, type } });
 
   return { fileName, sizeBytes, downloadUrl: `/api/backup/download/${fileName}` };
+}
+
+/** Removes backups: their files and their entries in the list. */
+async function removeBackups(logs: { id: number; fileName: string }[]) {
+  for (const log of logs) {
+    const filePath = path.join(BACKUP_DIR, log.fileName);
+    if (BACKUP_FILE_NAME.test(log.fileName) && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
+  if (logs.length) await prisma.backupLog.deleteMany({ where: { id: { in: logs.map((l) => l.id) } } });
+  return logs.length;
+}
+
+/**
+ * The daily automatic backup: made when the last automatic one is a day old
+ * (checked every hour, so a restart doesn't postpone it), then older automatic
+ * backups are thinned out (lib/backup-retention).
+ */
+export async function scheduledBackup(now = new Date()) {
+  const last = await prisma.backupLog.findFirst({ where: { type: SCHEDULED }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
+  if (last && now.getTime() - last.createdAt.getTime() < 23.5 * 3600000) return null;
+  const result = await runJsonBackup(SCHEDULED);
+  const pruned = await removeBackups(backupsToPrune(await prisma.backupLog.findMany()));
+  if (pruned) console.log(`[backup] removed ${pruned} old automatic backup${pruned === 1 ? '' : 's'}`);
+  return { ...result, pruned };
 }
 
 router.post('/json', requirePermission('backups:create'), async (_req: Request, res: Response) => {
@@ -129,7 +156,36 @@ router.get('/list', canRead, async (_req: Request, res: Response) => {
   res.json(logs);
 });
 
-const BACKUP_FILE_NAME = /^detectkb-backup-[A-Za-z0-9_-]+\.json$/;
+// GET /api/backup/policy — how long automatic backups are kept, and how much there is
+router.get('/policy', canRead, async (_req: Request, res: Response) => {
+  const logs = await prisma.backupLog.findMany({ select: { sizeBytes: true, type: true } });
+  res.json({
+    keepDaily: KEEP_DAILY,
+    keepWeekly: KEEP_WEEKLY,
+    count: logs.length,
+    scheduled: logs.filter((l) => l.type === SCHEDULED).length,
+    totalBytes: logs.reduce((n, l) => n + l.sizeBytes, 0),
+  });
+});
+
+// DELETE /api/backup/older-than/:days — remove every backup older than that
+// (automatic or made by hand), always leaving the three newest. ?dryRun=1 only counts.
+router.delete('/older-than/:days', requirePermission('backups:delete'), async (req: Request, res: Response) => {
+  const days = Number(req.params.days);
+  if (!Number.isFinite(days) || days < 1) {
+    res.status(400).json({ error: 'days must be 1 or more' });
+    return;
+  }
+  const old = backupsOlderThan(await prisma.backupLog.findMany(), days);
+  const freedBytes = old.reduce((n, l) => n + l.sizeBytes, 0);
+  if (req.query.dryRun === '1') {
+    res.json({ count: old.length, freedBytes, deleted: false });
+    return;
+  }
+  await removeBackups(old);
+  await prisma.auditLog.create({ data: { userId: req.user?.userId ?? null, action: 'BACKUP_CLEANUP', resourceType: 'backup', newValue: { olderThanDays: days, deleted: old.length, freedBytes } } });
+  res.json({ count: old.length, freedBytes, deleted: true });
+});
 
 router.get('/download/:fileName', canRead, (req: Request, res: Response) => {
   // Only files this router wrote: BACKUP_DIR also holds other state (e.g. .secrets/)
