@@ -28,6 +28,8 @@ export interface RuleListQuery {
   review?: string;
   /** fed | blind | unknown: whether the rule's logs are collected (resolved to pageIds by the route) */
   logs?: string;
+  /** A field the detection reads ("ParentCommandLine"), or "missing": any field marked as missing (resolved by the route) */
+  field?: string;
   /** Pages the list is limited to (set by the route for filters computed outside SQL) */
   pageIds?: number[];
   sort: SortKey;
@@ -56,6 +58,7 @@ export function parseRuleListQuery(query: Record<string, unknown>): RuleListQuer
     owner: str(query.owner),
     review: str(query.review),
     logs: str(query.logs),
+    field: str(query.field),
     sort,
     dir,
     page,
@@ -82,6 +85,7 @@ export function ruleWhere(f: RuleListQuery, omit?: 'status'): Prisma.DetectionRu
   const review = f.review ? reviewWhere(f.review) : null;
   if (review) and.push(review);
   if (f.pageIds) and.push({ pageId: { in: f.pageIds } });
+  if (f.field && f.field !== 'missing') and.push({ page: { fields: { some: { field: f.field } } } });
   if (f.status && omit !== 'status') and.push({ status: { in: f.status.split(',') } });
   if (f.severity) and.push({ severity: { in: f.severity.split(',') } });
   if (f.source === 'manual') and.push({ sourceFormat: null });

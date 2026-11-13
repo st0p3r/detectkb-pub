@@ -11,7 +11,7 @@ import {
   sourceLabel,
   telemetrySource,
 } from '../lib/coverage-analysis';
-import { keyState, loadCollection, ruleFeed } from '../lib/collection';
+import { isFieldKey, keyState, loadCollection, ruleFeed } from '../lib/collection';
 import { REFERENCE_KINDS } from '../lib/references';
 import { computeReferenceMatches } from '../lib/references';
 
@@ -265,7 +265,7 @@ router.get('/impact', async (req, res) => {
   // what the organisation is missing today
   const collection = await loadCollection();
   if (req.query.collection === '1') {
-    for (const [key, collected] of collection) if (!collected) (key.includes(':') ? events : sources).push(key);
+    for (const [key, collected] of collection) if (!collected && !isFieldKey(key)) (key.includes(':') ? events : sources).push(key);
     if (!sources.length && !events.length) {
       res.json({ sources: [], events: [], labels: {}, rules: [], counts: { activeRules: rules.filter((r) => r.status !== 'deprecated').length, lost: 0, atRisk: 0, partial: 0 }, uncovered: [], reduced: [] });
       return;

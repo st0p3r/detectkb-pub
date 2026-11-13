@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, CircleOff, Loader2, X, Rows3, Rows4 } from 'lucide-react';
+import { Shield, PlusCircle, Search, FileUp, FileDown, ChevronDown, CircleOff, Loader2, AlertTriangle as FieldAlert, X, Rows3, Rows4 } from 'lucide-react';
 import {
   SOURCE_FORMAT_LABELS,
   apiErrorMessage,
@@ -107,6 +107,7 @@ export function RulesPage() {
   const owner = params.get('owner') ?? '';
   const review = params.get('review') ?? '';
   const logs = params.get('logs') ?? '';
+  const field = params.get('field') ?? '';
   const q = params.get('q') ?? '';
   const sortKey: RuleSortKey = SORT_KEYS.includes(params.get('sort') as RuleSortKey) ? (params.get('sort') as RuleSortKey) : 'updatedAt';
   const sortDir: 'asc' | 'desc' = params.get('dir') === 'asc' || params.get('dir') === 'desc' ? (params.get('dir') as 'asc' | 'desc') : sortKey === 'updatedAt' ? 'desc' : 'asc';
@@ -162,6 +163,7 @@ export function RulesPage() {
     owner: owner || undefined,
     review: review || undefined,
     logs: logs || undefined,
+    field: field || undefined,
     sort: sortKey,
     dir: sortDir,
     page,
@@ -175,7 +177,7 @@ export function RulesPage() {
   });
   const rules = data?.items ?? [];
   const total = data?.total ?? 0;
-  const filtersActive = !!(q || technique || tactic || story || telemetry || owner || review || logs) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
+  const filtersActive = !!(q || technique || tactic || story || telemetry || owner || review || logs || field) || [statusFilter, severityFilter, sourceFilter].some((f) => f !== 'all');
   // Names for the story / telemetry chips
   const { data: storyInfo } = useQuery({ queryKey: ['story', story], queryFn: () => getStory(story!), enabled: !!story, staleTime: 5 * 60 * 1000 });
 
@@ -192,6 +194,7 @@ export function RulesPage() {
     owner: query.owner,
     review: query.review,
     logs: query.logs,
+    field: query.field,
   };
   const { data: ownerOptions } = useQuery({ queryKey: ['rule-owners'], queryFn: listRuleOwners, staleTime: 60 * 1000 });
   const filterKey = JSON.stringify(listFilter);
@@ -537,7 +540,7 @@ export function RulesPage() {
       </div>
 
       {/* Filters that arrive from links elsewhere (technique, tactic, story, telemetry chips) */}
-      {(technique || tactic || story || telemetry || logs) && (
+      {(technique || tactic || story || telemetry || logs || field) && (
         <div className="flex flex-wrap items-center gap-2 mb-4 text-xs">
           <span className="text-muted-foreground">Filtered by</span>
           {[
@@ -546,6 +549,7 @@ export function RulesPage() {
             ['story', story ? storyInfo?.name ?? `#${story}` : '', 'Analytic story'],
             ['telemetry', telemetry, telemetry.includes(':') ? 'Log event' : 'Log source'],
             ['logs', logs ? LOGS_LABELS[logs] ?? logs : '', 'Logs'],
+            ['field', field === 'missing' ? 'any marked as missing' : field, 'Reads field'],
           ]
             .filter(([, v]) => v)
             .map(([key, value, label]) => (
@@ -705,6 +709,15 @@ export function RulesPage() {
                         >
                           {rule.page.title}
                         </Link>
+                        {rule.missingFields && (
+                          <button
+                            onClick={() => update({ field: 'missing' })}
+                            title={`Reads ${rule.missingFields.join(', ')}, marked as missing from your events: it may never match. Click for all such rules.`}
+                            className="flex-shrink-0 text-amber-500"
+                          >
+                            <FieldAlert className="w-3.5 h-3.5" aria-label="Reads a field marked as missing" />
+                          </button>
+                        )}
                         {rule.feed === 'blind' && (
                           <button onClick={() => update({ logs: 'blind' })} title="Its logs are not collected: this rule cannot fire. Click for all such rules." className="flex-shrink-0 text-red-500">
                             <CircleOff className="w-3.5 h-3.5" aria-label="Logs not collected" />

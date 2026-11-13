@@ -12,17 +12,21 @@ const OPTIONS: { state: CollectionState; label: string; value: boolean | null; o
   { state: 'unknown', label: 'Not decided', value: null, on: 'bg-muted text-foreground' },
 ];
 
+const FIELD_LABELS: Record<CollectionState, string> = { collected: 'We have it', 'not-collected': 'Missing', unknown: 'Not decided' };
+
 /**
  * Says whether a log source ("sysmon") or one event ("sysmon:10") is
  * collected. For an event, "as its source" removes its own answer.
  * People who can't edit rules see the answer only.
  */
 export function CollectionControl({ telemetryKey, compact, stopPropagation }: { telemetryKey: string; compact?: boolean; stopPropagation?: boolean }) {
+  // A field ("field:commandline") is there or missing; it has no source to follow
+  const isField = telemetryKey.startsWith('field:');
   const { hasPermission } = useAuth();
   const { toast } = useToast();
   const collection = useCollection();
   const invalidate = useInvalidateCollection();
-  const isEvent = telemetryKey.includes(':');
+  const isEvent = telemetryKey.includes(':') && !isField;
   const own = collection.own(telemetryKey);
   const applied = collection.stateOf(telemetryKey);
   const save = useMutation({
@@ -37,14 +41,14 @@ export function CollectionControl({ telemetryKey, compact, stopPropagation }: { 
     <div
       className={cn('inline-flex rounded-md border border-border overflow-hidden', save.isPending && 'opacity-60')}
       role="group"
-      aria-label="Is this collected?"
+      aria-label={isField ? 'Is this field in your events?' : 'Is this collected?'}
       onClick={stopPropagation ? (e) => e.stopPropagation() : undefined}
     >
       {OPTIONS.map((o) => {
         // An event without its own answer shows its source's, dimmed
         const active = own === o.state;
         const inherited = isEvent && own === 'unknown' && o.state !== 'unknown' && applied === o.state;
-        const label = o.state === 'unknown' && isEvent ? 'As its source' : o.label;
+        const label = o.state === 'unknown' && isEvent ? 'As its source' : isField ? FIELD_LABELS[o.state] : o.label;
         return (
           <button
             key={o.state}

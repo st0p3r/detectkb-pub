@@ -173,7 +173,7 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
         // A name under the tile while there is room for names
         if (alwaysLabel && !dimmed) {
           const fontSize = 10.5 / scale;
-          ctx.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
+          ctx.font = `500 ${fontSize}px "Inter Variable", Inter, "Vazirmatn Variable", system-ui, sans-serif`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'top';
           ctx.fillStyle = fg;
@@ -222,13 +222,13 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
       const textWidth = CARD_W - 58 - (hasBadge ? 28 : 0);
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
-      ctx.font = '600 11px Inter, system-ui, sans-serif';
+      ctx.font = '600 11px "Inter Variable", Inter, "Vazirmatn Variable", system-ui, sans-serif';
       const lines = wrapText(ctx, title, textWidth, 2);
       const blockTop = y - (lines.length * 13 + 13) / 2 - (cluster ? 3 : 0);
       ctx.fillStyle = fg;
       lines.forEach((line, i) => ctx.fillText(line, textLeft, blockTop + 10 + i * 13));
       const subBase = blockTop + lines.length * 13 + 10;
-      ctx.font = '10px Inter, system-ui, sans-serif';
+      ctx.font = '10px "Inter Variable", Inter, "Vazirmatn Variable", system-ui, sans-serif';
       let subLeft = textLeft;
       const status = (node as GraphNode).status;
       if (status) {
@@ -263,7 +263,7 @@ export function ForceCanvas({ nodes, edges, selectedId, expandedIds, alwaysLabel
       // Connection count: filled once the node's neighbours are loaded
       if (hasBadge) {
         const label = node.degree > 999 ? '999+' : String(node.degree);
-        ctx.font = '600 9px Inter, system-ui, sans-serif';
+        ctx.font = '600 9px "Inter Variable", Inter, "Vazirmatn Variable", system-ui, sans-serif';
         const bw = Math.max(20, ctx.measureText(label).width + 10);
         const bx = left + CARD_W - bw - 8;
         const by = top + 8;

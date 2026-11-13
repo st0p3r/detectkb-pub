@@ -3,7 +3,7 @@ import { prisma } from '../lib/prisma';
 import { ownerField, reviewDateField, sigmaFields, text } from '../lib/rule-fields';
 import { syncDerivedLinks } from '../lib/derived-links';
 import { replaceRetiredTechniques } from '../lib/attack';
-import { loadRuleFeeds } from '../lib/collection';
+import { loadMissingFields, loadRuleFeeds } from '../lib/collection';
 import { loadRuleTelemetry } from '../lib/coverage-analysis';
 import { buildRunbook } from '../lib/runbook-data';
 import { nextReviewDate } from '../lib/runbook';
@@ -29,6 +29,10 @@ async function listQuery(req: Request, raw: Record<string, unknown> = req.query)
   if (f.logs === 'fed' || f.logs === 'blind' || f.logs === 'unknown') {
     const [feeds, rules] = await Promise.all([loadRuleFeeds(), loadRuleTelemetry()]);
     f.pageIds = rules.filter((r) => feeds.feed(r.pageId) === f.logs).map((r) => r.pageId);
+  }
+  if (f.field === 'missing') {
+    const missing = new Set((await loadMissingFields()).keys());
+    f.pageIds = f.pageIds ? f.pageIds.filter((id) => missing.has(id)) : Array.from(missing);
   }
   return f;
 }
@@ -97,6 +101,9 @@ router.get('/', async (req, res) => {
   // Whether each rule's logs are collected, once someone filled that in
   const feeds = await loadRuleFeeds();
   if (feeds.active) items = items.map((i) => ({ ...i, feed: feeds.feed(i.pageId) }));
+  // Fields the rule reads that are marked as missing from the events
+  const missingFields = await loadMissingFields();
+  if (missingFields.size) items = items.map((i) => (missingFields.has(i.pageId) ? { ...i, missingFields: missingFields.get(i.pageId) } : i));
 
   res.json({
     items,

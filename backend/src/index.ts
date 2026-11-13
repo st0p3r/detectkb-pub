@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import cors from 'cors';
 import fs from 'fs';
 import { BACKUP_DIR, CORS_ORIGIN, PORT } from './lib/config';
+import { prisma } from './lib/prisma';
 import healthRouter from './routes/health';
 import pagesRouter from './routes/pages';
 import categoriesRouter from './routes/categories';
@@ -162,9 +163,33 @@ seedDatabase()
   .then(() => fillFalsePositivesFromSource())
   .then(() => syncAllDerivedLinks())
   .then(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`DetectKB backend running on http://localhost:${PORT}`);
     });
+    // docker stop / restart: finish the requests in flight, close the database
+    // connections, then exit — instead of cutting saves and imports off mid-way
+    let stopping = false;
+    const shutdown = (signal: string) => {
+      if (stopping) return;
+      stopping = true;
+      console.log(`${signal} received: finishing open requests…`);
+      // Anything still open after this is abandoned (Docker kills at 10 s by default)
+      const force = setTimeout(() => {
+        console.warn('Shutdown timed out, exiting with requests still open');
+        process.exit(1);
+      }, 8000);
+      force.unref();
+      server.close(() => {
+        prisma
+          .$disconnect()
+          .catch(() => {})
+          .finally(() => process.exit(0));
+      });
+      // Idle keep-alive connections would hold close() open until they time out
+      server.closeIdleConnections();
+    };
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
     // Background: download LOLBAS / GTFOBins / LOLDrivers on first start
     fetchMissingReferenceData();
     // The coverage trend: today's numbers shortly after start, then refreshed

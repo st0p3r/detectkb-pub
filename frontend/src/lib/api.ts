@@ -131,6 +131,8 @@ export const QUERY_LANGUAGE_LABELS: Record<string, string> = {
 export interface RuleWithPage extends DetectionRuleData {
   /** Whether its logs are collected (the paged list, once collection is filled in) */
   feed?: RuleFeed;
+  /** Fields it reads that are marked as missing from the events */
+  missingFields?: string[];
   page: { id: number; title: string; slug: string; type: string; updatedAt: string; tags: { tag: { id: number; name: string } }[] };
 }
 
@@ -154,6 +156,13 @@ export interface Page {
   logEvents?: { basis: LinkBasis; logEvent: { key: string; source: string; sourceLabel: string; code: string; name: string } }[];
   /** Splunk analytic stories (ESCU rules) */
   stories?: { story: { id: number; name: string } }[];
+  /** Fields the rule's detection reads (from its Sigma detection, SPL or native query) */
+  fields?: RuleFieldRef[];
+}
+
+export interface RuleFieldRef {
+  field: string;
+  source: 'sigma' | 'spl' | 'native';
 }
 
 /** Why a link exists — see LINK_BASIS in components/ui/BasisBadge */
@@ -430,6 +439,8 @@ export interface RuleListParams {
   review?: string;
   /** fed | blind | unknown: whether the rule's logs are collected */
   logs?: string;
+  /** A field the detection reads, or "missing" for rules reading a field marked as missing */
+  field?: string;
   sort?: RuleSortKey;
   dir?: 'asc' | 'desc';
   page: number;
@@ -539,6 +550,8 @@ export interface Runbook {
     mitigations: { id: string; name: string; description: string; url: string }[];
   }[];
   logs: { known: boolean; feed: RuleFeed; telemetry: { key: string; label: string; state: CollectionState }[] };
+  /** Fields the detection reads; "not-collected": marked as missing from the events */
+  fields: (RuleFieldRef & { state: CollectionState })[];
   validation: { status: ValidationStatus; reason: string | null; testedAt: string | null };
   relatedTotal: number;
   related: { pageId: number; title: string; slug: string; status: string; severity: string }[];
@@ -1583,6 +1596,25 @@ export async function getRuleCollection(pageId: number) {
   const { data } = await api.get(`/api/log-sources/collection/rule/${pageId}`);
   return data as RuleCollection;
 }
+
+export interface FieldUsage {
+  field: string;
+  /** Rules (not deprecated) whose detection reads it */
+  rules: number;
+  deployedRules: number;
+  sources: RuleFieldRef['source'][];
+  /** collected: you have it · not-collected: missing from your events · unknown: not decided */
+  state: CollectionState;
+}
+
+/** The fields rules read, most used first. */
+export async function listRuleFields(q?: string) {
+  const { data } = await api.get('/api/log-sources/fields', { params: { q: q || undefined } });
+  return data as { total: number; missing: number; fields: FieldUsage[] };
+}
+
+/** The key a field's availability is stored under with the collection answers. */
+export const fieldKey = (field: string) => `field:${field.toLowerCase()}`;
 
 export async function getPageLogEvents(pageId: number) {
   const { data } = await api.get(`/api/log-sources/page/${pageId}`);

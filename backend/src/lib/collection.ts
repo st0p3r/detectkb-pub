@@ -32,7 +32,7 @@ export function keyState(map: CollectionMap, key: string): CollectionState {
 type FeedRule = Pick<RuleTelemetry, 'telemetry' | 'groups' | 'dataSource' | 'sourceFormat'>;
 
 export function ruleFeed(rule: FeedRule, map: CollectionMap): RuleFeed {
-  if (!map.size) return 'unknown';
+  if (!collectionActive(map)) return 'unknown';
   const alts = alternatives(rule);
   if (!alts.length) return 'unknown';
   if (alts.some((a) => a.every((k) => keyState(map, k) === 'collected'))) return 'fed';
@@ -46,6 +46,9 @@ export function missingKeys(rule: Pick<RuleTelemetry, 'telemetry'>, map: Collect
   return rule.telemetry.filter((k) => keyState(map, k) === 'not-collected');
 }
 
+/** Whether anyone said which logs are collected (field answers share the table but say nothing about that). */
+export const collectionActive = (map: CollectionMap) => Array.from(map.keys()).some((k) => !isFieldKey(k));
+
 const collectionCache = kbCache(async (): Promise<Map<string, boolean>> => {
   const rows = await prisma.telemetryCollection.findMany({ select: { key: true, collected: true } });
   return new Map(rows.map((r) => [r.key, r.collected]));
@@ -58,7 +61,7 @@ export function loadCollection(): Promise<CollectionMap> {
 /** pageId → feed, for every rule (all "unknown" while nothing is marked). */
 export async function loadRuleFeeds(): Promise<{ active: boolean; feed: (pageId: number) => RuleFeed; map: CollectionMap }> {
   const [map, rules] = await Promise.all([loadCollection(), loadRuleTelemetry()]);
-  if (!map.size) return { active: false, feed: () => 'unknown', map };
+  if (!collectionActive(map)) return { active: false, feed: () => 'unknown', map };
   const byPage = new Map(rules.map((r) => [r.pageId, ruleFeed(r, map)]));
   return { active: true, feed: (pageId) => byPage.get(pageId) ?? 'unknown', map };
 }
@@ -153,3 +156,28 @@ export function feedSummary(rules: RuleTelemetry[], map: CollectionMap) {
 }
 
 export const techniqueName = (id: string) => TECHNIQUE_BY_ID.get(id)?.name ?? id;
+
+// ── Fields ──────────────────────────────────────────────────────────────────
+// A field can be marked as missing from the organisation's events (key
+// "field:<name>", lower-cased). Which of a rule's fields are essential can't be
+// told from its text, so a missing field is a warning on the rule — it doesn't
+// take the rule out of coverage the way missing logs do.
+
+export const isFieldKey = (key: string) => key.startsWith('field:');
+
+export function fieldState(map: CollectionMap, field: string): CollectionState {
+  const answer = map.get(`field:${field.toLowerCase()}`);
+  return answer === undefined ? 'unknown' : answer ? 'collected' : 'not-collected';
+}
+
+/** pageId → the fields that rule reads which are marked as missing. */
+export async function loadMissingFields(): Promise<Map<number, string[]>> {
+  const map = await loadCollection();
+  const missing = Array.from(map).filter(([key, ok]) => isFieldKey(key) && !ok).map(([key]) => key.slice('field:'.length));
+  const out = new Map<number, string[]>();
+  if (!missing.length) return out;
+  // MySQL's default collation compares field names case-insensitively
+  const rows = await prisma.ruleField.findMany({ where: { field: { in: missing } }, select: { pageId: true, field: true } });
+  for (const r of rows) out.set(r.pageId, [...(out.get(r.pageId) ?? []), r.field]);
+  return out;
+}

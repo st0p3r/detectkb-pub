@@ -26,4 +26,10 @@ The Word file uses Tahoma for Persian text, so it looks right on Windows. On Lin
 KB_URL=http://localhost:5173 KB_USER=admin KB_PASSWORD=... npm run screenshots
 ```
 
-The images in `img/` are cropped JPEG versions of these, named the same, with their pixel sizes listed in `img/sizes.json`. Crop a new screenshot the same way, then update `sizes.json` and rebuild.
+`scripts/capture-new.cjs` takes the screenshots of the features added later (`81-…` to `100-…`). It crops them to the page area and writes the JPEGs and their sizes straight into `img/`:
+
+```bash
+KB_URL=http://localhost:5173 KB_USER=admin KB_PASSWORD=... node scripts/capture-new.cjs
+```
+
+For the first set: the images in `img/` are cropped JPEG versions of these, named the same, with their pixel sizes listed in `img/sizes.json`. Crop a new screenshot the same way, then update `sizes.json` and rebuild.

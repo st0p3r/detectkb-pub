@@ -110,6 +110,7 @@ model Page {
   inLinks      PageLink[]        @relation("target")
   revisions    Revision[]
   slugAliases  PageSlugAlias[]
+  fields       RuleField[]
   rule         DetectionRule?
   splCommand   SplCommand?
   sysmonEvents PageSysmonEvent[]
@@ -572,4 +573,19 @@ model CoverageSnapshot {
   day       DateTime @id @db.Date
   data      Json
   createdAt DateTime @default(now())
+}
+
+// The fields a rule's detection reads (lib/query-fields.ts), derived from its
+// Sigma detection, SPL and native query whenever the rule is saved. Whether a
+// field exists in the organisation's events is stored with the collection
+// answers (TelemetryCollection, key "field:<name>").
+model RuleField {
+  pageId Int
+  field  String @db.VarChar(120)
+  // sigma | spl | native
+  source String @db.VarChar(10)
+  page   Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@id([pageId, field])
+  @@index([field])
 }

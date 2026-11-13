@@ -5,7 +5,7 @@ import { kbCache, kbCacheMap } from '../lib/kb-cache';
 import { requirePermission } from '../middleware/auth';
 import { createDataSourcePages, planDataSourcePages } from '../lib/data-source-pages';
 import { loadRuleTelemetry, loadTelemetryInfo, sourceLabel } from '../lib/coverage-analysis';
-import { feedSummary, keyState, loadCollection, missingKeys, opportunities, ruleFeed, techniqueName } from '../lib/collection';
+import { collectionActive, feedSummary, fieldState, isFieldKey, keyState, loadCollection, missingKeys, opportunities, ruleFeed, techniqueName } from '../lib/collection';
 
 // Telemetry other than Sysmon for Windows: log sources, their events, and the
 // rules / data source pages that depend on each (links are derived from the
@@ -116,7 +116,7 @@ router.get('/collection', async (_req, res) => {
     loadRuleTelemetry(),
     loadCollection(),
   ]);
-  res.json({ active: entries.length > 0, entries, rules: feedSummary(rules, map) });
+  res.json({ active: collectionActive(map), entries, rules: feedSummary(rules, map) });
 });
 
 const COLLECTION_KEY = /^[a-z0-9][a-z0-9_.-]*(:[^\s]{1,150})?$/i;
@@ -125,6 +125,8 @@ const COLLECTION_KEY = /^[a-z0-9][a-z0-9_.-]*(:[^\s]{1,150})?$/i;
 // — null removes the answer (back to "not decided")
 router.put('/collection', requirePermission('rules:update'), async (req, res) => {
   const items: unknown[] = Array.isArray(req.body?.items) ? req.body.items : [];
+  // Field answers are stored lower-cased ("field:parentcommandline")
+  for (const i of items as { key?: unknown }[]) if (i && typeof i.key === 'string' && isFieldKey(i.key)) i.key = i.key.toLowerCase();
   const valid = items.filter(
     (i): i is { key: string; collected: boolean | null; note?: string } =>
       !!i && typeof (i as { key?: unknown }).key === 'string' && COLLECTION_KEY.test((i as { key: string }).key) && [true, false, null].includes((i as { collected: boolean | null }).collected)
@@ -158,7 +160,7 @@ router.get('/collection/opportunities', async (_req, res) => {
   const { ready, sources } = opportunities(rules, map);
   const named = (ids: string[]) => ids.map((id) => ({ id, name: techniqueName(id) }));
   res.json({
-    active: map.size > 0,
+    active: collectionActive(map),
     readyTotal: ready.length,
     readyFillingGaps: ready.filter((r) => r.fills.length).length,
     ready: ready.slice(0, 200).map((r) => ({ ...r, fills: named(r.fills) })),
@@ -176,10 +178,41 @@ router.get('/collection/rule/:pageId', async (req, res) => {
     return;
   }
   res.json({
-    active: map.size > 0,
+    active: collectionActive(map),
     feed: ruleFeed(rule, map),
     telemetry: rule.telemetry.map((key) => ({ key, label: info.get(key)?.label ?? key, state: keyState(map, key) })),
     missing: missingKeys(rule, map).map((key) => info.get(key)?.label ?? key),
+  });
+});
+
+// GET /api/log-sources/fields?q= — the fields rules read, with how many rules
+// read each and whether it is marked as missing from your events
+router.get('/fields', async (req, res) => {
+  const q = String(req.query.q ?? '').trim().toLowerCase();
+  const [rows, map] = await Promise.all([
+    prisma.ruleField.findMany({ select: { field: true, source: true, page: { select: { rule: { select: { status: true } } } } } }),
+    loadCollection(),
+  ]);
+  const by = new Map<string, { field: string; rules: number; deployedRules: number; sources: Set<string> }>();
+  for (const r of rows) {
+    const status = r.page.rule?.status;
+    if (!status || status === 'deprecated') continue;
+    const key = r.field.toLowerCase();
+    // The most common spelling names the field
+    const entry = by.get(key) ?? { field: r.field, rules: 0, deployedRules: 0, sources: new Set<string>() };
+    entry.rules++;
+    if (status === 'production' || status === 'testing') entry.deployedRules++;
+    entry.sources.add(r.source);
+    by.set(key, entry);
+  }
+  const fields = Array.from(by.values())
+    .filter((f) => !q || f.field.toLowerCase().includes(q))
+    .sort((a, b) => b.rules - a.rules || a.field.localeCompare(b.field))
+    .map((f) => ({ ...f, sources: Array.from(f.sources).sort(), state: fieldState(map, f.field) }));
+  res.json({
+    total: by.size,
+    missing: Array.from(by.values()).filter((f) => fieldState(map, f.field) === 'not-collected').length,
+    fields: fields.slice(0, 500),
   });
 });
 
