@@ -7,7 +7,7 @@ import { queryText } from './rule-text';
 import { VALIDATION_MAX_AGE_DAYS, loadValidation } from './validation';
 import { LIKELY_OVERLAP, loadSimilarGroups } from './similar-rules';
 import { planDataSourcePages } from './data-source-pages';
-import { loadRuleFeeds } from './collection';
+import { loadMissingFields, loadRuleFeeds } from './collection';
 
 export { queryText };
 
@@ -90,6 +90,7 @@ async function computeHealth() {
   ]);
   const validation = await loadValidation();
   const feeds = await loadRuleFeeds();
+  const missingFields = await loadMissingFields();
   const now = new Date();
   const day = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -142,6 +143,7 @@ async function computeHealth() {
       (buckets['production-no-fp'] ??= []).push({ title: r.page.title, slug: r.page.slug, detail: r.sourceFormat ?? 'written here', ruleId: r.id });
     }
     if ((r.status === 'production' || r.status === 'testing') && feeds.feed(r.pageId) === 'blind') add('deployed-no-logs', r, r.status);
+    if ((r.status === 'production' || r.status === 'testing') && missingFields.has(r.pageId)) add('deployed-missing-fields', r, missingFields.get(r.pageId)!.join(', '));
     if (r.status === 'production' && !r.ownerId) add('production-no-owner', r);
     if (r.status !== 'deprecated' && r.nextReviewAt && r.nextReviewAt < now) add('review-overdue', r, `due ${day(r.nextReviewAt)}`);
     if (r.status !== 'deprecated') {
@@ -167,6 +169,7 @@ async function computeHealth() {
     check('unknown-technique', 'error', 'Unknown ATT&CK IDs', 'Rules mapped to technique IDs that do not exist in ATT&CK (typos, or deprecated without a replacement). They count toward no technique.'),
     check('no-telemetry', 'warning', 'Rules without any telemetry link', 'No Sysmon or log event could be linked, so impact analysis, flows and the detection chain leave them out. Name the telemetry in the rule\'s Data source field.'),
     check('deployed-no-logs', 'warning', 'Deployed rules whose logs are not collected', 'Production or testing rules that read only telemetry marked "not collected" on the Log Sources page: they cannot fire, and coverage leaves them out.', '/rules?logs=blind'),
+    check('deployed-missing-fields', 'warning', 'Deployed rules reading fields you do not have', 'Production or testing rules whose query filters on a field marked as missing on the Log Sources page. If the rule needs that field, it never matches.', '/rules?field=missing'),
     check('validation-failed', 'warning', 'Rules that did not fire in the lab', 'The latest lab test of these rules did not detect the attack: the rule, its telemetry or the lab needs a look.', '/atomic-tests'),
     check('tool-outside-query', 'warning', 'Tool matches outside the query', 'An attacker tool is named in the rule\'s title or description but not in its query or detection — the rule may not actually detect it.'),
     check('no-technique', 'warning', 'Rules without an ATT&CK technique', 'They are missing from the coverage matrix, threat group coverage and the detection chain.'),

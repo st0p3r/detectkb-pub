@@ -300,6 +300,30 @@ export function RunbookPage() {
           </Section>
         )}
 
+        {rb.fields.length > 0 && (
+          <Section icon={ScrollText} title="Fields it filters on" hint="what to look at in the event">
+            <div className="flex flex-wrap gap-1.5">
+              {rb.fields.map((f) => (
+                <span
+                  key={f.field}
+                  title={f.state === 'not-collected' ? 'Marked as missing from your events' : undefined}
+                  className={cn(
+                    'px-1.5 py-0.5 rounded border font-mono text-xs',
+                    f.state === 'not-collected' ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300' : 'border-border'
+                  )}
+                >
+                  {f.field}
+                </span>
+              ))}
+            </div>
+            {rb.fields.some((f) => f.state === 'not-collected') && (
+              <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                The fields in red are marked as missing from your events: if the rule needs them, it cannot match.
+              </p>
+            )}
+          </Section>
+        )}
+
         {rb.techniques.length > 0 && (
           <Section icon={Target} title="The technique behind it">
             <Techniques runbook={rb} />

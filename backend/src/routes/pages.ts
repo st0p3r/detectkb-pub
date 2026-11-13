@@ -21,6 +21,8 @@ const PAGE_INCLUDE = {
     orderBy: { logEvent: { key: 'asc' as const } },
   },
   stories: { select: { story: { select: { id: true, name: true } } }, orderBy: { story: { name: 'asc' as const } } },
+  // The fields the rule's detection reads (lib/query-fields)
+  fields: { select: { field: true, source: true }, orderBy: { field: 'asc' as const } },
 };
 
 // What page lists show: no markdown, queries or imported source files (those

@@ -66,6 +66,8 @@ router.get('/', async (req, res) => {
         // The telemetry it reads, as linked by DetectKB: "4688", "process access", "cloudtrail"
         { page: { logEvents: { some: { logEvent: { OR: [{ code: { contains: t } }, { name: { contains: t } }, { sourceLabel: { contains: t } }] } } } } },
         { page: { sysmonEvents: { some: { sysmonEvent: /^\d+$/.test(t) ? { eventId: Number(t) } : { name: { contains: t } } } } } },
+        // The fields its detection reads: "parentcommandline", "grantedaccess"
+        { page: { fields: { some: { field: { contains: t } } } } },
       ]);
     }),
   };
@@ -120,6 +122,7 @@ router.get('/', async (req, res) => {
                 tags: { select: { tag: { select: { name: true } } } },
                 logEvents: { select: { logEvent: { select: { sourceLabel: true, code: true, name: true } } } },
                 sysmonEvents: { select: { sysmonEvent: { select: { eventId: true, name: true } } } },
+                fields: { select: { field: true } },
               },
             },
           },
@@ -170,6 +173,7 @@ router.get('/', async (req, res) => {
           weight: 5,
         },
         { label: 'Tactic', text: r.mitreTactics, weight: 5 },
+        { label: 'Field', text: r.page.fields.map((f) => f.field).join(', '), weight: 5 },
         { label: 'SPL query', text: r.splQuery, weight: 4 },
         { label: 'Query', text: r.nativeQuery, weight: 4 },
         { label: 'False positives', text: r.falsePositives, weight: 3 },

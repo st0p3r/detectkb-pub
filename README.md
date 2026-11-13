@@ -21,6 +21,10 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
   Rules whose logs never arrive cannot fire, so coverage, the watchlist gaps and the health checks
   leave them out; DetectKB lists the draft rules you could turn on today and the sources worth
   collecting next, and Impact shows everything you miss today
+- **Fields your rules need**: the fields each rule's detection filters on (`ParentCommandLine`,
+  `process.name`, …), read from its Sigma detection, SPL and KQL / EQL. Mark the ones missing from
+  your events (Log Sources → Fields) and the rules reading them are flagged in the rule list, on
+  their runbook and in Data Health — the usual reason a deployed rule stays silent
 - **Technique details from MITRE**: each technique's description, platforms and detection strategy
   — the analytics per platform, the log sources each reads and what to tune
 - **Alert runbook** for every rule: what the alert means, what to check first, what is usually
@@ -65,6 +69,8 @@ A step-by-step user manual (in Persian, with screenshots) is in [`docs/user-manu
 - JSON backup and restore; a backup is made every day and old automatic ones are thinned out
   (`BACKUP_KEEP_DAILY`, `BACKUP_KEEP_WEEKLY`), so they don't fill the disk
 - Dark mode, keyboard shortcuts, collapsible sidebar
+- Works on an isolated network: fonts and ATT&CK data ship with the app, nothing is loaded from
+  third-party sites
 
 ## Installation (recommended)
 

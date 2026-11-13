@@ -25,6 +25,8 @@ export function useCollection() {
         return mine !== 'unknown' || !key.includes(':') ? mine : own(key.slice(0, key.indexOf(':')));
       },
       note: (key: string) => map.get(key)?.note ?? null,
+      /** Whether a field the rules read is in the events ("not-collected": marked as missing) */
+      fieldState: (field: string): CollectionState => own(`field:${field.toLowerCase()}`),
     };
   }, [data]);
 }
@@ -33,7 +35,7 @@ export function useCollection() {
 export function useInvalidateCollection() {
   const qc = useQueryClient();
   return () => {
-    for (const key of ['collection', 'collection-opportunities', 'rule-collection', 'attack-coverage', 'attack-technique-rules', 'rules', 'dashboard', 'impact', 'watchlist', 'data-health', 'runbook'])
+    for (const key of ['collection', 'collection-opportunities', 'rule-collection', 'attack-coverage', 'attack-technique-rules', 'rules', 'dashboard', 'impact', 'watchlist', 'data-health', 'runbook', 'rule-fields', 'page'])
       void qc.invalidateQueries({ queryKey: [key] });
   };
 }

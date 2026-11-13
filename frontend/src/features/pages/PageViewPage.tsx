@@ -6,6 +6,7 @@ import { CalendarCheck, ClipboardList, History, Pencil, Trash2, Copy, Check, Lin
 import { getPage, deletePage, updatePage, getBacklinks, updateSplCommand, exportPageAsPDF, downloadGeneratedDoc, downloadSigmaRule, apiErrorMessage, getPageReferences, getRuleCollection, markRuleReviewed, type Page } from '@/lib/api';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FeedBadge } from '@/features/collection/CollectionBadge';
+import { useCollection } from '@/features/collection/useCollection';
 import { RuleQueryTabs } from '@/features/rules/RuleQueryTabs';
 import { useAuth } from '@/features/auth/AuthContext';
 import { useToast } from '@/hooks/useToast';
@@ -112,7 +113,42 @@ function RuleFeedBadge({ pageId }: { pageId: number }) {
   );
 }
 
-function RulePanel({ rule, slug, onChanged }: { rule: NonNullable<Page['rule']>; slug: string; onChanged: () => void }) {
+/** The fields the rule's detection reads; the ones marked as missing from the events stand out. */
+function RuleFields({ fields }: { fields: NonNullable<Page['fields']> }) {
+  const collection = useCollection();
+  if (!fields.length) return null;
+  const missing = fields.filter((f) => collection.fieldState(f.field) === 'not-collected');
+  return (
+    <div className="px-6 py-3 border-b border-border/60 flex flex-wrap items-center gap-1.5 text-xs">
+      <span className="text-muted-foreground mr-1" title="Read from the rule's Sigma detection, SPL and native query">
+        Fields it reads:
+      </span>
+      {fields.map((f) => {
+        const gone = collection.fieldState(f.field) === 'not-collected';
+        return (
+          <Link
+            key={f.field}
+            to={`/rules?field=${encodeURIComponent(f.field)}`}
+            title={gone ? 'Marked as missing from your events — other rules reading it' : 'Other rules reading this field'}
+            className={cn(
+              'px-1.5 py-0.5 rounded border font-mono hover:ring-1 hover:ring-primary/40',
+              gone ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300' : 'border-border bg-background'
+            )}
+          >
+            {f.field}
+          </Link>
+        );
+      })}
+      {missing.length > 0 && (
+        <Link to="/log-sources?tab=fields" className="ml-1 text-red-600 dark:text-red-400 hover:underline">
+          {missing.length} marked as missing: this rule may never match
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function RulePanel({ rule, slug, fields, onChanged }: { rule: NonNullable<Page['rule']>; slug: string; fields: NonNullable<Page['fields']>; onChanged: () => void }) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
   function toggleSection(key: string) {
@@ -139,6 +175,7 @@ function RulePanel({ rule, slug, onChanged }: { rule: NonNullable<Page['rule']>;
       </div>
 
       <RuleQueryTabs rule={rule} slug={slug} />
+      <RuleFields fields={fields} />
 
       {(tactics.length > 0 || techniques.length > 0) && (
         <div className="px-6 py-4 border-b border-border/60 space-y-2">
@@ -741,7 +778,7 @@ export function PageViewPage() {
 
         {/* Detection Rule structured panel */}
         {page.type === 'RULE' && page.rule && (
-          <RulePanel rule={page.rule} slug={page.slug} onChanged={() => getPage(page.slug).then(setPage).catch(() => {})} />
+          <RulePanel rule={page.rule} slug={page.slug} fields={page.fields ?? []} onChanged={() => getPage(page.slug).then(setPage).catch(() => {})} />
         )}
 
         <SysmonLinksBar links={page.sysmonEvents ?? []} />

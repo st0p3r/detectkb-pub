@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { CollectionControl } from '@/features/collection/CollectionControl';
 import { CollectionSummary } from '@/features/collection/CollectionSummary';
 import { useCollection } from '@/features/collection/useCollection';
+import { FieldsPanel } from '@/features/collection/FieldsPanel';
 
 const STATE_DOT = { collected: 'bg-emerald-500', 'not-collected': 'bg-red-500', unknown: 'bg-muted-foreground/30' } as const;
 const STATE_LABEL = { collected: 'Collected', 'not-collected': 'Not collected', unknown: 'Not decided' } as const;
@@ -90,6 +91,8 @@ export function LogSourcesPage() {
   const [params, setParams] = useSearchParams();
   const focusEvent = params.get('event');
   const selected = params.get('source') ?? (focusEvent ? focusEvent.slice(0, focusEvent.indexOf(':')) : null);
+  // The second tab: the fields rules filter on
+  const tab = params.get('tab') === 'fields' ? 'fields' : 'sources';
   const { data: sources = [], isLoading } = useQuery({ queryKey: ['log-sources'], queryFn: listLogSources });
   const current = selected ?? sources.find((s) => s.key !== 'sysmon')?.key ?? null;
   const { data: events = [], isLoading: eventsLoading } = useQuery({
@@ -127,7 +130,29 @@ export function LogSourcesPage() {
         <span className="ml-auto px-3 py-1 rounded-full bg-muted text-sm font-medium">{withRules} sources in use</span>
       </div>
 
-      {isLoading ? (
+      <div className="flex rounded-lg border border-border bg-card p-0.5 mb-4 w-fit" role="tablist">
+        {(
+          [
+            ['sources', 'Log sources', 'Which logs your rules read, and which you collect'],
+            ['fields', 'Fields', 'Which fields your rules filter on, and which are in your events'],
+          ] as const
+        ).map(([id, label, hint]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            title={hint}
+            onClick={() => setParams(id === 'fields' ? { tab: 'fields' } : {})}
+            className={cn('px-3 py-1.5 rounded-md text-sm transition-colors', tab === id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'fields' ? (
+        <FieldsPanel />
+      ) : isLoading ? (
         <p className="flex items-center gap-2 text-muted-foreground py-16 justify-center">
           <Loader2 className="w-5 h-5 animate-spin" /> Loading…
         </p>

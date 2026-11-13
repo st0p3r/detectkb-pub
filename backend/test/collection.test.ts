@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedSummary, keyState, missingKeys, opportunities, ruleFeed } from '../src/lib/collection';
+import { collectionActive, feedSummary, fieldState, keyState, missingKeys, opportunities, ruleFeed } from '../src/lib/collection';
 import type { RuleTelemetry } from '../src/lib/coverage-analysis';
 
 const rule = (o: Partial<RuleTelemetry> & { pageId: number }): RuleTelemetry => ({
@@ -54,6 +54,15 @@ describe('what is collected', () => {
     expect(ruleFeed(rule({ pageId: 4, telemetry: ['windows-security:4688', 'auditd:execve'] }), map)).toBe('unknown');
     // Names a data source DetectKB can't map
     expect(ruleFeed(rule({ pageId: 5, sourceFormat: null, dataSource: 'Winlogbeat', telemetry: ['windows-security:4688'] }), map)).toBe('unknown');
+  });
+
+  it('field answers alone say nothing about which logs arrive', () => {
+    const map = new Map([['field:parentcommandline', false]]);
+    expect(collectionActive(map)).toBe(false);
+    expect(ruleFeed(rule({ pageId: 1, telemetry: ['sysmon:1'] }), map)).toBe('unknown');
+    expect(fieldState(map, 'ParentCommandLine')).toBe('not-collected');
+    expect(fieldState(map, 'Image')).toBe('unknown');
+    expect(collectionActive(new Map([...map, ['sysmon', true]]))).toBe(true);
   });
 
   it('counts rules by feed, ignoring deprecated ones', () => {

@@ -3,7 +3,7 @@ import { TACTICS, TECHNIQUE_BY_ID, parentTechniqueId, parseTechniqueIds, resolve
 import { MITIGATIONS_BY_TECHNIQUE, attackObjectUrl } from './attack-cti';
 import { TECHNIQUE_DETAILS } from './attack-details';
 import { loadRuleTelemetry, loadTelemetryInfo } from './coverage-analysis';
-import { keyState, loadCollection, ruleFeed } from './collection';
+import { collectionActive, fieldState, keyState, loadCollection, ruleFeed } from './collection';
 import { loadValidation } from './validation';
 import { importedGuide, overview } from './runbook';
 
@@ -22,7 +22,17 @@ export async function buildRunbook(pageId: number) {
     where: { pageId },
     include: {
       owner: { select: { id: true, username: true } },
-      page: { select: { id: true, title: true, slug: true, contentMd: true, updatedAt: true, tags: { select: { tag: { select: { name: true, color: true } } } } } },
+      page: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          contentMd: true,
+          updatedAt: true,
+          tags: { select: { tag: { select: { name: true, color: true } } } },
+          fields: { select: { field: true, source: true }, orderBy: { field: 'asc' } },
+        },
+      },
     },
   });
   if (!rule) return null;
@@ -80,10 +90,12 @@ export async function buildRunbook(pageId: number) {
     techniques,
     logs: {
       /** Whether anyone said which logs are collected */
-      known: collection.size > 0,
+      known: collectionActive(collection),
       feed: telemetry ? ruleFeed(telemetry, collection) : 'unknown',
       telemetry: (telemetry?.telemetry ?? []).map((key) => ({ key, label: info.get(key)?.label ?? key, state: keyState(collection, key) })),
     },
+    /** The fields the detection reads; state "not-collected": marked as missing from the events */
+    fields: rule.page.fields.map((f) => ({ ...f, state: fieldState(collection, f.field) })),
     validation: { status: v.status, reason: v.reason ?? null, testedAt: v.lastRun?.executedAt ?? null },
     relatedTotal: related.length,
     related: related.slice(0, 8).map((r) => ({ pageId: r.pageId, title: r.title, slug: r.slug, status: r.status, severity: r.severity })),
