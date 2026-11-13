@@ -4,6 +4,12 @@ import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { reportQueryError } from '@/lib/queryErrors';
 import { Root } from './Root';
+// Fonts ship with the app (no request to Google Fonts): it works the same on
+// an isolated network. Vazirmatn covers Persian text.
+import '@fontsource-variable/inter';
+import '@fontsource-variable/vazirmatn';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
 import './index.css';
 
 const queryClient = new QueryClient({
